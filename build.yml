@@ -1,0 +1,74 @@
+name: Build BizGroove
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  release:
+    types: [published]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-15   # macos-14 was retired by GitHub on 2 Nov 2026
+            artefact: BizGroove-macOS
+          - name: Windows
+            os: windows-2022
+            artefact: BizGroove-Windows
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test engine
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir dist
+          cp -R build/BizGroove_artefacts/Release/BizGroove.app dist/
+          # Ad-hoc signature so Apple Silicon will launch it; not notarised.
+          codesign --force --deep --sign - dist/BizGroove.app
+          ditto -c -k --keepParent dist/BizGroove.app dist/BizGroove-macOS.zip
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path build/BizGroove_artefacts/Release/BizGroove.exe -DestinationPath dist/BizGroove-Windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artefact }}
+          path: dist/*.zip
+
+  publish:
+    # Attach the zips to the release (published in the browser, or a pushed v* tag).
+    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
