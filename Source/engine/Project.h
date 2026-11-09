@@ -37,6 +37,13 @@ namespace Project
     bool loadSampleIntoTrack (AudioEngine& engine, int track, const juce::String& name, const juce::MemoryBlock& data,
                               juce::AudioFormatManager& formats, juce::String& error);
 
+    /** Puts a recording on a drum pad of a track (keeps the bytes for saving). */
+    bool loadSampleIntoPad (AudioEngine& engine, int track, int drum, const juce::String& name, const juce::MemoryBlock& data,
+                            juce::AudioFormatManager& formats, juce::String& error);
+
+    /** Takes the recording off a drum pad, so it plays its synthesised drum again. */
+    void clearPad (AudioEngine& engine, int track, int drum);
+
     /** Loads a recording into a stem slot (keeps the bytes for saving). */
     bool loadStem (AudioEngine& engine, int slot, const juce::String& name, const juce::MemoryBlock& data,
                    juce::AudioFormatManager& formats, juce::String& error);
