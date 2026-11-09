@@ -32,6 +32,8 @@ public:
         std::atomic<float> drive  { 0.0f };   // 0..1, distortion
         std::atomic<float> pan    { 0.0f };   // -1 left .. +1 right
         std::atomic<float> volume { 0.8f };   // 0..1
+        std::atomic<int>   model  { 0 };      // how it is made: 0 analogue, 1 FM, 2 metal
+        std::atomic<float> colour { 0.5f };   // 0..1: FM overtones, or how clashing the metal tones are
     };
 
     DrumKit();
@@ -90,7 +92,7 @@ private:
         float click = 0.0f, clickCoef = 0.0f;
         float body = 0.0f, bodyCoef = 0.0f;   // snare body decays faster than its noise
         float velocityGain = 1.0f;
-        double phase = 0.0;
+        double phase = 0.0, modPhase = 0.0;
         std::array<double, 6> metalPhase {};
         int sampleCount = 0;
         bool choking = false;
