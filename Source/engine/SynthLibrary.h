@@ -44,10 +44,10 @@ inline const std::vector<SynthDefinition>& synthLibrary()
                 { "Fade in",    "synth.attack",    "How long a note takes to reach full volume after you press a key." },
                 { "Punch",      "synth.decay",     "How long the first hit of each note lasts before it settles." },
                 { "Fade out",   "synth.release",   "How long a note keeps sounding after you let go of the key." },
-                { "Volume",     "track.volume",    "How loud this track is." }
+                { "Hold level", "synth.sustain",   "How loud a note stays while you keep holding the key." }
             } },
             {
-                { "Hold level", "synth.sustain",   "How loud a note stays while you keep holding the key." }
+                { "Volume",     "track.volume",    "How loud this track is." }
             }
         },
         {
@@ -80,14 +80,14 @@ inline const std::vector<SynthDefinition>& synthLibrary()
                 { "Brightness", "sampler.brightness", "How bright or muffled it sounds." },
                 { "Fade in",    "sampler.attack",     "How long each note takes to reach full volume." },
                 { "Fade out",   "sampler.release",    "How long it keeps sounding after you let go of the key." },
-                { "Pan",        "track.pan",          "Places this track left or right." },
+                { "Hold level", "sampler.sustain",    "How loud a note stays while you keep holding the key." },
                 { "Volume",     "track.volume",       "How loud this track is." }
             } },
             {
                 { "Loop",       "sampler.loop",       "On: the chosen part repeats for as long as you hold the key." },
                 { "Reverse",    "sampler.reverse",    "On: plays the recording backwards." },
                 { "Slices",     "sampler.slices",     "Cuts the chosen part into equal pieces, one per key upwards from C4." },
-                { "Hold level", "sampler.sustain",    "How loud a note stays while you keep holding the key." }
+                { "Pan",        "track.pan",          "Places this track left or right." }
             }
         }
     };
