@@ -89,6 +89,34 @@ inline const std::vector<SynthDefinition>& synthLibrary()
                 { "Slices",     "sampler.slices",     "Cuts the chosen part into equal pieces, one per key upwards from C4." },
                 { "Pan",        "track.pan",          "Places this track left or right." }
             }
+        },
+        {
+            "poly",
+            "Poly",
+            "An eight-voice analogue-style polysynth: two tones per note, a saw and a square, through a filter that sweeps from warm (low-pass) through hollow (notch) to thin (high-pass). For brass, strings, pads and big leads.",
+            { {
+                { "Brightness",  "poly.cutoff",    "How bright or muffled the sound is. Left is dark, right is bright." },
+                { "Edge",        "poly.resonance", "Adds a singing, whistling edge where the brightness is set." },
+                { "Filter type", "poly.shape",     "Left keeps the lows (warm), the middle scoops out the middle (hollow), right keeps the highs (thin)." },
+                { "Wah",         "poly.envamount", "How much each note opens up when it starts." },
+                { "Thickness",   "poly.detune",    "Puts the two tones slightly out of tune with each other, for a fuller sound." },
+                { "Fade in",     "poly.attack",    "How long a note takes to reach full volume after you press a key." },
+                { "Fade out",    "poly.release",   "How long a note keeps sounding after you let go of the key." },
+                { "Hold level",  "poly.sustain",   "How loud a note stays while you keep holding the key." }
+            } },
+            {
+                { "Punch",              "poly.decay",      "How long the first hit of each note lasts before it settles." },
+                { "Tone mix",           "poly.mix",        "Left: only the bright saw tone. Right: only the hollow square tone. In between: both." },
+                { "Square width",       "poly.pulsewidth", "Changes the colour of the square tone, from hollow to thin and nasal." },
+                { "Second tone octave", "poly.octave",     "Plays the square tone an octave lower, the same, or an octave higher." },
+                { "Stack",              "poly.unison",     "Stacks up to four copies of each note, spread in tune, for a huge sound." },
+                { "Glide",              "poly.glide",      "Slides from one note to the next instead of jumping." },
+                { "Wobble speed",       "poly.lforate",    "How fast the wobble moves." },
+                { "Wobble on brightness", "poly.lfofilter", "How much the wobble opens and closes the brightness." },
+                { "Wobble on square",   "poly.lfopulse",   "How much the wobble moves the square's width, for a lively, chorus-like sound." },
+                { "Noise",              "poly.noise",      "Adds a breath of noise, for wind and percussive sounds." },
+                { "Volume",             "track.volume",    "How loud this track is." }
+            }
         }
     };
     return library;
