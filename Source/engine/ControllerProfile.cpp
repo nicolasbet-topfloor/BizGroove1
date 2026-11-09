@@ -119,7 +119,7 @@ ControllerProfile ControllerProfile::launchkeyMiniMk3()
         p.bindings.push_back ({ "Pad bottom " + juce::String (i + 1), "seq.step." + juce::String (i + 9), {} });
 
     p.bindings.push_back ({ "Play button", "transport.playstop", {} });
-    p.bindings.push_back ({ "Record button", "", {} });          // nothing to record into yet
+    p.bindings.push_back ({ "Record button", "sampler.record", {} });   // records into the Sampler
     p.bindings.push_back ({ "Track previous", "track.prev", {} });
     p.bindings.push_back ({ "Track next", "track.next", {} });
     p.bindings.push_back ({ "> (launch) button", "scene.next", {} });
