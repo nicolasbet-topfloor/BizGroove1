@@ -85,7 +85,8 @@ juce::var Project::toVar (AudioEngine& e)
         juce::Array<juce::var> drums;
         for (const auto& d : tr.kit.drums)
             drums.add (arrayOf ({ d.pitch.load(), d.length.load(), d.tone.load(), d.snap.load(),
-                                  d.drive.load(), d.pan.load(), d.volume.load() }));
+                                  d.drive.load(), d.pan.load(), d.volume.load(),
+                                  (float) d.model.load(), d.colour.load() }));
         kit->setProperty ("drums", drums);
         juce::Array<juce::var> padFiles;
         for (const auto& name : tr.padFileNames)
@@ -244,6 +245,8 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
                     dp.tone.store ((float) (double) (*a)[2]);   dp.snap.store ((float) (double) (*a)[3]);
                     dp.drive.store ((float) (double) (*a)[4]);  dp.pan.store ((float) (double) (*a)[5]);
                     dp.volume.store ((float) (double) (*a)[6]);
+                    dp.model.store (a->size() > 7 ? juce::jlimit (0, 2, juce::roundToInt ((double) (*a)[7])) : 0);
+                    dp.colour.store (a->size() > 8 ? (float) (double) (*a)[8] : 0.5f);
                 }
             }
 
