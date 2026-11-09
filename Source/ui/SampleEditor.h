@@ -101,6 +101,8 @@ public:
         findHits.onClick = [this] { chopByHits(); };
         setUp (clearSlices, "Remove all slices.");
         clearSlices.onClick = [this] { snapshot (false); slices.clear(); writeMarkers(); };
+        setUp (toDrumsButton, "Put each slice on a pad of the first Drums track: slice 1 on pad 1, and so on.");
+        toDrumsButton.onClick = [this] { slicesToDrums(); };
 
         setUp (cropButton, "Keep only the chosen part (from Start to End) and throw the rest away.");
         setUp (normaliseButton, "Make the chosen part as loud as it can be without distorting.");
@@ -247,6 +249,7 @@ public:
         place (middle, findHits, 110);
         middle.removeFromLeft (16);
         place (middle, clearSlices, 110);
+        place (middle, toDrumsButton, 130);
 
         place (bottom, cropButton, 80);
         place (bottom, normaliseButton, 90);
@@ -457,6 +460,51 @@ private:
         return k;
     }
 
+    // ---------------------------------------------------------- slices to the drum pads
+    void slicesToDrums()
+    {
+        int kitTrack = -1;
+        for (int t = 0; t < AudioEngine::numTracks && kitTrack < 0; ++t)
+            if (engine.track (t).type.load() == Track::drums)
+                kitTrack = t;
+        if (kitTrack < 0)
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "No Drums track",
+                                                    "Choose Drums in the Sound menu for a track first, then send the slices.");
+            return;
+        }
+
+        // Without slices, the chosen part goes to pad 1.
+        std::vector<float> starts = slices;
+        if (starts.empty())
+            starts.push_back ((float) startPos);
+
+        const int n = audio.getNumSamples();
+        int sent = 0;
+        juce::String error;
+        for (size_t k = 0; k < starts.size() && (int) k < DrumKit::numDrums; ++k)
+        {
+            const int from = juce::jlimit (0, n - 1, (int) (starts[k] * (n - 1)));
+            const double endFraction = k + 1 < starts.size() ? (double) starts[k + 1] : endPos;
+            const int to = juce::jlimit (from + 1, n, (int) (endFraction * (n - 1)) + 1);
+            if (to - from < 64)
+                continue;
+            juce::AudioBuffer<float> part (audio.getNumChannels(), to - from);
+            for (int ch = 0; ch < audio.getNumChannels(); ++ch)
+                part.copyFrom (ch, 0, audio, ch, from, to - from);
+            if (Project::loadSampleIntoPad (engine, kitTrack, (int) k, fileName + " " + juce::String ((int) k + 1) + ".wav",
+                                            SampleTools::encodeWav (part, rate), formats, error))
+                ++sent;
+        }
+
+        juce::String message;
+        message << sent << (sent == 1 ? " slice is" : " slices are") << " now on the pads of track " << (kitTrack + 1)
+                << " (Drums), from pad 1. Each pad keeps its knobs: pitch, length, tone, snap, drive, pan and volume.";
+        if (error.isNotEmpty())
+            message << " Some slices could not be sent: " << error;
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Slices to drums", message);
+    }
+
     // ---------------------------------------------------------- processes
     template <typename Fn>
     void process (Fn&& fn, bool isCrop)
@@ -605,7 +653,7 @@ private:
     juce::ComboBox regionsMenu;
     juce::TextButton cutEqually { "Cut equally" };
     juce::Slider threshold { juce::Slider::LinearHorizontal, juce::Slider::NoTextBox };
-    juce::TextButton findHits { "Chop by hits" }, clearSlices { "Clear slices" };
+    juce::TextButton findHits { "Chop by hits" }, clearSlices { "Clear slices" }, toDrumsButton { "Slices to drums" };
     juce::TextButton cropButton { "Crop" }, normaliseButton { "Normalise" }, reverseButton { "Reverse" },
                      fadeInButton { "Fade in" }, fadeOutButton { "Fade out" }, silenceButton { "Silence" };
     juce::Label info;
