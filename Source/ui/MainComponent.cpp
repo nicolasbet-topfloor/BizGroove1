@@ -319,7 +319,7 @@ void MainComponent::askForSoundName (const juce::String& heading, const juce::St
 void MainComponent::showSoundsMenu()
 {
     const int t = juce::jlimit (0, AudioEngine::numTracks - 1, engine.selectedTrack.load());
-    const int type = juce::jlimit (0, 2, engine.track (t).type.load());
+    const int type = juce::jlimit (0, (int) synthLibrary().size() - 1, engine.track (t).type.load());
     const auto& factory = Presets::factorySounds (type);
     const auto mine = Presets::userSounds (type);
     const auto current = currentSounds[(size_t) t];
