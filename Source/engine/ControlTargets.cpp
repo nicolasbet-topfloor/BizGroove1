@@ -312,6 +312,15 @@ ControlTargets::ControlTargets (AudioEngine& e)
          [&e] (float v) { e.selected().kit.velocity.store (v); },
          [&e] { return e.selected().kit.velocity.load(); },
          [] (float v) { return v < 0.01f ? juce::String ("All hits equal") : percent (v); });
+    add ("drum.model", "Drum model (analogue / FM / metal)", "Drums", TargetKind::continuous,
+         [dp] (float v) { dp().model.store (juce::jlimit (0, 2, (int) (v * 2.999f))); },
+         [dp] { return (float) dp().model.load() * 0.5f; },
+         [] (float v) {
+             const int m = juce::jlimit (0, 2, (int) (v * 2.999f));
+             return m == 0 ? juce::String ("Analogue") : (m == 1 ? juce::String ("FM") : juce::String ("Metal"));
+         });
+    add ("drum.colour", "Drum colour (FM / metal character)", "Drums", TargetKind::continuous,
+         [dp] (float v) { dp().colour.store (v); }, [dp] { return dp().colour.load(); }, percent);
 
     // ---- Panel knobs 1-8: whatever the loaded synth puts on that knob.
     for (int k = 0; k < 8; ++k)
