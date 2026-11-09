@@ -16,7 +16,7 @@ jobs:
       matrix:
         include:
           - name: macOS
-            os: macos-15   # macos-14 was retired by GitHub on 2 Nov 2026
+            os: macos-15-intel   # macos-14 was retired by GitHub on 2 Nov 2026
             artefact: BizGroove-macOS
           - name: Windows
             os: windows-2022
