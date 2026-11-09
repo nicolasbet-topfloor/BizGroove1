@@ -37,6 +37,7 @@ namespace
             juce::Array<juce::var> a;
             a.add (d.pitch.load()); a.add (d.length.load()); a.add (d.tone.load()); a.add (d.snap.load());
             a.add (d.drive.load()); a.add (d.pan.load());    a.add (d.volume.load());
+            a.add (d.model.load()); a.add (d.colour.load());
             drums.add (a);
         }
         k->setProperty ("drums", drums);
@@ -226,6 +227,15 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
         kitPreset ("Dirty", [] (int, DrumKit::DrumParams& p) {
             p.drive.store (0.55f);
             p.tone.store (p.tone.load() + 0.1f);
+        }),
+        kitPreset ("FM kit", [] (int d, DrumKit::DrumParams& p) {
+            const bool metal = d == 6 || d == 8 || d == 10 || d == 13 || d == 15;
+            p.model.store (1);
+            p.tone.store (d == 0 ? 0.25f : 0.5f);
+            p.colour.store (d == 0 ? 0.15f : (metal ? 0.9f : 0.45f));
+        }),
+        kitPreset ("Metal kit", [] (int d, DrumKit::DrumParams& p) {
+            if (d != 0) { p.model.store (2); p.colour.store (0.6f); }
         })
     };
 
@@ -334,6 +344,8 @@ void Presets::applySoundVar (Track& tr, const juce::var& v)
                 dp.tone.store ((float) (double) (*a)[2]);   dp.snap.store ((float) (double) (*a)[3]);
                 dp.drive.store ((float) (double) (*a)[4]);  dp.pan.store ((float) (double) (*a)[5]);
                 dp.volume.store ((float) (double) (*a)[6]);
+                dp.model.store (a->size() > 7 ? juce::jlimit (0, 2, juce::roundToInt ((double) (*a)[7])) : 0);
+                dp.colour.store (a->size() > 8 ? (float) (double) (*a)[8] : 0.5f);
             }
         }
     }
