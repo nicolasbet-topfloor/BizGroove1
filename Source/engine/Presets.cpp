@@ -13,7 +13,7 @@ namespace
     int   getI (const juce::var& v, const char* key, int fallback)   { return v.hasProperty (key) ? (int) v[key] : fallback; }
     bool  getB (const juce::var& v, const char* key, bool fallback)  { return v.hasProperty (key) ? (bool) v[key] : fallback; }
 
-    int clampType (int type) { return juce::jlimit ((int) Track::testSynth, (int) Track::sampler, type); }
+    int clampType (int type) { return juce::jlimit ((int) Track::testSynth, (int) Track::poly, type); }
 
     // ------------------------------------------------------------ to JSON
     juce::var synthToVar (const TestSynthParams& sp)
@@ -109,6 +109,44 @@ namespace
         p.loop.store (loop);       p.reverse.store (reverse); p.slices.store (slices);
         return { name, soundOf (Track::sampler, "sampler", samplerToVar (p, {})) };
     }
+
+    juce::var polyToVar (const PolyParams& pp)
+    {
+        auto* p = new Obj();
+        p->setProperty ("cutoff", pp.cutoffHz.load());    p->setProperty ("resonance", pp.resonance.load());
+        p->setProperty ("shape", pp.shape.load());        p->setProperty ("envAmount", pp.envAmount.load());
+        p->setProperty ("attack", pp.attack.load());      p->setProperty ("decay", pp.decay.load());
+        p->setProperty ("sustain", pp.sustain.load());    p->setProperty ("release", pp.release.load());
+        p->setProperty ("detune", pp.detuneCents.load()); p->setProperty ("pulseWidth", pp.pulseWidth.load());
+        p->setProperty ("mix", pp.mix.load());            p->setProperty ("octave", pp.octave.load());
+        p->setProperty ("unison", pp.unison.load());      p->setProperty ("glide", pp.glide.load());
+        p->setProperty ("lfoRate", pp.lfoRate.load());    p->setProperty ("lfoFilter", pp.lfoFilter.load());
+        p->setProperty ("lfoPulse", pp.lfoPulse.load());  p->setProperty ("noise", pp.noise.load());
+        return juce::var (p);
+    }
+
+    void applyPoly (PolyParams& pp, const juce::var& p)
+    {
+        pp.cutoffHz.store (getF (p, "cutoff", 1800.0f));  pp.resonance.store (getF (p, "resonance", 0.25f));
+        pp.shape.store (getF (p, "shape", 0.0f));         pp.envAmount.store (getF (p, "envAmount", 0.45f));
+        pp.attack.store (getF (p, "attack", 0.005f));     pp.decay.store (getF (p, "decay", 0.45f));
+        pp.sustain.store (getF (p, "sustain", 0.7f));     pp.release.store (getF (p, "release", 0.35f));
+        pp.detuneCents.store (getF (p, "detune", 7.0f));  pp.pulseWidth.store (getF (p, "pulseWidth", 0.5f));
+        pp.mix.store (getF (p, "mix", 0.5f));             pp.octave.store (juce::jlimit (-1, 1, getI (p, "octave", 0)));
+        pp.unison.store (juce::jlimit (1, 4, getI (p, "unison", 1)));
+        pp.glide.store (getF (p, "glide", 0.0f));
+        pp.lfoRate.store (getF (p, "lfoRate", 5.0f));     pp.lfoFilter.store (getF (p, "lfoFilter", 0.0f));
+        pp.lfoPulse.store (getF (p, "lfoPulse", 0.0f));   pp.noise.store (getF (p, "noise", 0.0f));
+    }
+
+    template <typename Tweak>
+    Presets::FactorySound polyPreset (const char* name, Tweak&& tweak)
+    {
+        PolyParams p;   // starts from the Poly's own settings
+        tweak (p);
+        return { name, soundOf (Track::poly, "poly", polyToVar (p)) };
+    }
+
 }
 
 // ================================================================ names and folders
@@ -199,8 +237,54 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
         samplerPreset ("Chop into 8",    0.002f,  0.05f,   1.0f, false, false,  8)
     };
 
+    static const std::vector<FactorySound> polys {
+        polyPreset ("Init", [] (PolyParams&) {}),
+        polyPreset ("Brass", [] (PolyParams& p) {
+            p.cutoffHz.store (600.0f); p.resonance.store (0.15f); p.envAmount.store (0.7f);
+            p.attack.store (0.06f); p.decay.store (0.6f); p.sustain.store (0.6f); p.release.store (0.25f);
+            p.detuneCents.store (8.0f); p.mix.store (0.3f);
+        }),
+        polyPreset ("Strings", [] (PolyParams& p) {
+            p.cutoffHz.store (2500.0f); p.resonance.store (0.1f); p.envAmount.store (0.1f);
+            p.attack.store (0.5f); p.decay.store (1.0f); p.sustain.store (0.9f); p.release.store (1.2f);
+            p.detuneCents.store (14.0f); p.mix.store (0.2f); p.unison.store (2);
+            p.lfoRate.store (0.4f); p.lfoPulse.store (0.3f);
+        }),
+        polyPreset ("Warm pad", [] (PolyParams& p) {
+            p.cutoffHz.store (900.0f); p.resonance.store (0.2f); p.envAmount.store (0.25f);
+            p.attack.store (1.2f); p.decay.store (2.0f); p.sustain.store (0.8f); p.release.store (2.5f);
+            p.detuneCents.store (10.0f); p.unison.store (2); p.lfoRate.store (0.3f); p.lfoFilter.store (0.15f);
+        }),
+        polyPreset ("Hollow notch", [] (PolyParams& p) {
+            p.cutoffHz.store (1200.0f); p.resonance.store (0.5f); p.shape.store (0.5f); p.envAmount.store (0.3f);
+            p.attack.store (0.02f); p.decay.store (0.8f); p.sustain.store (0.6f); p.release.store (0.6f);
+            p.mix.store (0.6f);
+        }),
+        polyPreset ("Unison lead", [] (PolyParams& p) {
+            p.cutoffHz.store (3000.0f); p.resonance.store (0.3f); p.envAmount.store (0.3f);
+            p.attack.store (0.003f); p.decay.store (0.3f); p.sustain.store (0.8f); p.release.store (0.2f);
+            p.detuneCents.store (18.0f); p.unison.store (4); p.glide.store (0.06f); p.mix.store (0.4f);
+        }),
+        polyPreset ("Fat bass", [] (PolyParams& p) {
+            p.cutoffHz.store (300.0f); p.resonance.store (0.3f); p.envAmount.store (0.6f);
+            p.attack.store (0.002f); p.decay.store (0.25f); p.sustain.store (0.4f); p.release.store (0.1f);
+            p.detuneCents.store (5.0f); p.octave.store (-1);
+        }),
+        polyPreset ("Square keys", [] (PolyParams& p) {
+            p.cutoffHz.store (1500.0f); p.resonance.store (0.1f); p.envAmount.store (0.4f);
+            p.attack.store (0.003f); p.decay.store (0.8f); p.sustain.store (0.3f); p.release.store (0.4f);
+            p.mix.store (1.0f); p.pulseWidth.store (0.35f);
+        }),
+        polyPreset ("Thin sweep", [] (PolyParams& p) {
+            p.cutoffHz.store (200.0f); p.shape.store (1.0f); p.envAmount.store (0.9f);
+            p.attack.store (0.5f); p.decay.store (3.0f); p.sustain.store (0.3f); p.release.store (2.0f);
+            p.lfoRate.store (0.2f); p.lfoFilter.store (0.3f);
+        })
+    };
+
     switch (clampType (type))
     {
+        case Track::poly:    return polys;
         case Track::drums:   return kits;
         case Track::sampler: return sampler;
         default:             return synth;
@@ -216,6 +300,8 @@ juce::var Presets::soundToVar (const Track& tr)
         return soundOf (type, "kit", kitToVar (tr.kit));
     if (type == Track::sampler)
         return soundOf (type, "sampler", samplerToVar (tr.samplerEngine.params, tr.sampleFileName));
+    if (type == Track::poly)
+        return soundOf (type, "poly", polyToVar (tr.polyParams));
     return soundOf (type, "synth", synthToVar (tr.synthParams));
 }
 
@@ -250,6 +336,10 @@ void Presets::applySoundVar (Track& tr, const juce::var& v)
                 dp.volume.store ((float) (double) (*a)[6]);
             }
         }
+    }
+    else if (type == Track::poly)
+    {
+        applyPoly (tr.polyParams, v["poly"]);
     }
     else
     {
