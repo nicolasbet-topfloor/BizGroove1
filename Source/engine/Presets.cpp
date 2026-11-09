@@ -52,6 +52,11 @@ namespace
         m->setProperty ("sustain", sm.sustain.load());       m->setProperty ("loop", sm.loop.load());
         m->setProperty ("reverse", sm.reverse.load());       m->setProperty ("slices", sm.slices.load());
         m->setProperty ("file", fileName);
+        m->setProperty ("loopStart", sm.loopStart.load());
+        juce::Array<juce::var> marks;
+        for (int i = 0; i < juce::jlimit (0, Sampler::maxSlices, sm.sliceCount.load()); ++i)
+            marks.add (sm.slicePoints[(size_t) i].load());
+        m->setProperty ("sliceMarks", marks);
         return juce::var (m);
     }
 
@@ -255,6 +260,12 @@ void Presets::applySoundVar (Track& tr, const juce::var& v)
         sm.attack.store (getF (m, "attack", 0.002f));     sm.release.store (getF (m, "release", 0.25f));
         sm.sustain.store (getF (m, "sustain", 1.0f));     sm.loop.store (getB (m, "loop", false));
         sm.reverse.store (getB (m, "reverse", false));    sm.slices.store (getI (m, "slices", 1));
+        sm.loopStart.store (getF (m, "loopStart", 0.0f));
+        const auto* marks = m["sliceMarks"].getArray();
+        const int n = marks != nullptr ? juce::jmin (Sampler::maxSlices, marks->size()) : 0;
+        for (int i = 0; i < n; ++i)
+            sm.slicePoints[(size_t) i].store ((float) (double) (*marks)[i]);
+        sm.sliceCount.store (n);
     }
 
     tr.type.store (type);
