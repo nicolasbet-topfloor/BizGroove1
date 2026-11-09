@@ -36,7 +36,8 @@ set(ENGINE_SOURCES
     Source/engine/Project.cpp
     Source/engine/ControlTargets.cpp
     Source/engine/ControllerProfile.cpp
-    Source/engine/MidiRouter.cpp)
+    Source/engine/MidiRouter.cpp
+    Source/engine/Presets.cpp)
 set(COMMON_DEFS JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 BIZGROOVE_VERSION="${PROJECT_VERSION}")
 
 # ---------------------------------------------------------------- app
