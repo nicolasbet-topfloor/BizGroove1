@@ -6,6 +6,7 @@
 #include "Track.h"
 #include "StemDeck.h"
 #include "Mixer.h"
+#include "SampleRecorder.h"
 #include <functional>
 
 namespace bizgroove
@@ -76,6 +77,12 @@ public:
     juce::MidiKeyboardState keyboardState;
 
     std::atomic<float> masterGain { 0.8f };
+
+    /** The Launchkey pads: true = play the drums (or a Sampler's slices), false = switch steps on and off. */
+    std::atomic<bool> padsPlay { true };
+
+    /** Records into a Sampler, from the sound card's input or from BizGroove itself. */
+    SampleRecorder recorder;
 
     /** Peak level of the last block per channel, for meters. */
     float getPeak (int channel) const { return peaks[(size_t) juce::jlimit (0, 1, channel)].load(); }
