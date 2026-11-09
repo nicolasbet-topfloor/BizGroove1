@@ -181,8 +181,11 @@ void MidiRouter::route (const juce::String& deviceIdentifier, const juce::String
 
             if (profile != nullptr)
             {
+                // In "play" mode the pads skip their step bindings, so their notes reach the drums.
+                const bool padsPlay = engine.padsPlay.load();
                 for (const auto& b : profile->bindings)
-                    if (b.target.isNotEmpty() && b.midi.matches (message))
+                    if (b.target.isNotEmpty() && b.midi.matches (message)
+                        && ! (padsPlay && b.target.startsWith ("seq.step.")))
                         hits.emplace_back (b.target, b.midi);
 
                 if (! profile->passUnmappedNotes && message.isNoteOnOrOff())
