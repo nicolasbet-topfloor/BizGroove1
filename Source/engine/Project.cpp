@@ -87,6 +87,10 @@ juce::var Project::toVar (AudioEngine& e)
             drums.add (arrayOf ({ d.pitch.load(), d.length.load(), d.tone.load(), d.snap.load(),
                                   d.drive.load(), d.pan.load(), d.volume.load() }));
         kit->setProperty ("drums", drums);
+        juce::Array<juce::var> padFiles;
+        for (const auto& name : tr.padFileNames)
+            padFiles.add (name);
+        kit->setProperty ("padFiles", padFiles);
         o->setProperty ("kit", juce::var (kit));
 
         const auto& sm = tr.samplerEngine.params;
@@ -374,6 +378,35 @@ bool Project::loadSampleIntoTrack (AudioEngine& e, int track, const juce::String
     return true;
 }
 
+bool Project::loadSampleIntoPad (AudioEngine& e, int track, int drum, const juce::String& name, const juce::MemoryBlock& data,
+                                 juce::AudioFormatManager& formats, juce::String& error)
+{
+    if (! juce::isPositiveAndBelow (drum, DrumKit::numDrums))
+    {
+        error = "There is no pad " + juce::String (drum + 1) + ".";
+        return false;
+    }
+    juce::AudioBuffer<float> audio;
+    double sr = 44100.0;
+    if (! decodeAudio (data, formats, audio, sr, error))
+        return false;
+    auto& tr = e.track (track);
+    tr.kit.setPadSample (drum, audio, sr, juce::File::createFileWithoutCheckingPath (name).getFileNameWithoutExtension());
+    tr.padFileNames[(size_t) drum] = name;
+    tr.padFileData[(size_t) drum] = data;
+    return true;
+}
+
+void Project::clearPad (AudioEngine& e, int track, int drum)
+{
+    if (! juce::isPositiveAndBelow (drum, DrumKit::numDrums))
+        return;
+    auto& tr = e.track (track);
+    tr.kit.clearPadSample (drum);
+    tr.padFileNames[(size_t) drum] = {};
+    tr.padFileData[(size_t) drum].reset();
+}
+
 bool Project::loadStem (AudioEngine& e, int slot, const juce::String& name, const juce::MemoryBlock& data,
                         juce::AudioFormatManager& formats, juce::String& error)
 {
@@ -407,6 +440,22 @@ bool Project::save (AudioEngine& e, const juce::File& file, juce::String& error)
                 sampler.getDynamicObject()->setProperty ("entry", entry);
                 zip.addEntry (new juce::MemoryInputStream (tr.sampleFileData, false), 0, entry, juce::Time::getCurrentTime());
             }
+
+            // The recordings on the drum pads.
+            juce::Array<juce::var> padEntries;
+            for (int d = 0; d < DrumKit::numDrums; ++d)
+            {
+                juce::String padEntry;
+                if (tr.padFileData[(size_t) d].getSize() > 0)
+                {
+                    padEntry = "samples/track" + juce::String (t + 1).paddedLeft ('0', 2) + "_pad" + juce::String (d + 1).paddedLeft ('0', 2)
+                               + "_" + safeName (tr.padFileNames[(size_t) d]);
+                    zip.addEntry (new juce::MemoryInputStream (tr.padFileData[(size_t) d], false), 0, padEntry, juce::Time::getCurrentTime());
+                }
+                padEntries.add (padEntry);
+            }
+            if (auto* kitObject = (*tracks)[t]["kit"].getDynamicObject())
+                kitObject->setProperty ("padEntries", padEntries);
         }
     }
     if (auto* stems = state["stems"].getArray())
@@ -490,6 +539,21 @@ bool Project::open (AudioEngine& e, const juce::File& file, juce::AudioFormatMan
             if (entry.isNotEmpty() && (! readEntry (entry, data)
                                        || ! loadSampleIntoTrack (e, t, sampler["file"].toString(), data, formats, err)))
                 problems.add ("track " + juce::String (t + 1) + ": " + sampler["file"].toString());
+
+            const auto kit = (*tracks)[t]["kit"];
+            const auto* padEntries = kit["padEntries"].getArray();
+            const auto* padFiles = kit["padFiles"].getArray();
+            for (int d = 0; d < DrumKit::numDrums; ++d)
+            {
+                clearPad (e, t, d);
+                const auto padEntry = padEntries != nullptr && d < padEntries->size() ? (*padEntries)[d].toString() : juce::String();
+                const auto padFile = padFiles != nullptr && d < padFiles->size() ? (*padFiles)[d].toString() : juce::String();
+                juce::MemoryBlock padData;
+                juce::String padError;
+                if (padEntry.isNotEmpty() && (! readEntry (padEntry, padData)
+                                              || ! loadSampleIntoPad (e, t, d, padFile, padData, formats, padError)))
+                    problems.add ("track " + juce::String (t + 1) + " pad " + juce::String (d + 1) + ": " + padFile);
+            }
         }
     }
     if (const auto* stems = state["stems"].getArray())
