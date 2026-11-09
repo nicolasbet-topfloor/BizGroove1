@@ -1002,6 +1002,44 @@ static void testDrumPads()
     check (! e.track (1).kit.hasPadSample (2) && e.track (1).padFileData[2].getSize() == 0, "pads: a pad can be cleared");
 }
 
+// The FM and metal drum models: every drum sounds, stays finite and fades out.
+static void testDrumModels()
+{
+    std::cout << "Drum models\n";
+    constexpr double sr = 48000.0;
+    for (int model : { 1, 2 })
+    {
+        bool allSound = true, allFinite = true, allFade = true;
+        for (int d = 0; d < DrumKit::numDrums; ++d)
+        {
+            DrumKit kit;
+            kit.prepare (sr);
+            for (auto& p : kit.drums)
+                p.model.store (model);
+            juce::AudioBuffer<float> out (2, (int) (sr * 4.0));
+            out.clear();
+            juce::MidiBuffer m;
+            m.addEvent (juce::MidiMessage::noteOn (10, 36 + d, (juce::uint8) 110), 0);
+            kit.render (out, 0, out.getNumSamples(), m);
+            const float* l = out.getReadPointer (0);
+            for (int i = 0; i < out.getNumSamples(); ++i)
+                if (! std::isfinite (l[i])) { allFinite = false; break; }
+            if (out.getMagnitude (0, 0, 4800) <= 0.01f)
+            {
+                allSound = false;
+                std::cout << "    silent: model " << model << " drum " << d << "\n";
+            }
+            if (out.getMagnitude (0, out.getNumSamples() - 4800, 4800) >= 1.0e-3f)
+                allFade = false;
+        }
+        const juce::String name = model == 1 ? "FM" : "metal";
+        check (allSound, name + " model: every drum sounds");
+        check (allFinite, name + " model: no broken samples");
+        check (allFade, name + " model: every drum fades out");
+    }
+    check (Presets::factorySounds (Track::drums).size() >= 6, "drum models: FM and Metal kits are in the factory sounds");
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI init; // needed by some JUCE singletons
@@ -1024,6 +1062,7 @@ int main (int argc, char* argv[])
     testSampling();
     testPoly();
     testDrumPads();
+    testDrumModels();
     testRender (argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]) : juce::File());
 
     std::cout << (failures == 0 ? "All tests passed\n" : juce::String (failures) + " test(s) failed\n");
