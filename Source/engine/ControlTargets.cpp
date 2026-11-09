@@ -87,6 +87,77 @@ ControlTargets::ControlTargets (AudioEngine& e)
          [&e] { return e.performance.modWheel.load(); }, percent);
 
 
+
+    // ---- Poly track: the selected track's Poly settings
+    auto pp = [&e]() -> PolyParams& { return e.selected().polyParams; };
+    auto offOrPercent = [] (float v) { return v < 0.01f ? juce::String ("Off") : percent (v); };
+    add ("poly.cutoff", "Poly brightness", "Poly", TargetKind::continuous,
+         [pp] (float v) { pp().cutoffHz.store (expMap (v, 40.0f, 16000.0f)); },
+         [pp] { return expInv (pp().cutoffHz.load(), 40.0f, 16000.0f); }, percent);
+    add ("poly.resonance", "Poly edge", "Poly", TargetKind::continuous,
+         [pp] (float v) { pp().resonance.store (v); }, [pp] { return pp().resonance.load(); }, percent);
+    add ("poly.shape", "Poly filter type", "Poly", TargetKind::continuous,
+         [pp] (float v) { pp().shape.store (v); }, [pp] { return pp().shape.load(); },
+         [] (float v) {
+             if (v < 0.15f) return juce::String ("Warm (low-pass)");
+             if (v < 0.40f) return juce::String ("Warm to hollow");
+             if (v < 0.60f) return juce::String ("Hollow (notch)");
+             if (v < 0.85f) return juce::String ("Hollow to thin");
+             return juce::String ("Thin (high-pass)");
+         });
+    add ("poly.envamount", "Poly wah", "Poly", TargetKind::continuous,
+         [pp] (float v) { pp().envAmount.store (v); }, [pp] { return pp().envAmount.load(); }, percent);
+    add ("poly.detune", "Poly thickness", "Poly", TargetKind::continuous,
+         [pp] (float v) { pp().detuneCents.store (linMap (v, 0.0f, 30.0f)); },
+         [pp] { return linInv (pp().detuneCents.load(), 0.0f, 30.0f); }, offOrPercent);
+    add ("poly.attack", "Poly fade in", "Poly", TargetKind::continuous,
+         [pp] (float v) { pp().attack.store (expMap (v, 0.001f, 4.0f)); },
+         [pp] { return expInv (pp().attack.load(), 0.001f, 4.0f); },
+         [] (float v) { return seconds (expMap (v, 0.001f, 4.0f)); });
+    add ("poly.decay", "Poly punch", "Poly", TargetKind::continuous,
+         [pp] (float v) { pp().decay.store (expMap (v, 0.01f, 4.0f)); },
+         [pp] { return expInv (pp().decay.load(), 0.01f, 4.0f); },
+         [] (float v) { return seconds (expMap (v, 0.01f, 4.0f)); });
+    add ("poly.sustain", "Poly hold level", "Poly", TargetKind::continuous,
+         [pp] (float v) { pp().sustain.store (v); }, [pp] { return pp().sustain.load(); }, percent);
+    add ("poly.release", "Poly fade out", "Poly", TargetKind::continuous,
+         [pp] (float v) { pp().release.store (expMap (v, 0.01f, 6.0f)); },
+         [pp] { return expInv (pp().release.load(), 0.01f, 6.0f); },
+         [] (float v) { return seconds (expMap (v, 0.01f, 6.0f)); });
+    add ("poly.mix", "Poly tone mix", "Poly", TargetKind::continuous,
+         [pp] (float v) { pp().mix.store (v); }, [pp] { return pp().mix.load(); },
+         [] (float v) {
+             if (v < 0.03f) return juce::String ("Saw only");
+             if (v > 0.97f) return juce::String ("Square only");
+             return "Square " + percent (v);
+         });
+    add ("poly.pulsewidth", "Poly square width", "Poly", TargetKind::continuous,
+         [pp] (float v) { pp().pulseWidth.store (linMap (v, 0.05f, 0.95f)); },
+         [pp] { return linInv (pp().pulseWidth.load(), 0.05f, 0.95f); },
+         [] (float v) { return std::abs (v - 0.5f) < 0.03f ? juce::String ("Square") : percent (v); });
+    add ("poly.octave", "Poly second tone octave", "Poly", TargetKind::continuous,
+         [pp] (float v) { pp().octave.store (v < 0.33f ? -1 : (v < 0.67f ? 0 : 1)); },
+         [pp] { return (pp().octave.load() + 1) * 0.5f; },
+         [] (float v) { return v < 0.33f ? juce::String ("One octave down") : (v < 0.67f ? juce::String ("Same") : juce::String ("One octave up")); });
+    add ("poly.unison", "Poly stack", "Poly", TargetKind::continuous,
+         [pp] (float v) { pp().unison.store (1 + juce::jlimit (0, 3, (int) (v * 3.999f))); },
+         [pp] { return (pp().unison.load() - 1) / 3.0f; },
+         [] (float v) { const int n = 1 + juce::jlimit (0, 3, (int) (v * 3.999f)); return n == 1 ? juce::String ("Off") : juce::String (n) + " stacked"; });
+    add ("poly.glide", "Poly glide", "Poly", TargetKind::continuous,
+         [pp] (float v) { pp().glide.store (v < 0.01f ? 0.0f : expMap (v, 0.005f, 2.0f)); },
+         [pp] { return pp().glide.load() <= 0.001f ? 0.0f : expInv (pp().glide.load(), 0.005f, 2.0f); },
+         [] (float v) { return v < 0.01f ? juce::String ("Off") : seconds (expMap (v, 0.005f, 2.0f)); });
+    add ("poly.lforate", "Poly wobble speed", "Poly", TargetKind::continuous,
+         [pp] (float v) { pp().lfoRate.store (expMap (v, 0.1f, 20.0f)); },
+         [pp] { return expInv (pp().lfoRate.load(), 0.1f, 20.0f); },
+         [] (float v) { return juce::String (expMap (v, 0.1f, 20.0f), 1) + " per second"; });
+    add ("poly.lfofilter", "Poly wobble on brightness", "Poly", TargetKind::continuous,
+         [pp] (float v) { pp().lfoFilter.store (v); }, [pp] { return pp().lfoFilter.load(); }, offOrPercent);
+    add ("poly.lfopulse", "Poly wobble on square width", "Poly", TargetKind::continuous,
+         [pp] (float v) { pp().lfoPulse.store (v); }, [pp] { return pp().lfoPulse.load(); }, offOrPercent);
+    add ("poly.noise", "Poly noise", "Poly", TargetKind::continuous,
+         [pp] (float v) { pp().noise.store (v); }, [pp] { return pp().noise.load(); }, offOrPercent);
+
     // ---- Tracks
     add ("track.volume", "Track volume (selected track)", "Tracks", TargetKind::continuous,
          [&e] (float v) { e.selected().volume.store (v); },
