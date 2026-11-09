@@ -65,7 +65,7 @@ void Sampler::prepare (double sampleRate, int maxBlock)
     }
 }
 
-void Sampler::startVoice (int note, float velocity)
+void Sampler::startVoice (int note, float velocity, bool fromPad)
 {
     if (loaded == nullptr)
         return;
@@ -77,16 +77,34 @@ void Sampler::startVoice (int note, float velocity)
     if (v == nullptr)
         v = &voices[0];
 
-    const double length = loaded->audio.getNumSamples();
-    const double s0 = juce::jlimit (0.0, 1.0, (double) params.start.load()) * (length - 1);
-    const double s1 = s0 + juce::jlimit (0.01, 1.0, (double) params.length.load()) * (length - 1 - s0);
+    const double last = loaded->audio.getNumSamples() - 1;
+    const double s0 = juce::jlimit (0.0, 1.0, (double) params.start.load()) * last;
+    const double s1 = s0 + juce::jlimit (0.01, 1.0, (double) params.length.load()) * (last - s0);
+    const int marked = juce::jlimit (0, maxSlices, params.sliceCount.load());
     const int slices = juce::jlimit (1, 16, params.slices.load());
 
+    // Which slice a key or pad plays: keys count up from C4, pads from the first pad.
+    auto sliceFor = [note, fromPad] (int count) {
+        const int from = fromPad ? padBase : rootNote;
+        return ((note - from) % count + count) % count;
+    };
+
     double semitones = params.pitch.load();
-    if (slices > 1)
+    if (marked > 0)
+    {
+        // The slices marked in the editor.
+        const int k = sliceFor (marked);
+        const double a = juce::jlimit (0.0, 1.0, (double) params.slicePoints[(size_t) k].load()) * last;
+        // The last slice ends where the chosen part ends.
+        const double b = k + 1 < marked ? juce::jlimit (0.0, 1.0, (double) params.slicePoints[(size_t) k + 1].load()) * last
+                                        : (s1 > a + 1.0 ? s1 : last);
+        v->regionStart = a;
+        v->regionEnd = juce::jmax (a + 1.0, b);
+    }
+    else if (slices > 1)
     {
         // Each key plays its own slice, at the sample's pitch.
-        const int k = ((note - rootNote) % slices + slices) % slices;
+        const int k = sliceFor (slices);
         const double w = (s1 - s0) / slices;
         v->regionStart = s0 + k * w;
         v->regionEnd = v->regionStart + w;
@@ -95,8 +113,15 @@ void Sampler::startVoice (int note, float velocity)
     {
         v->regionStart = s0;
         v->regionEnd = s1;
-        semitones += note - rootNote;
+        if (! fromPad)
+            semitones += note - rootNote;   // the pads play the sample at its own pitch
     }
+
+    // A loop returns to the loop point (only without slices), never before the start.
+    v->loopStart = (marked == 0 && slices <= 1)
+                       ? juce::jlimit (v->regionStart, juce::jmax (v->regionStart, v->regionEnd - 1.0),
+                                       (double) params.loopStart.load() * last)
+                       : v->regionStart;
 
     const bool reverse = params.reverse.load();
     v->step = std::pow (2.0, semitones / 12.0) * (loaded->sampleRate / sr) * (reverse ? -1.0 : 1.0);
@@ -133,7 +158,7 @@ void Sampler::render (juce::AudioBuffer<float>& out, int startSample, int numSam
             pos = at;
         }
         const auto m = meta.getMessage();
-        if (m.isNoteOn())                         startVoice (m.getNoteNumber(), m.getVelocity() / 127.0f);
+        if (m.isNoteOn())                         startVoice (m.getNoteNumber(), m.getVelocity() / 127.0f, m.getChannel() == 10);
         else if (m.isNoteOff())                   stopVoice (m.getNoteNumber());
         else if (m.isAllNotesOff() || m.isAllSoundOff())
             for (auto& v : voices) v.env.noteOff();
@@ -170,7 +195,7 @@ void Sampler::renderVoices (juce::AudioBuffer<float>& out, int start, int num)
             if (v.pos >= v.regionEnd || v.pos < v.regionStart)
             {
                 if (loop)
-                    v.pos = v.step > 0 ? v.regionStart + (v.pos - v.regionEnd) : v.regionEnd - (v.regionStart - v.pos);
+                    v.pos = v.step > 0 ? v.loopStart + (v.pos - v.regionEnd) : v.regionEnd - (v.regionStart - v.pos);
                 else
                 {
                     v.active = false;
