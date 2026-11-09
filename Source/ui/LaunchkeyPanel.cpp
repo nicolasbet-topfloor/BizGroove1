@@ -360,10 +360,18 @@ void LaunchkeyPanel::showTrack()
     {
         loadSynth (library[(size_t) type]);
 
-        loadSampleButton.setVisible (type == Track::sampler);
-        editSampleButton.setVisible (type == Track::sampler);
-        recSourceButton.setVisible (type == Track::sampler);
-        recordButton.setEnabled (type == Track::sampler);
+        // A Sampler track loads and edits its recording; a Drums track puts recordings on the selected pad.
+        const bool sampler = type == Track::sampler, kit = type == Track::drums;
+        loadSampleButton.setVisible (sampler || kit);
+        editSampleButton.setVisible (sampler || kit);
+        recSourceButton.setVisible (sampler || kit);
+        recordButton.setEnabled (sampler || kit);
+        loadSampleButton.setButtonText (kit ? "Load pad" : "Load...");
+        editSampleButton.setButtonText (kit ? "Clear pad" : "Edit...");
+        loadSampleButton.setTooltip (kit ? "Put a recording on the selected pad (WAV, AIFF, FLAC or OGG). You can also drop a file onto the panel."
+                                         : "Choose a recording for this Sampler track (WAV, AIFF, FLAC or OGG). You can also drop a file onto the panel.");
+        editSampleButton.setTooltip (kit ? "Take the recording off the selected pad, so it plays its synthesised drum again."
+                                         : "Open the sample editor: trim, chop into slices for the pads, and process the recording.");
 
         // The drum kit spans the keys from C2 (note 36), the kick on the lowest key.
         const bool drums = type == Track::drums;
@@ -390,7 +398,13 @@ void LaunchkeyPanel::showTrack()
     const auto dot = juce::String::fromUTF8 ("  \xc2\xb7  ");
     juce::String text = "Track " + juce::String (t + 1) + dot + library[(size_t) type].name;
     if (type == Track::drums)
+    {
         text << dot << "editing " << DrumKit::drumName (drum);
+        const auto padName = tr.kit.getPadSampleName (drum);
+        if (padName.isNotEmpty())
+            text << " (sample: " << padName << ")";
+        shownSample = padName;
+    }
     if (type == Track::sampler)
     {
         const auto sample = tr.samplerEngine.getSampleName();
@@ -421,7 +435,10 @@ void LaunchkeyPanel::loadSample (const juce::File& file)
     juce::MemoryBlock data;
     juce::String error;
     if (! file.loadFileAsData (data)
-        || ! Project::loadSampleIntoTrack (engine, engine.selectedTrack.load(), file.getFileName(), data, formats, error))
+        || ! (engine.selected().type.load() == Track::drums
+                  ? Project::loadSampleIntoPad (engine, engine.selectedTrack.load(), engine.selected().selectedDrum.load(),
+                                                file.getFileName(), data, formats, error)
+                  : Project::loadSampleIntoTrack (engine, engine.selectedTrack.load(), file.getFileName(), data, formats, error)))
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Couldn't load the recording",
                                                 file.getFileName() + (error.isNotEmpty() ? ": " + error : juce::String()));
     showTrack();
@@ -429,6 +446,14 @@ void LaunchkeyPanel::loadSample (const juce::File& file)
 
 void LaunchkeyPanel::openSampleEditor()
 {
+    // On a Drums track this button clears the selected pad.
+    if (engine.selected().type.load() == Track::drums)
+    {
+        Project::clearPad (engine, engine.selectedTrack.load(), engine.selected().selectedDrum.load());
+        showTrack();
+        return;
+    }
+
     const int t = engine.selectedTrack.load();
     if (engine.track (t).sampleFileData.getSize() == 0)
     {
@@ -449,7 +474,8 @@ void LaunchkeyPanel::openSampleEditor()
 
 bool LaunchkeyPanel::isInterestedInFileDrag (const juce::StringArray& files)
 {
-    return files.size() == 1 && engine.selected().type.load() == Track::sampler;
+    const int type = engine.selected().type.load();
+    return files.size() == 1 && (type == Track::sampler || type == Track::drums);
 }
 
 void LaunchkeyPanel::filesDropped (const juce::StringArray& files, int, int)
@@ -482,7 +508,8 @@ void LaunchkeyPanel::timerCallback()
     {
         auto& tr = engine.selected();
         if (engine.selectedTrack.load() != shownTrack || tr.type.load() != shownType || tr.selectedDrum.load() != shownDrum
-            || (tr.type.load() == Track::sampler && tr.samplerEngine.getSampleName() != shownSample))
+            || (tr.type.load() == Track::sampler && tr.samplerEngine.getSampleName() != shownSample)
+            || (tr.type.load() == Track::drums && tr.kit.getPadSampleName (tr.selectedDrum.load()) != shownSample))
             showTrack();
     }
 
