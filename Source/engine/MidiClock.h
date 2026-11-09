@@ -24,6 +24,7 @@ public:
     void prepareToPlay (int samplesPerBlockExpected, double sr) override
     {
         engine.prepareToPlay (samplesPerBlockExpected, sr);
+        engine.recorder.deviceRate.store (sr);
         sampleRate = sr;
         samplesToNextTick = 0.0;
         wasPlaying = false;
@@ -34,7 +35,10 @@ public:
 
     void getNextAudioBlock (const juce::AudioSourceChannelInfo& info) override
     {
+        // The sound card's input arrives in the buffer: record it before the engine replaces it.
+        engine.recorder.write (*info.buffer, info.startSample, info.numSamples, SampleRecorder::input);
         engine.getNextAudioBlock (info);
+        engine.recorder.write (*info.buffer, info.startSample, info.numSamples, SampleRecorder::output);
         sendClock (info.numSamples);
     }
 
