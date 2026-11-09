@@ -40,7 +40,8 @@ MainComponent::MainComponent()
     // Controller profiles: Launchkey Mini MK3 by default, Kontrol F1 for stems.
     ControllerStore::load (midiRouter);
     deviceManager.addMidiInputDeviceCallback ({}, &midiRouter);
-    sourcePlayer.setSource (&engine);
+    sourcePlayer.setSource (&liveOutput);   // the engine, plus MIDI clock for the Launchkey arp
+    updateClockOutputs();
     deviceManager.addAudioCallback (&sourcePlayer);
 
     // ---- Top bar
@@ -62,9 +63,13 @@ MainComponent::MainComponent()
     soundMenu.onChange = [this] { loadSynth (soundMenu.getSelectedId() - 1); };
     addAndMakeVisible (soundMenu);
 
+    soundsButton.setTooltip ("Sounds for the selected track: the built-in factory sounds and your own saved sounds.");
+    soundsButton.onClick = [this] { showSoundsMenu(); };
+    addAndMakeVisible (soundsButton);
+
     // Only the on-screen keyboard takes key focus, so A-K always play notes.
     for (auto* b : { &fileButton, &playButton, &panelViewButton, &songViewButton, &mixerViewButton, &stemViewButton,
-                     &settingsButton, &controllersButton })
+                     &settingsButton, &controllersButton, &soundsButton })
         b->setWantsKeyboardFocus (false);
     tempoSlider.setWantsKeyboardFocus (false);
 
@@ -149,7 +154,189 @@ void MainComponent::loadSynth (int index)
     if (! juce::isPositiveAndBelow (index, (int) library.size()))
         return;
     engine.selected().type.store (index);   // the panel follows on its next tick
+    currentSounds[(size_t) juce::jlimit (0, AudioEngine::numTracks - 1, engine.selectedTrack.load())] = {};
+    updateSoundsButton();
 }
+
+// ============================================================== MIDI clock
+
+void MainComponent::updateClockOutputs()
+{
+    // The Launchkey's MIDI port always gets the tempo; so does the MIDI
+    // output chosen under Audio / MIDI, if any.
+    juce::StringArray ids;
+    for (const auto& out : juce::MidiOutput::getAvailableDevices())
+        if (LiveOutput::isClockedByDefault (out))
+            ids.add (out.identifier);
+
+    const auto chosen = deviceManager.getDefaultMidiOutputIdentifier();
+    if (chosen.isNotEmpty())
+        ids.addIfNotAlreadyThere (chosen);
+
+    liveOutput.setOutputs (ids);
+}
+
+// ============================================================== program bank
+
+void MainComponent::setCurrentSound (int t, const juce::String& name, const juce::File& file)
+{
+    auto& c = currentSounds[(size_t) juce::jlimit (0, AudioEngine::numTracks - 1, t)];
+    c.name = name;
+    c.file = file;
+    c.type = engine.track (t).type.load();
+    updateSoundsButton();
+}
+
+void MainComponent::updateSoundsButton()
+{
+    const int t = juce::jlimit (0, AudioEngine::numTracks - 1, engine.selectedTrack.load());
+    auto& c = currentSounds[(size_t) t];
+    if (c.type != engine.track (t).type.load())
+        c = {};   // the instrument changed, so the name no longer applies
+    soundsButton.setButtonText (c.name.isNotEmpty() ? c.name : juce::String ("Sounds"));
+}
+
+void MainComponent::askForSoundName (const juce::String& heading, const juce::String& initial,
+                                     std::function<void (juce::String)> onOk)
+{
+    auto* w = new juce::AlertWindow (heading, "Give the sound a name.", juce::MessageBoxIconType::NoIcon, this);
+    w->addTextEditor ("name", initial);
+    w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([w, onOk] (int result) {
+        const auto name = w->getTextEditorContents ("name").trim();
+        if (result == 1 && name.isNotEmpty())
+            onOk (name);
+    }), true);
+}
+
+void MainComponent::showSoundsMenu()
+{
+    const int t = juce::jlimit (0, AudioEngine::numTracks - 1, engine.selectedTrack.load());
+    const int type = juce::jlimit (0, 2, engine.track (t).type.load());
+    const auto& factory = Presets::factorySounds (type);
+    const auto mine = Presets::userSounds (type);
+    const auto current = currentSounds[(size_t) t];
+
+    static constexpr int saveId = 1, saveAsId = 2, folderId = 3, noneId = 9999;
+    static constexpr int factoryBase = 1000, mineBase = 2000, renameBase = 3000, deleteBase = 4000;
+
+    juce::PopupMenu m;
+    m.addSectionHeader ("Factory sounds: " + Presets::instrumentName (type));
+    for (int i = 0; i < (int) factory.size(); ++i)
+        m.addItem (factoryBase + i, factory[(size_t) i].name, true,
+                   current.file == juce::File() && current.name == factory[(size_t) i].name);
+
+    m.addSectionHeader ("My sounds");
+    if (mine.isEmpty())
+        m.addItem (noneId, "None saved yet", false);
+
+    juce::PopupMenu renameMenu, deleteMenu;
+    for (int i = 0; i < mine.size(); ++i)
+    {
+        const auto name = mine[i].getFileNameWithoutExtension();
+        m.addItem (mineBase + i, name, true, current.file == mine[i]);
+        renameMenu.addItem (renameBase + i, name);
+        deleteMenu.addItem (deleteBase + i, name);
+    }
+
+    m.addSeparator();
+    const bool canSave = current.file.existsAsFile();
+    m.addItem (saveId, canSave ? "Save changes to " + current.name.quoted() : juce::String ("Save changes"), canSave);
+    m.addItem (saveAsId, "Save as a new sound...");
+    m.addSubMenu ("Rename", renameMenu, ! mine.isEmpty());
+    m.addSubMenu ("Delete (moves it to the Trash)", deleteMenu, ! mine.isEmpty());
+    m.addItem (folderId, "Show my sounds folder");
+
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&soundsButton),
+                     [this, t, type, mine] (int result) {
+        if (result == 0)
+            return;
+
+        auto showError = [] (const juce::String& error) {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Sounds", error);
+        };
+        const auto& sounds = Presets::factorySounds (type);
+
+        if (result >= factoryBase && result < factoryBase + (int) sounds.size())
+        {
+            const auto& f = sounds[(size_t) (result - factoryBase)];
+            Presets::applySoundVar (engine.track (t), f.sound);
+            setCurrentSound (t, f.name, {});
+        }
+        else if (result >= mineBase && result < mineBase + mine.size())
+        {
+            const auto file = mine[result - mineBase];
+            juce::String error;
+            if (Presets::load (engine, t, file, formats, error))
+                setCurrentSound (t, file.getFileNameWithoutExtension(), file);
+            else
+                showError (error);
+        }
+        else if (result == saveId)
+        {
+            const auto c = currentSounds[(size_t) t];
+            juce::String error;
+            if (! Presets::save (engine.track (t), c.file, error))
+                showError (error);
+        }
+        else if (result == saveAsId)
+        {
+            const auto& c = currentSounds[(size_t) t];
+            askForSoundName ("Save as a new sound", c.name.isNotEmpty() ? c.name : juce::String ("My sound"),
+                             [this, t, type, showError] (juce::String name) {
+                const auto file = Presets::fileForName (type, name, false);
+                juce::String error;
+                if (Presets::save (engine.track (t), file, error))
+                    setCurrentSound (t, file.getFileNameWithoutExtension(), file);
+                else
+                    showError (error);
+            });
+        }
+        else if (result >= renameBase && result < renameBase + mine.size())
+        {
+            const auto file = mine[result - renameBase];
+            askForSoundName ("Rename sound", file.getFileNameWithoutExtension(),
+                             [this, file, type, showError] (juce::String name) {
+                if (name == file.getFileNameWithoutExtension())
+                    return;
+                const auto target = Presets::fileForName (type, name, false);
+                if (! file.moveFileTo (target))
+                {
+                    showError ("Could not rename " + file.getFileName());
+                    return;
+                }
+                for (auto& c : currentSounds)
+                {
+                    if (c.file == file)
+                    {
+                        c.file = target;
+                        c.name = target.getFileNameWithoutExtension();
+                    }
+                }
+                updateSoundsButton();
+            });
+        }
+        else if (result >= deleteBase && result < deleteBase + mine.size())
+        {
+            const auto file = mine[result - deleteBase];
+            if (! file.moveToTrash())
+            {
+                showError ("Could not move " + file.getFileName() + " to the Trash.");
+                return;
+            }
+            for (auto& c : currentSounds)
+                if (c.file == file)
+                    c = {};
+            updateSoundsButton();
+        }
+        else if (result == folderId)
+        {
+            Presets::userFolder (type).revealToUser();
+        }
+    });
+}
+
 
 void MainComponent::showView (View view)
 {
@@ -208,9 +395,9 @@ void MainComponent::showAudioSettings()
                                                              0, 2,   // audio inputs (for audio tracks later)
                                                              2, 2,   // stereo output
                                                              true,   // MIDI inputs
-                                                             false,  // MIDI output
+                                                             true,   // MIDI output: it also gets the tempo (MIDI clock)
                                                              false, false);
-    selector->setSize (520, 440);
+    selector->setSize (520, 500);
 
     juce::DialogWindow::LaunchOptions o;
     o.content.setOwned (selector);
@@ -550,6 +737,7 @@ void MainComponent::timerCallback()
             soundLabel.setText ("Track " + juce::String (t + 1), juce::dontSendNotification);
             shownSoundTrack = t;
             shownSoundType = type;
+            updateSoundsButton();
         }
     }
 
@@ -566,6 +754,7 @@ void MainComponent::timerCallback()
     if (++timerTicks % 60 == 0)
     {
         enableNewMidiInputs();
+        updateClockOutputs();
         updateTitle();
     }
 
@@ -630,11 +819,13 @@ void MainComponent::resized()
     top.removeFromLeft (10);
     title.setBounds (top.removeFromLeft (106));
     soundLabel.setBounds (top.removeFromLeft (62));
-    soundMenu.setBounds (top.removeFromLeft (150).reduced (0, 6));
+    soundMenu.setBounds (top.removeFromLeft (120).reduced (0, 6));
+    top.removeFromLeft (6);
+    soundsButton.setBounds (top.removeFromLeft (110).reduced (0, 4));
     top.removeFromLeft (12);
     playButton.setBounds (top.removeFromLeft (70).reduced (0, 4));
     top.removeFromLeft (10);
-    tempoLabel.setBounds (top.removeFromLeft (48));
+    tempoLabel.setBounds ({});   // room for the Sounds button; the slider shows BPM
     tempoSlider.setBounds (top.removeFromLeft (124));
 
     meterArea = top.removeFromRight (14).reduced (0, 4);
