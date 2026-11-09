@@ -111,19 +111,27 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         playing = false;
     }
 
-    // 4. Live notes go to the selected track. On a drum track a key also picks
-    //    the drum that the knobs and pads edit.
-    auto& selTrack = *tracks[(size_t) sel];
+    // 4. Live notes. MIDI channel 10 (the Launchkey pads in Drum mode) plays the
+    //    drums: the selected track if it is a drum track, otherwise the first
+    //    drum track. Everything else goes to the selected track, so the keys can
+    //    play a synth while the pads play the drums. On a drum track a note also
+    //    picks the drum that the knobs and pads edit.
+    int drumTarget = isDrum[(size_t) sel] ? sel : -1;
+    for (int t = 0; t < numTracks && drumTarget < 0; ++t)
+        if (isDrum[(size_t) t])
+            drumTarget = t;
+
     for (const auto meta : liveMidi)
     {
         const auto m = meta.getMessage();
-        if (isDrum[(size_t) sel] && m.isNoteOn())
+        const int dest = (drumTarget >= 0 && m.getChannel() == 10) ? drumTarget : sel;
+        if (isDrum[(size_t) dest] && m.isNoteOn())
         {
             const int drum = DrumKit::drumForNote (m.getNoteNumber());
             if (drum >= 0)
-                selTrack.selectedDrum.store (drum);
+                tracks[(size_t) dest]->selectedDrum.store (drum);
         }
-        trackMidi[(size_t) sel].addEvent (m, meta.samplePosition);
+        trackMidi[(size_t) dest].addEvent (m, meta.samplePosition);
     }
 
     // 5. Render and mix the tracks: sound, volume, EQ, pan, sends.
