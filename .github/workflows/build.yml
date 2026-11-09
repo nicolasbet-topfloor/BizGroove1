@@ -44,6 +44,25 @@ jobs:
           # Ad-hoc signature so Apple Silicon will launch it; not notarised.
           codesign --force --deep --sign - dist/BizGroove.app
           ditto -c -k --keepParent dist/BizGroove.app dist/BizGroove-macOS.zip
+      - name: Verify universal binary and macOS 10.13 target
+        if: runner.os == 'macOS'
+        run: |
+          BIN=dist/BizGroove.app/Contents/MacOS/BizGroove
+          ARCHS=$(lipo -archs "$BIN")
+          echo "Architectures: $ARCHS"
+          for a in x86_64 arm64; do
+            case " $ARCHS " in
+              *" $a "*) ;;
+              *) echo "::error::$BIN does not contain $a"; exit 1 ;;
+            esac
+          done
+          LOADCMDS=$(otool -arch x86_64 -l "$BIN")
+          echo "$LOADCMDS" | grep -A4 -E 'LC_VERSION_MIN_MACOSX|LC_BUILD_VERSION' || true
+          if echo "$LOADCMDS" | grep -Eq '(version|minos) 10\.13([^0-9]|$)'; then
+            echo "x86_64 slice targets macOS 10.13"
+          else
+            echo "::error::x86_64 slice does not target macOS 10.13"; exit 1
+          fi
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
