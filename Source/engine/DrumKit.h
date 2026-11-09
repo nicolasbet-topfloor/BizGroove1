@@ -3,16 +3,20 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <array>
 #include <atomic>
+#include <memory>
 
 namespace bizgroove
 {
 
-/** Sixteen synthesised drums in General MIDI order (notes 36-51), the kick
-    first. No samples: every drum is built from oscillators and noise.
+/** Sixteen drums in General MIDI order (notes 36-51), the kick first. Each
+    one is synthesised from oscillators and noise, unless a recording has
+    been put on its pad, which then plays instead.
 
     Per drum: pitch, length, tone, snap (attack click), drive (distortion),
-    pan and volume. Kit-wide: choke (closed and pedal hi-hats cut the open
-    hi-hat) and velocity (how much harder hits are louder).
+    pan and volume; on a pad sample they tune it, shorten it, darken it, add
+    a click, add grit, place it and set its level. Kit-wide: choke (closed and
+    pedal hi-hats cut the open hi-hat) and velocity (how much harder hits are
+    louder).
 */
 class DrumKit
 {
@@ -42,11 +46,18 @@ public:
         down from there; -1 for notes with no drum. */
     static int drumForNote (int note);
 
+    // ---------------------------------------------------------- pad samples (message thread)
+    /** Puts a recording on a pad; it plays instead of the synthesised drum. */
+    void setPadSample (int drum, const juce::AudioBuffer<float>& audio, double fileSampleRate, const juce::String& name);
+    void clearPadSample (int drum);
+    bool hasPadSample (int drum) const;
+    juce::String getPadSampleName (int drum) const;
+
     // ---------------------------------------------------------- audio thread
     void prepare (double sampleRate);
     void trigger (int drum, float velocity01);
 
-    /** Renders this block, triggering drums at the note-ons in `midi`. */
+    /** Renders this block, triggering drums at the note-ons in midi. */
     void render (juce::AudioBuffer<float>& out, int startSample, int numSamples, const juce::MidiBuffer& midi);
 
     /** Sound left in any drum (for tests and meters). */
@@ -83,14 +94,26 @@ private:
         std::array<double, 6> metalPhase {};
         int sampleCount = 0;
         bool choking = false;
+        bool fromSample = false;               // playing the pad's recording
+        double samplePos = 0.0, sampleStep = 1.0;
         Filter f1, f2;
     };
 
+    struct PadSample
+    {
+        juce::AudioBuffer<float> audio;   // stereo
+        double sampleRate = 44100.0;
+        juce::String name;
+    };
+
     void renderVoice (int drum, Voice& v, float* left, float* right, int numSamples);
+    void renderSampleVoice (int drum, Voice& v, const PadSample& s, float* left, float* right, int numSamples);
     float noise();
 
     std::array<Spec, numDrums> specs;
     std::array<Voice, numDrums> voices;
+    std::array<std::unique_ptr<PadSample>, numDrums> padSamples;
+    mutable juce::SpinLock padLock;
     double sampleRate = 44100.0;
     std::uint32_t rng = 0x12345678u;
 };
