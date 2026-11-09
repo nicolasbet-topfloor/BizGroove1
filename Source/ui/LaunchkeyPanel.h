@@ -6,6 +6,7 @@
 #include "engine/ControlTargets.h"
 #include "engine/SynthLibrary.h"
 #include "StepGrid.h"
+#include "SampleEditor.h"
 
 namespace bizgroove
 {
@@ -127,6 +128,7 @@ private:
     void handleNoteOff (juce::MidiKeyboardState*, int, int, float) override {}
     void showMore();
     void shiftOctave (int octaves);
+    void openSampleEditor();
 
     AudioEngine& engine;
     const ControlTargets& targets;
@@ -142,6 +144,8 @@ private:
     juce::OwnedArray<PanelKnob> knobs;
     juce::TextButton moreButton { "More" };
     juce::TextButton loadSampleButton { "Load sample..." };
+    juce::TextButton editSampleButton { "Edit..." }, recSourceButton { "Rec: mic / line in" }, padsModeButton { "Pads: play" };
+    bool shownRecording = false;
     juce::AudioFormatManager formats;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::String shownSample;
