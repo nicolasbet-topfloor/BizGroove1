@@ -66,7 +66,9 @@ inline const std::vector<SynthDefinition>& synthLibrary()
             } },
             {
                 { "Choke",    "drum.choke",    "On: the closed and pedal hi-hats cut off the open hi-hat, as on a real kit." },
-                { "Velocity", "drum.velocity", "How much harder hits sound louder. At 0, every hit is equally loud." }
+                { "Velocity", "drum.velocity", "How much harder hits sound louder. At 0, every hit is equally loud." },
+                { "Model",    "drum.model",    "How the selected drum is made: Analogue (classic drum machine), FM (bell-like, digital tones) or Metal (clashing, metallic tones)." },
+                { "Colour",   "drum.colour",   "The character of the FM or Metal model: from soft and round to bright and clangy." }
             }
         },
         {
