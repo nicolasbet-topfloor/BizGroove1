@@ -56,7 +56,7 @@ private:
     // Recording into the Sampler
     void handleRecorder();
     bool ensureAudioInput();
-    int recordingTrack = -1;
+    int recordingTrack = -1, recordingPad = 0;
 
     // Program bank
     void showSoundsMenu();
