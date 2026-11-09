@@ -15,6 +15,8 @@
 #include "MixerView.h"
 #include "ExportDialog.h"
 #include "engine/Project.h"
+#include "engine/Presets.h"
+#include "engine/MidiClock.h"
 
 namespace bizgroove
 {
@@ -48,6 +50,13 @@ private:
     void enableNewMidiInputs();
     void enableAllMidiInputs();
     void saveDeviceState();
+    void updateClockOutputs();
+
+    // Program bank
+    void showSoundsMenu();
+    void askForSoundName (const juce::String& heading, const juce::String& initial, std::function<void (juce::String)> onOk);
+    void setCurrentSound (int track, const juce::String& name, const juce::File& file);
+    void updateSoundsButton();
 
     // Projects and export
     void showFileMenu();
@@ -72,6 +81,7 @@ private:
     juce::AudioDeviceManager deviceManager;
     juce::AudioSourcePlayer sourcePlayer;
     AudioEngine engine;
+    LiveOutput liveOutput { engine };   // plays the engine and sends MIDI clock
     ControlTargets controlTargets { engine };
     MidiRouter midiRouter { engine, controlTargets };
     juce::ApplicationProperties appProperties;
@@ -82,6 +92,7 @@ private:
     juce::Label title;
     juce::Label soundLabel;
     juce::ComboBox soundMenu;
+    juce::TextButton soundsButton { "Sounds" };
     juce::TextButton playButton { "Play" };
     juce::Slider tempoSlider { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
     juce::Label tempoLabel;
@@ -99,6 +110,10 @@ private:
     MixerView mixerView { engine };
     SessionBar sessionBar { engine };
     int shownSoundTrack = -1, shownSoundType = -1;
+
+    /** The sound last loaded or saved on each track, for the Sounds button. */
+    struct CurrentSound { juce::String name; juce::File file; int type = -1; };
+    std::array<CurrentSound, AudioEngine::numTracks> currentSounds;
 
     juce::Rectangle<int> meterArea;
     float meterLevels[2] {};
