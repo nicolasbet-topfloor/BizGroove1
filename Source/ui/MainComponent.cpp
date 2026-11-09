@@ -220,15 +220,18 @@ void MainComponent::handleRecorder()
     // Start.
     if (! rec.isRecording() && ! full)
     {
-        if (engine.track (t).type.load() != Track::sampler)
+        const int type = engine.track (t).type.load();
+        if (type != Track::sampler && type != Track::drums)
         {
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Record",
-                                                    "Recordings go into a Sampler. Choose Sampler in the Sound menu for this track, then press Record.");
+                                                    "Recordings go into a Sampler, or onto the selected pad of a Drums track. "
+                                                    "Choose one in the Sound menu for this track, then press Record.");
             return;
         }
         if (rec.source.load() == SampleRecorder::input && ! ensureAudioInput())
             return;
         recordingTrack = t;
+        recordingPad = engine.track (t).selectedDrum.load();
         rec.start();
         return;
     }
@@ -250,6 +253,12 @@ void MainComponent::handleRecorder()
 
     const auto name = "Recording " + juce::Time::getCurrentTime().formatted ("%H-%M-%S") + ".wav";
     juce::String error;
+    if (engine.track (track).type.load() == Track::drums)
+    {
+        if (! Project::loadSampleIntoPad (engine, track, recordingPad, name, SampleTools::encodeWav (audio, rate), formats, error))
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Couldn't load the recording", error);
+        return;
+    }
     if (Project::loadSampleIntoTrack (engine, track, name, SampleTools::encodeWav (audio, rate), formats, error))
     {
         auto& sm = engine.track (track).samplerEngine.params;
@@ -616,6 +625,8 @@ void MainComponent::newProject()
             engine.track (t).samplerEngine.clearSample();
             engine.track (t).sampleFileName = {};
             engine.track (t).sampleFileData.reset();
+            for (int d = 0; d < DrumKit::numDrums; ++d)
+                Project::clearPad (engine, t, d);
         }
         for (int i = 0; i < StemDeck::numStems; ++i)
         {
