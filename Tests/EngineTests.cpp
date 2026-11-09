@@ -7,6 +7,7 @@
 #include "engine/MidiRouter.h"
 #include "engine/Project.h"
 #include "engine/Presets.h"
+#include "engine/SampleTools.h"
 #include <iostream>
 #include <vector>
 
@@ -853,6 +854,57 @@ static void testPresets()
         check (! Presets::factorySounds (type).empty(), Presets::instrumentName (type) + " has factory sounds");
 }
 
+// Recording, trimming, chopping and the pads for the Sampler.
+static void testSampling()
+{
+    std::cout << "Sampling\n";
+    constexpr double sr = 48000.0;
+
+    // The recorder copies blocks only while recording, and only from the chosen source.
+    SampleRecorder rec;
+    rec.deviceRate.store (sr);
+    rec.start();
+    juce::AudioBuffer<float> block (2, 480);
+    block.clear();
+    block.setSample (0, 100, 0.5f);
+    rec.write (block, 0, 480, SampleRecorder::input);
+    rec.write (block, 0, 480, SampleRecorder::output);   // the other source: ignored
+    juce::AudioBuffer<float> got;
+    double gotRate = 0.0;
+    rec.stop (got, gotRate);
+    check (got.getNumSamples() == 480 && gotRate == sr && got.getSample (0, 100) == 0.5f,
+           "recorder: records the chosen source only");
+
+    // Silence is trimmed away; two clicks are found as hits.
+    juce::AudioBuffer<float> clicks (2, (int) sr * 2);
+    clicks.clear();
+    for (int c : { 24000, 48000 })
+        for (int i = 0; i < 200; ++i)
+        {
+            clicks.setSample (0, c + i, 0.8f);
+            clicks.setSample (1, c + i, 0.8f);
+        }
+    juce::AudioBuffer<float> trimmed (clicks);
+    check (SampleTools::trimSilence (trimmed, sr) && trimmed.getNumSamples() < clicks.getNumSamples() - 20000,
+           "trim: the silence before and after is cut");
+    const auto hits = SampleTools::findHits (clicks, sr, 0.5f, 16);
+    check (hits.size() == 3, "chop: finds the start and the two hits (" + juce::String ((int) hits.size()) + ")");
+
+    // A pad plays its marked slice: pad 2 starts at the second marker, on the second click.
+    Sampler s;
+    s.setSample (clicks, sr, "clicks");
+    s.prepare (sr, 512);
+    s.params.sliceCount.store (2);
+    s.params.slicePoints[0].store (0.0f);
+    s.params.slicePoints[1].store (48000.0f / (float) (clicks.getNumSamples() - 1));
+    juce::AudioBuffer<float> out (2, 4800);
+    out.clear();
+    juce::MidiBuffer m;
+    m.addEvent (juce::MidiMessage::noteOn (10, Sampler::padBase + 1, (juce::uint8) 127), 0);
+    s.render (out, 0, out.getNumSamples(), m);
+    check (out.getMagnitude (0, 0, 200) > 0.1f, "pads: pad 2 plays the second slice");
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI init; // needed by some JUCE singletons
@@ -872,6 +924,7 @@ int main (int argc, char* argv[])
     testControllerMapping();
     testStemDeck();
     testPresets();
+    testSampling();
     testRender (argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]) : juce::File());
 
     std::cout << (failures == 0 ? "All tests passed\n" : juce::String (failures) + " test(s) failed\n");
