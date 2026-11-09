@@ -6,6 +6,7 @@
 #include "engine/ControlTargets.h"
 #include "engine/MidiRouter.h"
 #include "engine/Project.h"
+#include "engine/Presets.h"
 #include <iostream>
 #include <vector>
 
@@ -804,6 +805,54 @@ static int makeDemo (const juce::File& file)
     return 0;
 }
 
+// The program bank: a sound saved from one track loads into another unchanged.
+static void testPresets()
+{
+    std::cout << "Program bank\n";
+    AudioEngine e;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    juce::String err;
+
+    auto& synthTrack = e.track (0);
+    synthTrack.type.store (Track::testSynth);
+    synthTrack.synthParams.cutoffHz.store (321.0f);
+    synthTrack.synthParams.sustain.store (0.77f);
+    juce::TemporaryFile synthFile (Presets::fileExtension);
+    check (Presets::save (synthTrack, synthFile.getFile(), err), "a synth sound saves");
+    check (Presets::load (e, 1, synthFile.getFile(), formats, err), "it loads into another track");
+    check (e.track (1).type.load() == Track::testSynth
+           && std::abs (e.track (1).synthParams.cutoffHz.load() - 321.0f) < 0.01f
+           && std::abs (e.track (1).synthParams.sustain.load() - 0.77f) < 0.001f, "with the same settings");
+
+    auto& kitTrack = e.track (2);
+    kitTrack.type.store (Track::drums);
+    kitTrack.kit.drums[3].tone.store (0.12f);
+    Presets::applySoundVar (e.track (3), Presets::soundToVar (kitTrack));
+    check (e.track (3).type.load() == Track::drums && std::abs (e.track (3).kit.drums[3].tone.load() - 0.12f) < 0.001f,
+           "a drum kit carries over");
+
+    constexpr double sr = 48000.0;
+    juce::AudioBuffer<float> tone (2, 24000);
+    for (int i = 0; i < tone.getNumSamples(); ++i)
+    {
+        const float s = 0.3f * (float) std::sin (juce::MathConstants<double>::twoPi * 440.0 * i / sr);
+        tone.setSample (0, i, s);
+        tone.setSample (1, i, s);
+    }
+    check (Project::loadSampleIntoTrack (e, 4, "tone.wav", wavOf (tone, sr), formats, err), "a recording loads into a sampler");
+    e.track (4).type.store (Track::sampler);
+    e.track (4).samplerEngine.params.slices.store (8);
+    juce::TemporaryFile samplerFile (Presets::fileExtension);
+    check (Presets::save (e.track (4), samplerFile.getFile(), err), "a sampler sound saves with its recording");
+    check (Presets::load (e, 5, samplerFile.getFile(), formats, err) && e.track (5).samplerEngine.hasSample()
+           && e.track (5).type.load() == Track::sampler && e.track (5).samplerEngine.params.slices.load() == 8,
+           "and brings the recording with it");
+
+    for (int type = Track::testSynth; type <= Track::sampler; ++type)
+        check (! Presets::factorySounds (type).empty(), Presets::instrumentName (type) + " has factory sounds");
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI init; // needed by some JUCE singletons
@@ -822,6 +871,7 @@ int main (int argc, char* argv[])
     testTimelineProjectExport();
     testControllerMapping();
     testStemDeck();
+    testPresets();
     testRender (argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]) : juce::File());
 
     std::cout << (failures == 0 ? "All tests passed\n" : juce::String (failures) + " test(s) failed\n");
