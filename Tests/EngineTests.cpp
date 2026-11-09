@@ -277,11 +277,16 @@ static void testControllerMapping()
     router.route ("lk", "Launchkey Mini", juce::MidiMessage::controllerEvent (1, 21, 127));
     check (std::abs (engine.track (0).synthParams.cutoffHz.load() - 16000.0f) < 1.0f, "mapping: Launchkey knob 1 sets cutoff");
 
-    // Launchkey top-left pad (note 40, ch 10) toggles step 1.
+    // In steps mode, the Launchkey top-left pad (note 40, ch 10) toggles step 1.
+    engine.padsPlay.store (false);
     const bool before = engine.isStepOn (0);
     router.route ("lk", "Launchkey Mini", juce::MidiMessage::noteOn (10, 40, (juce::uint8) 100));
     router.route ("lk", "Launchkey Mini", juce::MidiMessage::noteOff (10, 40));
     check (engine.isStepOn (0) != before, "mapping: Launchkey pad toggles a step once per press");
+    engine.padsPlay.store (true);
+    router.route ("lk", "Launchkey Mini", juce::MidiMessage::noteOn (10, 40, (juce::uint8) 100));
+    router.route ("lk", "Launchkey Mini", juce::MidiMessage::noteOff (10, 40));
+    check (engine.isStepOn (0) != before, "mapping: in play mode the pads leave the steps alone");
 
     // Original Launchkey Mini: top round button (CC 108) plays and stops; arrow up nudges tempo.
     router.route ("lk", "Launchkey Mini", juce::MidiMessage::controllerEvent (1, 108, 127));
