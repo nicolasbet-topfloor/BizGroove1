@@ -379,6 +379,31 @@ bool Presets::save (const Track& tr, const juce::File& file, juce::String& error
         zip.addEntry (new juce::MemoryInputStream (tr.sampleFileData, false), 0, entry, juce::Time::getCurrentTime());
     }
 
+    // A drum kit brings the recordings on its pads.
+    if (clampType (tr.type.load()) == Track::drums)
+    {
+        juce::Array<juce::var> padEntries, padFiles;
+        for (int d = 0; d < DrumKit::numDrums; ++d)
+        {
+            juce::String padEntry;
+            if (tr.padFileData[(size_t) d].getSize() > 0)
+            {
+                auto padName = juce::File::createLegalFileName (tr.padFileNames[(size_t) d]);
+                if (padName.isEmpty())
+                    padName = "pad.wav";
+                padEntry = "pads/" + juce::String (d + 1).paddedLeft ('0', 2) + "_" + padName;
+                zip.addEntry (new juce::MemoryInputStream (tr.padFileData[(size_t) d], false), 0, padEntry, juce::Time::getCurrentTime());
+            }
+            padEntries.add (padEntry);
+            padFiles.add (tr.padFileNames[(size_t) d]);
+        }
+        if (auto* k = sound["kit"].getDynamicObject())
+        {
+            k->setProperty ("padEntries", padEntries);
+            k->setProperty ("padFiles", padFiles);
+        }
+    }
+
     const auto json = juce::JSON::toString (sound);
     juce::MemoryBlock jsonData (json.toRawUTF8(), json.getNumBytesAsUTF8());
     zip.addEntry (new juce::MemoryInputStream (jsonData, true), 6, "sound.json", juce::Time::getCurrentTime());
@@ -441,6 +466,33 @@ bool Presets::load (AudioEngine& e, int trackIndex, const juce::File& file,
                 name = entry.fromLastOccurrenceOf ("/", false, false);
             if (! Project::loadSampleIntoTrack (e, trackIndex, name, data, formats, error))
                 return false;
+        }
+    }
+
+    // A drum kit brings the recordings on its pads; a kit without any leaves the pads as they are.
+    if (clampType (getI (sound, "type", 0)) == Track::drums)
+    {
+        const auto* padEntries = sound["kit"]["padEntries"].getArray();
+        const auto* padFiles = sound["kit"]["padFiles"].getArray();
+        if (padEntries != nullptr)
+        {
+            for (int d = 0; d < DrumKit::numDrums; ++d)
+            {
+                Project::clearPad (e, trackIndex, d);
+                const auto padEntry = d < padEntries->size() ? (*padEntries)[d].toString() : juce::String();
+                if (padEntry.isEmpty())
+                    continue;
+                const int index = zip.getIndexOfFileName (padEntry);
+                std::unique_ptr<juce::InputStream> stream (index >= 0 ? zip.createStreamForEntry (index) : nullptr);
+                juce::MemoryBlock data;
+                if (stream != nullptr)
+                    stream->readIntoMemoryBlock (data);
+                const auto name = padFiles != nullptr && d < padFiles->size() ? (*padFiles)[d].toString()
+                                                                               : padEntry.fromLastOccurrenceOf ("/", false, false);
+                juce::String padError;
+                if (stream == nullptr || ! Project::loadSampleIntoPad (e, trackIndex, d, name, data, formats, padError))
+                    error = "Some pad recordings in " + file.getFileName() + " could not be loaded.";
+            }
         }
     }
 
