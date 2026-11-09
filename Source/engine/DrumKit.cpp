@@ -121,6 +121,7 @@ void DrumKit::trigger (int drum, float velocity01)
     v.bodyCoef = fadeCoef (spec.baseDecay * lengthMult * 0.5f, sampleRate);
     v.velocityGain = (1.0f - sens) + sens * juce::jlimit (0.0f, 1.0f, velocity01);
     v.phase = 0.0;
+    v.modPhase = 0.0;
     v.metalPhase = {};
     v.f1.reset();
     v.f2.reset();
@@ -222,13 +223,59 @@ void DrumKit::renderVoice (int drum, Voice& v, float* left, float* right, int nu
         case Model::tom:    v.f1.set (2000.0f + tone * 8000.0f, 0.7f, sampleRate); break;
     }
 
+    // Model: 0 analogue (above), 1 FM (a tone bent by a second tone), 2 metal (six clashing squares).
+    const int synthModel = juce::jlimit (0, 2, p.model.load());
+    const float colour = juce::jlimit (0.0f, 1.0f, p.colour.load());
+    static constexpr double fmRatios[8] = { 0.5, 1.0, 1.41, 2.0, 2.76, 3.5, 5.19, 7.13 };
+    const double modRatio = fmRatios[juce::jlimit (0, 7, (int) (colour * 7.999f))];
+    const float fmIndex = 0.5f + 9.5f * tone;
+    const bool noisy = spec.model == Model::snare || spec.model == Model::clap || spec.model == Model::hat || spec.model == Model::cymbal;
+    const bool metallic = spec.model == Model::hat || spec.model == Model::cymbal;
+    const float fmHz = metallic ? 540.0f : (spec.model == Model::clap ? 350.0f : spec.baseHz);
+    const float metalHz0 = metallic ? 420.0f : spec.baseHz * 2.0f;
+    std::array<double, 6> metalRatio {};
+    for (size_t k = 0; k < 6; ++k)
+        metalRatio[k] = std::pow ((double) metalHz[k] / (double) metalHz[0], 0.5 + (double) colour);
+    if (synthModel == 2)
+        v.f1.set (juce::jlimit (200.0f, 12000.0f, metalHz0 * ratio * (1.0f + 3.0f * tone)), 3.0f, sampleRate);
+
     for (int i = 0; i < numSamples; ++i)
     {
         float x = 0.0f;
         const float n = noise();
         float lo, bp, hp;
 
-        switch (spec.model)
+        if (synthModel == 1)
+        {
+            // FM: Colour picks the second tone's ratio, Tone how hard it bends the first.
+            const float drop = spec.model == Model::kick ? 2.5f : 0.6f;
+            const double hz = (double) (fmHz * ratio * (1.0f + drop * v.pitchEnv));
+            v.modPhase += (double) twoPi * hz * modRatio / sampleRate;
+            v.phase += (double) twoPi * hz / sampleRate;
+            if (v.modPhase > (double) twoPi) v.modPhase -= (double) twoPi;
+            if (v.phase > (double) twoPi) v.phase -= (double) twoPi;
+            const float mod = std::sin ((float) v.modPhase) * fmIndex * v.body;
+            x = std::sin ((float) v.phase + mod);
+            if (noisy)
+            {
+                v.f1.process (n, lo, bp, hp);
+                x = 0.7f * x + 0.5f * hp * v.body;
+            }
+        }
+        else if (synthModel == 2)
+        {
+            // Metal: six square tones; Colour spreads them from bell-like to clangy.
+            float metal = 0.0f;
+            for (size_t k = 0; k < 6; ++k)
+            {
+                v.metalPhase[k] += (double) (metalHz0 * ratio) * metalRatio[k] / sampleRate;
+                if (v.metalPhase[k] >= 1.0) v.metalPhase[k] -= std::floor (v.metalPhase[k]);
+                metal += v.metalPhase[k] < 0.5 ? 1.0f : -1.0f;
+            }
+            v.f1.process (metal * 0.2f, lo, bp, hp);
+            x = 1.5f * bp;
+        }
+        else switch (spec.model)
         {
             case Model::kick:
             {
