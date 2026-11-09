@@ -158,6 +158,112 @@ void MainComponent::loadSynth (int index)
     updateSoundsButton();
 }
 
+// ============================================================== recording into the Sampler
+
+bool MainComponent::ensureAudioInput()
+{
+    // Switch on the sound card's input the first time something is recorded.
+    auto setup = deviceManager.getAudioDeviceSetup();
+    bool changed = false;
+    if (auto* type = deviceManager.getCurrentDeviceTypeObject())
+    {
+        if (setup.inputDeviceName.isEmpty())
+        {
+            const auto names = type->getDeviceNames (true);
+            if (! names.isEmpty())
+            {
+                setup.inputDeviceName = names[juce::jlimit (0, names.size() - 1, type->getDefaultDeviceIndex (true))];
+                changed = true;
+            }
+        }
+    }
+    if (setup.inputDeviceName.isNotEmpty() && setup.inputChannels.countNumberOfSetBits() == 0)
+    {
+        setup.useDefaultInputChannels = true;
+        changed = true;
+    }
+    if (changed)
+    {
+        const auto error = deviceManager.setAudioDeviceSetup (setup, true);
+        if (error.isNotEmpty())
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Can't record", error);
+            return false;
+        }
+        saveDeviceState();
+    }
+
+    int active = 0;
+    if (auto* device = deviceManager.getCurrentAudioDevice())
+        active = device->getActiveInputChannels().countNumberOfSetBits();
+    if (active == 0)
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Can't record",
+                                                "BizGroove has no audio input. Choose one under Audio / MIDI "
+                                                "(a microphone, or the input of your sound card), then press Record again.");
+        return false;
+    }
+    engine.recorder.monoInput.store (active == 1);
+    return true;
+}
+
+void MainComponent::handleRecorder()
+{
+    auto& rec = engine.recorder;
+    const bool pressed = rec.toggleRequested.exchange (false);
+    const bool full = rec.hasStoppedItself();
+    if (! pressed && ! full)
+        return;
+
+    const int t = engine.selectedTrack.load();
+
+    // Start.
+    if (! rec.isRecording() && ! full)
+    {
+        if (engine.track (t).type.load() != Track::sampler)
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Record",
+                                                    "Recordings go into a Sampler. Choose Sampler in the Sound menu for this track, then press Record.");
+            return;
+        }
+        if (rec.source.load() == SampleRecorder::input && ! ensureAudioInput())
+            return;
+        recordingTrack = t;
+        rec.start();
+        return;
+    }
+
+    // Stop: trim the silence and load the recording into the Sampler.
+    juce::AudioBuffer<float> audio;
+    double rate = 44100.0;
+    rec.stop (audio, rate);
+    const int track = recordingTrack >= 0 ? recordingTrack : t;
+    recordingTrack = -1;
+
+    if (! SampleTools::trimSilence (audio, rate))
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Nothing was recorded",
+                                                "BizGroove heard only silence. Check the input under Audio / MIDI. On a Mac, "
+                                                "also check that BizGroove may use the microphone: System Settings > Privacy & Security > Microphone.");
+        return;
+    }
+
+    const auto name = "Recording " + juce::Time::getCurrentTime().formatted ("%H-%M-%S") + ".wav";
+    juce::String error;
+    if (Project::loadSampleIntoTrack (engine, track, name, SampleTools::encodeWav (audio, rate), formats, error))
+    {
+        auto& sm = engine.track (track).samplerEngine.params;
+        sm.start.store (0.0f);
+        sm.length.store (1.0f);
+        sm.loopStart.store (0.0f);
+        sm.sliceCount.store (0);
+    }
+    else
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Couldn't load the recording", error);
+    }
+}
+
 // ============================================================== MIDI clock
 
 void MainComponent::updateClockOutputs()
@@ -722,6 +828,8 @@ void MainComponent::runExport (const ExportOptions& options, const juce::File& f
 
 void MainComponent::timerCallback()
 {
+    handleRecorder();
+
     // Keep computer-keyboard notes working: the on-screen keyboard takes key
     // focus, and keys it doesn't use (space) bubble up to keyPressed().
     if (panel.isVisible() && isShowing() && juce::Component::getCurrentlyFocusedComponent() == nullptr)
