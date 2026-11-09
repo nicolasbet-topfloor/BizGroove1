@@ -176,6 +176,9 @@ ControlTargets::ControlTargets (AudioEngine& e)
          [] (float v) { const int opts[5] = { 1, 2, 4, 8, 16 }; const int n = opts[juce::jlimit (0, 4, (int) (v * 4.999f))];
                         return n == 1 ? juce::String ("Off") : juce::String (n) + " slices"; });
 
+    add ("sampler.record", "Sampler record start / stop", "Sampler", TargetKind::trigger,
+         [&e] (float) { e.recorder.toggleRequested.store (true); });
+
     // ---- Scenes and song
     add ("scene.next", "Next scene (starts at the next bar)", "Song", TargetKind::trigger,
          [&e] (float) {
@@ -258,6 +261,8 @@ ControlTargets::ControlTargets (AudioEngine& e)
     for (int i = 0; i < Song::numSteps; ++i)
         add ("seq.step." + juce::String (i + 1), "Step " + juce::String (i + 1) + " on/off", "Steps", TargetKind::toggle,
              [&e, i] (float) { e.toggleStep (i); });
+    add ("pads.mode", "Pads: play drums / switch steps", "Steps", TargetKind::toggle,
+         [&e] (float) { toggle (e.padsPlay); });
 
     // ---- Stems
     for (int i = 0; i < StemDeck::numStems; ++i)
