@@ -66,6 +66,19 @@ juce::var Project::toVar (AudioEngine& e)
         synth->setProperty ("sustain", sp.sustain.load());     synth->setProperty ("release", sp.release.load());
         o->setProperty ("synth", juce::var (synth));
 
+        const auto& pp = tr.polyParams;
+        auto* poly = new Obj();
+        poly->setProperty ("cutoff", pp.cutoffHz.load());    poly->setProperty ("resonance", pp.resonance.load());
+        poly->setProperty ("shape", pp.shape.load());        poly->setProperty ("envAmount", pp.envAmount.load());
+        poly->setProperty ("attack", pp.attack.load());      poly->setProperty ("decay", pp.decay.load());
+        poly->setProperty ("sustain", pp.sustain.load());    poly->setProperty ("release", pp.release.load());
+        poly->setProperty ("detune", pp.detuneCents.load()); poly->setProperty ("pulseWidth", pp.pulseWidth.load());
+        poly->setProperty ("mix", pp.mix.load());            poly->setProperty ("octave", pp.octave.load());
+        poly->setProperty ("unison", pp.unison.load());      poly->setProperty ("glide", pp.glide.load());
+        poly->setProperty ("lfoRate", pp.lfoRate.load());    poly->setProperty ("lfoFilter", pp.lfoFilter.load());
+        poly->setProperty ("lfoPulse", pp.lfoPulse.load());  poly->setProperty ("noise", pp.noise.load());
+        o->setProperty ("poly", juce::var (poly));
+
         auto* kit = new Obj();
         kit->setProperty ("choke", tr.kit.choke.load());
         kit->setProperty ("velocity", tr.kit.velocity.load());
@@ -181,7 +194,7 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
         {
             const auto o = (*tracks)[t];
             auto& tr = e.track (t);
-            tr.type.store (juce::jlimit (0, 2, getI (o, "type", 0)));
+            tr.type.store (juce::jlimit (0, 3, getI (o, "type", 0)));
             tr.volume.store (getF (o, "volume", 0.8f));
             tr.mute.store (getB (o, "mute", false));
             tr.mix.solo.store (getB (o, "solo", false));
@@ -199,6 +212,19 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
             sp.envAmount.store (getF (s, "envAmount", 0.6f));  sp.detuneCents.store (getF (s, "detune", 8.0f));
             sp.attack.store (getF (s, "attack", 0.003f));      sp.decay.store (getF (s, "decay", 0.25f));
             sp.sustain.store (getF (s, "sustain", 0.4f));      sp.release.store (getF (s, "release", 0.2f));
+
+            const auto pv = o["poly"];
+            auto& pp = tr.polyParams;
+            pp.cutoffHz.store (getF (pv, "cutoff", 1800.0f));  pp.resonance.store (getF (pv, "resonance", 0.25f));
+            pp.shape.store (getF (pv, "shape", 0.0f));         pp.envAmount.store (getF (pv, "envAmount", 0.45f));
+            pp.attack.store (getF (pv, "attack", 0.005f));     pp.decay.store (getF (pv, "decay", 0.45f));
+            pp.sustain.store (getF (pv, "sustain", 0.7f));     pp.release.store (getF (pv, "release", 0.35f));
+            pp.detuneCents.store (getF (pv, "detune", 7.0f));  pp.pulseWidth.store (getF (pv, "pulseWidth", 0.5f));
+            pp.mix.store (getF (pv, "mix", 0.5f));             pp.octave.store (juce::jlimit (-1, 1, getI (pv, "octave", 0)));
+            pp.unison.store (juce::jlimit (1, 4, getI (pv, "unison", 1)));
+            pp.glide.store (getF (pv, "glide", 0.0f));
+            pp.lfoRate.store (getF (pv, "lfoRate", 5.0f));     pp.lfoFilter.store (getF (pv, "lfoFilter", 0.0f));
+            pp.lfoPulse.store (getF (pv, "lfoPulse", 0.0f));   pp.noise.store (getF (pv, "noise", 0.0f));
 
             const auto k = o["kit"];
             tr.kit.choke.store (getB (k, "choke", true));
