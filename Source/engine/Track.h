@@ -2,6 +2,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "TestSynth.h"
+#include "PolySynth.h"
 #include "DrumKit.h"
 #include "Sampler.h"
 #include "Mixer.h"
@@ -14,9 +15,10 @@ namespace bizgroove
     thread; the atomics are shared with the UI and controllers. */
 struct Track
 {
-    enum Type { testSynth = 0, drums = 1, sampler = 2 };   // index into synthLibrary()
+    enum Type { testSynth = 0, drums = 1, sampler = 2, poly = 3 };   // index into synthLibrary()
 
     static constexpr int numSynthVoices = 16;
+    static constexpr int numPolyVoices = 8;
 
     Track (const Performance& perf)
     {
@@ -24,6 +26,11 @@ struct Track
             synth.addVoice (new TestSynthVoice (synthParams, perf));
         synth.addSound (new TestSynthSound());
         synth.setNoteStealingEnabled (true);
+
+        for (int i = 0; i < numPolyVoices; ++i)
+            polySynth.addVoice (new PolyVoice (polyParams, perf));
+        polySynth.addSound (new PolySound());
+        polySynth.setNoteStealingEnabled (true);
     }
 
     std::atomic<int> type { testSynth };
@@ -33,6 +40,7 @@ struct Track
     std::atomic<float> level { 0.0f };       // read-out: peak of the last block
 
     TestSynthParams synthParams;
+    PolyParams polyParams;
     DrumKit kit;
     Sampler samplerEngine;
     ChannelSettings mix;
@@ -43,6 +51,7 @@ struct Track
 
     // ---- audio thread only
     juce::Synthesiser synth;
+    juce::Synthesiser polySynth;
     juce::SmoothedValue<float> gain;
     ChannelStrip strip;
 };
