@@ -956,6 +956,52 @@ static void testPoly()
     check (Presets::factorySounds (Track::poly).size() >= 8, "poly: has factory sounds");
 }
 
+// Recordings on the drum pads: they play, they stop, and they are saved.
+static void testDrumPads()
+{
+    std::cout << "Drum pads\n";
+    constexpr double sr = 48000.0;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    AudioEngine e;
+    e.prepareToPlay (256, sr);
+
+    juce::AudioBuffer<float> beep (2, 4800);   // 0.1 s
+    for (int i = 0; i < beep.getNumSamples(); ++i)
+    {
+        const float s = 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * 1000.0 * i / sr);
+        beep.setSample (0, i, s);
+        beep.setSample (1, i, s);
+    }
+    juce::String err;
+    check (Project::loadSampleIntoPad (e, 1, 2, "beep.wav", wavOf (beep, sr), formats, err) && e.track (1).kit.hasPadSample (2),
+           "pads: a recording loads onto pad 3");
+
+    auto& kit = e.track (1).kit;
+    kit.prepare (sr);
+    juce::AudioBuffer<float> out (2, 9600);
+    out.clear();
+    juce::MidiBuffer m;
+    m.addEvent (juce::MidiMessage::noteOn (10, 38, (juce::uint8) 127), 0);
+    kit.render (out, 0, out.getNumSamples(), m);
+    check (out.getMagnitude (0, 0, 4000) > 0.1f && out.getMagnitude (0, 5500, 4000) < 1.0e-3f,
+           "pads: the pad plays its recording, then stops");
+
+    juce::TemporaryFile project (Project::fileExtension);
+    check (Project::save (e, project.getFile(), err), "pads: a project with a pad recording saves");
+    AudioEngine e2;
+    check (Project::open (e2, project.getFile(), formats, err) && e2.track (1).kit.hasPadSample (2) && ! e2.track (1).kit.hasPadSample (3),
+           "pads: the recording comes back on the same pad");
+
+    juce::TemporaryFile kitFile (Presets::fileExtension);
+    check (Presets::save (e.track (1), kitFile.getFile(), err) && Presets::load (e2, 5, kitFile.getFile(), formats, err)
+           && e2.track (5).type.load() == Track::drums && e2.track (5).kit.hasPadSample (2),
+           "pads: a saved kit brings its recordings");
+
+    Project::clearPad (e, 1, 2);
+    check (! e.track (1).kit.hasPadSample (2) && e.track (1).padFileData[2].getSize() == 0, "pads: a pad can be cleared");
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI init; // needed by some JUCE singletons
@@ -977,6 +1023,7 @@ int main (int argc, char* argv[])
     testPresets();
     testSampling();
     testPoly();
+    testDrumPads();
     testRender (argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]) : juce::File());
 
     std::cout << (failures == 0 ? "All tests passed\n" : juce::String (failures) + " test(s) failed\n");
