@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.22)
 
+# These must come before project(): afterwards they have no effect.
+# 10.13 High Sierra is the oldest macOS that current Xcode can build for.
+set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum macOS version")
+set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Universal binary on macOS")
+
 project(BizGroove VERSION 1.0.0 LANGUAGES C CXX)
 
 # Windows: build the C++ runtime into BizGroove.exe, so it runs on any PC
@@ -8,9 +13,6 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-# 10.13 High Sierra is the oldest macOS that current Xcode can build for.
-set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum macOS version")
-set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Universal binary on macOS")
 
 # JUCE 8 is fetched automatically. To use a local copy instead:
 #   cmake -B build -DFETCHCONTENT_SOURCE_DIR_JUCE=/path/to/JUCE
