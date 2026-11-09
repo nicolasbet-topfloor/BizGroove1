@@ -17,6 +17,7 @@
 #include "engine/Project.h"
 #include "engine/Presets.h"
 #include "engine/MidiClock.h"
+#include "engine/SampleTools.h"
 
 namespace bizgroove
 {
@@ -51,6 +52,11 @@ private:
     void enableAllMidiInputs();
     void saveDeviceState();
     void updateClockOutputs();
+
+    // Recording into the Sampler
+    void handleRecorder();
+    bool ensureAudioInput();
+    int recordingTrack = -1;
 
     // Program bank
     void showSoundsMenu();
