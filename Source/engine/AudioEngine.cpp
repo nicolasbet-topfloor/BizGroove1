@@ -116,7 +116,9 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     //    drum track. Everything else goes to the selected track, so the keys can
     //    play a synth while the pads play the drums. On a drum track a note also
     //    picks the drum that the knobs and pads edit.
-    int drumTarget = isDrum[(size_t) sel] ? sel : -1;
+    //    On a Sampler track the pads play its slices instead.
+    const bool selIsSampler = tracks[(size_t) sel]->type.load() == Track::sampler;
+    int drumTarget = (isDrum[(size_t) sel] || selIsSampler) ? sel : -1;
     for (int t = 0; t < numTracks && drumTarget < 0; ++t)
         if (isDrum[(size_t) t])
             drumTarget = t;
