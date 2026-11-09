@@ -264,9 +264,24 @@ LaunchkeyPanel::LaunchkeyPanel (AudioEngine& e, const ControlTargets& t)
     addAndMakeVisible (playButton);
 
     recordButton.setWantsKeyboardFocus (false);
-    recordButton.setTooltip ("Recording arrives in a later version.");
-    recordButton.setEnabled (false);
+    recordButton.setTooltip ("Record into the Sampler of the selected track: press to start, press again to stop. "
+                             "The Launchkey's Record button does the same.");
+    recordButton.onClick = [this] { engine.recorder.toggleRequested.store (true); };
     addAndMakeVisible (recordButton);
+
+    styleHardwareButton (recSourceButton, "What Record captures: the sound card's input (a microphone or line in), "
+                                          "or BizGroove's own sound (resampling). Click to switch.", true);
+    recSourceButton.onClick = [this] {
+        if (! engine.recorder.isRecording())
+            engine.recorder.source.store (engine.recorder.source.load() == SampleRecorder::input ? (int) SampleRecorder::output
+                                                                                                : (int) SampleRecorder::input);
+    };
+    addChildComponent (recSourceButton);
+
+    styleHardwareButton (padsModeButton, "What the Launchkey pads do: play the drums (or a Sampler's slices), "
+                                         "or switch the sequencer's steps on and off. Click to switch.", true);
+    padsModeButton.onClick = [this] { targets.applyButton ("pads.mode", true); };
+    addAndMakeVisible (padsModeButton);
 
     // 25 keys, like the Launchkey Mini.
     keyboard.setAvailableRange (lowestKey, lowestKey + 24);
@@ -283,7 +298,12 @@ LaunchkeyPanel::LaunchkeyPanel (AudioEngine& e, const ControlTargets& t)
     formats.registerBasicFormats();
     styleHardwareButton (loadSampleButton, "Choose a recording for this Sampler track (WAV, AIFF, FLAC or OGG). You can also drop a file onto the panel.", true);
     loadSampleButton.onClick = [this] { chooseSample(); };
+    loadSampleButton.setButtonText ("Load...");
     addChildComponent (loadSampleButton);
+
+    styleHardwareButton (editSampleButton, "Open the sample editor: trim, chop into slices for the pads, and process the recording.", true);
+    editSampleButton.onClick = [this] { openSampleEditor(); };
+    addChildComponent (editSampleButton);
 
     engine.keyboardState.addListener (this);
     showTrack();
@@ -341,6 +361,9 @@ void LaunchkeyPanel::showTrack()
         loadSynth (library[(size_t) type]);
 
         loadSampleButton.setVisible (type == Track::sampler);
+        editSampleButton.setVisible (type == Track::sampler);
+        recSourceButton.setVisible (type == Track::sampler);
+        recordButton.setEnabled (type == Track::sampler);
 
         // The drum kit spans the keys from C2 (note 36), the kick on the lowest key.
         const bool drums = type == Track::drums;
@@ -371,7 +394,10 @@ void LaunchkeyPanel::showTrack()
     if (type == Track::sampler)
     {
         const auto sample = tr.samplerEngine.getSampleName();
-        text << dot << (sample.isNotEmpty() ? sample : juce::String ("no recording loaded"));
+        if (engine.recorder.isRecording())
+            text << dot << "RECORDING " << juce::String (engine.recorder.getSeconds(), 1) << " s";
+        else
+            text << dot << (sample.isNotEmpty() ? sample : juce::String ("no recording loaded"));
         shownSample = sample;
     }
     if (trackInfo.getText() != text)
@@ -399,6 +425,26 @@ void LaunchkeyPanel::loadSample (const juce::File& file)
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Couldn't load the recording",
                                                 file.getFileName() + (error.isNotEmpty() ? ": " + error : juce::String()));
     showTrack();
+}
+
+void LaunchkeyPanel::openSampleEditor()
+{
+    const int t = engine.selectedTrack.load();
+    if (engine.track (t).sampleFileData.getSize() == 0)
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Sample editor",
+                                                "Load or record a sample on this Sampler track first.");
+        return;
+    }
+
+    juce::DialogWindow::LaunchOptions o;
+    o.content.setOwned (new SampleEditor (engine, t, formats));
+    o.dialogTitle = "Sample editor - track " + juce::String (t + 1);
+    o.dialogBackgroundColour = Colours::background;
+    o.escapeKeyTriggersCloseButton = true;
+    o.useNativeTitleBar = true;
+    o.resizable = true;
+    o.launchAsync();
 }
 
 bool LaunchkeyPanel::isInterestedInFileDrag (const juce::StringArray& files)
@@ -440,6 +486,21 @@ void LaunchkeyPanel::timerCallback()
             showTrack();
     }
 
+    // Recording: the time runs in the track line. And the pads and record-source buttons.
+    const bool recording = engine.recorder.isRecording();
+    if (recording || recording != shownRecording)
+    {
+        shownRecording = recording;
+        showTrack();
+    }
+    const auto padsText = engine.padsPlay.load() ? juce::String ("Pads: play") : juce::String ("Pads: steps");
+    if (padsModeButton.getButtonText() != padsText)
+        padsModeButton.setButtonText (padsText);
+    const auto sourceText = engine.recorder.source.load() == SampleRecorder::input ? juce::String ("Rec: mic / line in")
+                                                                                   : juce::String ("Rec: BizGroove");
+    if (recSourceButton.getButtonText() != sourceText)
+        recSourceButton.setButtonText (sourceText);
+
     for (auto* k : knobs)
         k->refresh();
     pitch.refresh();
@@ -463,7 +524,7 @@ void LaunchkeyPanel::paint (juce::Graphics& g)
     drawPrinted (g, juce::String::fromUTF8 ("\xe2\x96\xb2"), launchArrowArea);
     drawPrinted (g, juce::String::fromUTF8 ("\xe2\x96\xbc"), ssmArrowArea);
     drawPrinted (g, "Track", trackLabelArea);
-    drawPrinted (g, "Capture MIDI", recordLabelArea, juce::Justification::centredRight, 10.0f);
+    drawPrinted (g, "Record sample", recordLabelArea, juce::Justification::centredRight, 10.0f);
 
     const char* padModes[8] = { "Session", "Drum", "Custom", "Device", "Volume", "Pan", "Sends", "Custom" };
     const int w = padModeLabelArea.getWidth() / 8;
@@ -500,6 +561,7 @@ void LaunchkeyPanel::resized()
     // Left column: Shift (knob row), Transpose (top pad row), Octave -/+ (bottom pad row).
     auto left = controls.removeFromLeft (86);
     shiftButton.setBounds (left.getX(), controls.getY() + 30, left.getWidth(), 34);
+    padsModeButton.setBounds (left.getX(), controls.getY() + 74, left.getWidth(), 30);
     transposeButton.setBounds (left.getX(), padTop + rowH / 2 - 17, left.getWidth(), 34);
     octaveLabelArea = { left.getX(), padTop + rowH + 10, left.getWidth(), 16 };
     octaveDown.setBounds (left.getX(), padTop + rowH + 28, left.getWidth() / 2 - 3, rowH - 28);
@@ -510,7 +572,10 @@ void LaunchkeyPanel::resized()
     auto right = controls.removeFromRight (176);
     wordmarkArea = { right.getX(), controls.getY() + 4, right.getWidth(), 24 };
     moreButton.setBounds (right.getX() + 16, controls.getY() + 70, right.getWidth() - 16, 30);
-    loadSampleButton.setBounds (right.getX() + 16, controls.getY() + 106, right.getWidth() - 16, 30);
+    const int halfW = (right.getWidth() - 22) / 2;
+    loadSampleButton.setBounds (right.getX() + 16, controls.getY() + 106, halfW, 26);
+    editSampleButton.setBounds (right.getX() + 22 + halfW, controls.getY() + 106, halfW, 26);
+    recSourceButton.setBounds (right.getX() + 16, controls.getY() + 136, right.getWidth() - 16, 24);
     trackInfo.setBounds (right.getX() - 120, controls.getY() + 34, right.getWidth() + 120, 22);
     const int bw = (right.getWidth() - 10) / 2;
     arpButton.setBounds (right.getX(), padTop, bw, rowH);
