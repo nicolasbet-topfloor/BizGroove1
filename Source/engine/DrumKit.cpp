@@ -125,6 +125,18 @@ void DrumKit::trigger (int drum, float velocity01)
     v.f1.reset();
     v.f2.reset();
 
+    // A pad with a recording plays it, tuned by Pitch and shortened by Length.
+    const auto* sample = padSamples[(size_t) drum].get();
+    v.fromSample = sample != nullptr;
+    if (sample != nullptr)
+    {
+        const float ratio = std::pow (2.0f, juce::jlimit (-12.0f, 12.0f, p.pitch.load()) / 12.0f);
+        v.samplePos = 0.0;
+        v.sampleStep = ratio * sample->sampleRate / sampleRate;
+        const double seconds = sample->audio.getNumSamples() / sample->sampleRate;
+        v.ampCoef = lengthMult >= 1.0f ? 1.0f : fadeCoef ((float) (seconds * lengthMult), sampleRate);
+    }
+
     // Choke: closed (42) and pedal (44) hi-hats cut the open hi-hat (46).
     if (choke.load() && (drum == 6 || drum == 8) && voices[10].active)
     {
@@ -143,6 +155,11 @@ bool DrumKit::isSounding() const
 
 void DrumKit::render (juce::AudioBuffer<float>& out, int startSample, int numSamples, const juce::MidiBuffer& midi)
 {
+    // Pad recordings are swapped by the message thread; skip a block rather than wait.
+    const juce::SpinLock::ScopedTryLockType sl (padLock);
+    if (! sl.isLocked())
+        return;
+
     float* left = out.getWritePointer (0, startSample);
     float* right = out.getNumChannels() > 1 ? out.getWritePointer (1, startSample) : left;
 
@@ -168,6 +185,15 @@ void DrumKit::render (juce::AudioBuffer<float>& out, int startSample, int numSam
 
 void DrumKit::renderVoice (int drum, Voice& v, float* left, float* right, int numSamples)
 {
+    if (v.fromSample)
+    {
+        if (const auto* s = padSamples[(size_t) drum].get())
+            renderSampleVoice (drum, v, *s, left, right, numSamples);
+        else
+            v.active = false;
+        return;
+    }
+
     const auto& p = drums[(size_t) drum];
     const auto& spec = specs[(size_t) drum];
     const float sr = (float) sampleRate;
@@ -298,6 +324,124 @@ void DrumKit::renderVoice (int drum, Voice& v, float* left, float* right, int nu
     }
 
     if (v.phase > 1.0e6) v.phase = std::fmod (v.phase, (double) twoPi);
+}
+
+// ============================================================== pad samples
+
+void DrumKit::setPadSample (int drum, const juce::AudioBuffer<float>& audio, double fileSampleRate, const juce::String& name)
+{
+    if (! juce::isPositiveAndBelow (drum, numDrums) || audio.getNumSamples() < 2 || audio.getNumChannels() < 1)
+        return;
+
+    auto fresh = std::make_unique<PadSample>();
+    fresh->audio.setSize (2, audio.getNumSamples());
+    for (int ch = 0; ch < 2; ++ch)
+        fresh->audio.copyFrom (ch, 0, audio, juce::jmin (ch, audio.getNumChannels() - 1), 0, audio.getNumSamples());
+    fresh->sampleRate = fileSampleRate;
+    fresh->name = name;
+
+    std::unique_ptr<PadSample> old;
+    {
+        const juce::SpinLock::ScopedLockType sl (padLock);
+        old = std::move (padSamples[(size_t) drum]);
+        padSamples[(size_t) drum] = std::move (fresh);
+        voices[(size_t) drum].active = false;
+    }
+}
+
+void DrumKit::clearPadSample (int drum)
+{
+    if (! juce::isPositiveAndBelow (drum, numDrums))
+        return;
+    std::unique_ptr<PadSample> old;
+    {
+        const juce::SpinLock::ScopedLockType sl (padLock);
+        old = std::move (padSamples[(size_t) drum]);
+        voices[(size_t) drum].active = false;
+    }
+}
+
+bool DrumKit::hasPadSample (int drum) const
+{
+    const juce::SpinLock::ScopedLockType sl (padLock);
+    return juce::isPositiveAndBelow (drum, numDrums) && padSamples[(size_t) drum] != nullptr;
+}
+
+juce::String DrumKit::getPadSampleName (int drum) const
+{
+    const juce::SpinLock::ScopedLockType sl (padLock);
+    return juce::isPositiveAndBelow (drum, numDrums) && padSamples[(size_t) drum] != nullptr
+               ? padSamples[(size_t) drum]->name : juce::String();
+}
+
+void DrumKit::renderSampleVoice (int drum, Voice& v, const PadSample& s, float* left, float* right, int numSamples)
+{
+    const auto& p = drums[(size_t) drum];
+    const float tone = juce::jlimit (0.0f, 1.0f, p.tone.load());
+    const bool filterOn = tone < 0.98f;
+    if (filterOn)
+    {
+        // Tone darkens the recording: from 200 Hz up to fully open.
+        const float cutoff = 200.0f * std::pow (100.0f, tone);
+        v.f1.set (cutoff, 0.7f, sampleRate);
+        v.f2.set (cutoff, 0.7f, sampleRate);
+    }
+    const float snap = juce::jlimit (0.0f, 1.0f, p.snap.load());
+    const float drive = juce::jlimit (0.0f, 1.0f, p.drive.load());
+    const float driveK = 1.0f + 9.0f * drive;
+    const float driveNorm = 1.0f / std::tanh (driveK);
+    const float pan = juce::jlimit (-1.0f, 1.0f, p.pan.load());
+    const float panL = std::cos ((pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f) * juce::MathConstants<float>::sqrt2;
+    const float panR = std::sin ((pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f) * juce::MathConstants<float>::sqrt2;
+    const float level = juce::jlimit (0.0f, 1.0f, p.volume.load()) * v.velocityGain;
+
+    const float* srcL = s.audio.getReadPointer (0);
+    const float* srcR = s.audio.getReadPointer (1);
+    const int last = s.audio.getNumSamples() - 1;
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        if (v.samplePos >= (double) last)
+        {
+            v.active = false;
+            break;
+        }
+        const int i0 = (int) v.samplePos;
+        const float frac = (float) (v.samplePos - (double) i0);
+        float xl = srcL[i0] + frac * (srcL[i0 + 1] - srcL[i0]);
+        float xr = srcR[i0] + frac * (srcR[i0 + 1] - srcR[i0]);
+
+        if (filterOn)
+        {
+            float lo, bp, hp;
+            v.f1.process (xl, lo, bp, hp);
+            xl = lo;
+            v.f2.process (xr, lo, bp, hp);
+            xr = lo;
+        }
+
+        const float click = snap * v.click * noise() * 0.9f;
+        xl = (xl + click) * v.amp;
+        xr = (xr + click) * v.amp;
+        if (drive > 0.01f)
+        {
+            xl = std::tanh (driveK * xl) * driveNorm;
+            xr = std::tanh (driveK * xr) * driveNorm;
+        }
+
+        left[i] += xl * level * panL;
+        right[i] += xr * level * panR;
+
+        v.samplePos += v.sampleStep;
+        v.amp *= v.ampCoef;
+        v.click *= v.clickCoef;
+
+        if (v.amp < 1.0e-4f)
+        {
+            v.active = false;
+            break;
+        }
+    }
 }
 
 } // namespace bizgroove
