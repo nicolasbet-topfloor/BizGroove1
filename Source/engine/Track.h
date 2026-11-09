@@ -49,6 +49,10 @@ struct Track
     juce::String sampleFileName;
     juce::MemoryBlock sampleFileData;
 
+    /** Recordings on the drum pads, kept so projects and sounds can save them (message thread). */
+    std::array<juce::String, DrumKit::numDrums> padFileNames;
+    std::array<juce::MemoryBlock, DrumKit::numDrums> padFileData;
+
     // ---- audio thread only
     juce::Synthesiser synth;
     juce::Synthesiser polySynth;
