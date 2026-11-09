@@ -24,6 +24,10 @@ void AudioEngine::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
         for (int i = 0; i < t->synth.getNumVoices(); ++i)
             if (auto* v = dynamic_cast<TestSynthVoice*> (t->synth.getVoice (i)))
                 v->prepare (sampleRate, maxBlock);
+        t->polySynth.setCurrentPlaybackSampleRate (sampleRate);
+        for (int i = 0; i < t->polySynth.getNumVoices(); ++i)
+            if (auto* v = dynamic_cast<PolyVoice*> (t->polySynth.getVoice (i)))
+                v->prepare (sampleRate);
         t->kit.prepare (sampleRate);
         t->samplerEngine.prepare (sampleRate, maxBlock);
         t->strip.prepare (sampleRate);
@@ -82,6 +86,7 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     if (sel != lastSelected)
     {
         tracks[(size_t) lastSelected]->synth.allNotesOff (0, true);
+        tracks[(size_t) lastSelected]->polySynth.allNotesOff (0, true);
         lastSelected = sel;
     }
 
@@ -99,6 +104,7 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         if (type != lastType[(size_t) t])
         {
             tracks[(size_t) t]->synth.allNotesOff (0, false);   // the sound was changed
+            tracks[(size_t) t]->polySynth.allNotesOff (0, false);
             lastType[(size_t) t] = type;
         }
         isDrum[(size_t) t] = type == Track::drums;
@@ -153,7 +159,12 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         else if (type == Track::sampler)
             tr.samplerEngine.render (trackBuffer, 0, numSamples, trackMidi[(size_t) t]);
         else
-            tr.synth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
+        {
+            if (type == Track::poly)
+                tr.polySynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
+            else
+                tr.synth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
+        }
 
         bool audible = ! tr.mute.load() && (! anySolo || tr.mix.solo.load());
         if (only != -1)
