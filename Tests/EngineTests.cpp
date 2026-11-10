@@ -1176,6 +1176,100 @@ static void testFm()
     check (Presets::factorySounds (Track::fm).size() >= 8, "fm: has factory sounds");
 }
 
+static bool hasMessage (const juce::MidiBuffer& b, std::function<bool (const juce::MidiMessage&)> test)
+{
+    for (const auto m : b)
+        if (test (m.getMessage()))
+            return true;
+    return false;
+}
+
+// External MIDI tracks: notes and knobs go out on the right channel, nothing hangs, the input can be heard, and it all saves.
+static void testExternal()
+{
+    std::cout << "External MIDI\n";
+    AudioEngine e;
+    e.prepareToPlay (256, 48000.0);
+    e.selectedTrack.store (0);
+    auto& tr = e.track (0);
+    tr.type.store (Track::external);
+    tr.ext.channel.store (5);
+    juce::AudioBuffer<float> buf (2, 256);
+    auto block = [&] { buf.clear(); e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 256)); };
+
+    block();
+    e.keyboardState.noteOn (1, 60, 1.0f);
+    block();
+    check (hasMessage (e.externalMidiFor (0), [] (const juce::MidiMessage& m) { return m.isNoteOn() && m.getNoteNumber() == 60 && m.getChannel() == 5; }),
+           "external: a key plays the gear on its channel");
+    check (buf.getMagnitude (0, 0, 256) < 1.0e-6f, "external: makes no sound of its own");
+
+    ControlTargets targets (e);
+    targets.applyValue ("ext.cc1", 1.0f);
+    block();
+    check (hasMessage (e.externalMidiFor (0), [] (const juce::MidiMessage& m) {
+               return m.isController() && m.getControllerNumber() == 74 && m.getControllerValue() == 127 && m.getChannel() == 5; }),
+           "external: knob 1 sends CC 74");
+    block();
+    check (e.externalMidiFor (0).isEmpty(), "external: a knob sends only when it moves");
+
+    tr.ext.channel.store (6);
+    block();
+    check (hasMessage (e.externalMidiFor (0), [] (const juce::MidiMessage& m) { return m.isAllNotesOff() && m.getChannel() == 5; }),
+           "external: changing the channel stops the notes on the old one");
+
+    tr.type.store (Track::testSynth);
+    block();
+    check (hasMessage (e.externalMidiFor (0), [] (const juce::MidiMessage& m) { return m.isAllNotesOff(); }),
+           "external: changing the sound stops the gear's notes");
+    e.keyboardState.noteOff (1, 60, 0.0f);
+    tr.type.store (Track::external);
+    block();
+
+    juce::AudioBuffer<float> input (2, 256);
+    for (int i = 0; i < 256; ++i)
+    {
+        const float s = 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * 440.0 * i / 48000.0);
+        input.setSample (0, i, s);
+        input.setSample (1, i, s);
+    }
+    float heard = 0.0f;
+    block();
+    check (buf.getMagnitude (0, 0, 256) < 1.0e-6f, "external: the input is silent while Hear input is off");
+    tr.ext.monitor.store (true);
+    for (int i = 0; i < 20; ++i)
+    {
+        e.setLiveInput (input, 0, 256);
+        block();
+        heard = juce::jmax (heard, buf.getMagnitude (0, 0, 256));
+    }
+    std::cout << "  info  heard " << heard << "\n";
+    check (heard > 0.05f, "external: Hear input plays the sound card's input through the track");
+    tr.ext.monitor.store (false);
+    for (int i = 0; i < 20; ++i)
+    {
+        e.setLiveInput (input, 0, 256);
+        block();
+    }
+    check (buf.getMagnitude (0, 0, 256) < 1.0e-3f, "external: Hear input off silences it again");
+
+    tr.ext.drums.store (true);
+    check (tr.playsDrums(), "external: can play drum steps");
+
+    tr.externalDeviceName = "FM-1";
+    tr.ext.ccNumber[2].store (20);
+    juce::String err;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    juce::TemporaryFile project (Project::fileExtension);
+    AudioEngine e2;
+    check (Project::save (e, project.getFile(), err) && Project::open (e2, project.getFile(), formats, err)
+           && e2.track (0).type.load() == Track::external && e2.track (0).externalDeviceName == "FM-1"
+           && e2.track (0).ext.channel.load() == 6 && e2.track (0).ext.ccNumber[2].load() == 20 && e2.track (0).ext.drums.load(),
+           "external: a project keeps the track, its MIDI out and its knobs");
+    check (Presets::factorySounds (Track::external).size() >= 4, "external: has starting sounds");
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI init; // needed by some JUCE singletons
@@ -1201,6 +1295,7 @@ int main (int argc, char* argv[])
     testDrumModels();
     testWavetable();
     testFm();
+    testExternal();
     testRender (argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]) : juce::File());
 
     std::cout << (failures == 0 ? "All tests passed\n" : juce::String (failures) + " test(s) failed\n");
