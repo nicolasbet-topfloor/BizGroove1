@@ -78,13 +78,30 @@ juce::String MasterEffects::divisionName (int division)
     }
 }
 
+juce::String MasterEffects::reverbTypeName (int type)
+{
+    switch (type)
+    {
+        case plate:  return "Plate";
+        case spring: return "Spring";
+        default:     return "Room / hall";
+    }
+}
+
+juce::String MasterEffects::delayTypeName (int type)
+{
+    return type == tape ? juce::String ("Tape echo") : juce::String ("Digital (ping-pong)");
+}
+
 void MasterEffects::prepare (double sampleRate, int maxBlock)
 {
     sr = sampleRate;
-    juce::ignoreUnused (maxBlock);
     reverb.setSampleRate (sampleRate);
     delayLine.setSize (2, (int) (sampleRate * 2.5) + 1);
     delayTime.reset (sampleRate, 0.05);
+    tapeEcho.prepare (sampleRate);
+    springReverb.prepare (sampleRate);
+    wet.setSize (2, juce::jmax (512, maxBlock));
     reset();
 }
 
@@ -94,27 +111,61 @@ void MasterEffects::reset()
     delayLine.clear();
     writePos = 0;
     lastSize = -1.0f;
+    lastTone = -1.0f;
+    lastReverbType = -1;
+    lastDelayType = -1;
+    tapeEcho.reset();
+    springReverb.reset();
 }
 
 void MasterEffects::process (juce::AudioBuffer<float>& reverbBus, juce::AudioBuffer<float>& delayBus,
                              juce::AudioBuffer<float>& out, int startSample, int numSamples, double bpm)
 {
     // Reverb: fully wet on the bus, added to the mix.
+    const int rType = juce::jlimit (0, numReverbTypes - 1, reverbType.load());
     const float size = juce::jlimit (0.0f, 1.0f, reverbSize.load());
-    if (! juce::exactlyEqual (size, lastSize))
+    const float tone = juce::jlimit (0.0f, 1.0f, reverbTone.load());
+    if (rType == spring)
     {
-        juce::Reverb::Parameters p;
-        p.roomSize = 0.3f + 0.65f * size;
-        p.damping = 0.5f;
-        p.wetLevel = 1.0f;
-        p.dryLevel = 0.0f;
-        p.width = 1.0f;
-        reverb.setParameters (p);
-        lastSize = size;
+        if (numSamples <= wet.getNumSamples())
+        {
+            wet.clear (0, numSamples);
+            springReverb.process (reverbBus.getReadPointer (0), reverbBus.getReadPointer (1),
+                                  wet.getWritePointer (0), wet.getWritePointer (1), numSamples,
+                                  size, tone, juce::jlimit (0.0f, 1.0f, springDrip.load()));
+            for (int ch = 0; ch < 2; ++ch)
+                reverbBus.copyFrom (ch, 0, wet, ch, 0, numSamples);
+        }
+        lastReverbType = rType;
     }
-    reverb.processStereo (reverbBus.getWritePointer (0), reverbBus.getWritePointer (1), numSamples);
+    else
+    {
+        if (! juce::exactlyEqual (size, lastSize) || ! juce::exactlyEqual (tone, lastTone) || rType != lastReverbType)
+        {
+            juce::Reverb::Parameters p;
+            if (rType == plate)
+            {
+                // A plate: dense and bright from the first instant.
+                p.roomSize = 0.55f + 0.42f * size;
+                p.damping = 0.05f + 0.5f * (1.0f - tone);
+            }
+            else
+            {
+                p.roomSize = 0.3f + 0.65f * size;
+                p.damping = 0.2f + 0.6f * (1.0f - tone);
+            }
+            p.wetLevel = 1.0f;
+            p.dryLevel = 0.0f;
+            p.width = 1.0f;
+            reverb.setParameters (p);
+            lastSize = size;
+            lastTone = tone;
+            lastReverbType = rType;
+        }
+        reverb.processStereo (reverbBus.getWritePointer (0), reverbBus.getWritePointer (1), numSamples);
+    }
 
-    // Delay: time from the tempo; each repeat swaps sides (ping-pong).
+    // Delay: time from the tempo. Digital: each repeat swaps sides (ping-pong). Tape: the head echo.
     const double beat = 60.0 / juce::jlimit (20.0, 300.0, bpm) * sr;
     double factor = 0.75;
     switch (delayDivision.load())
@@ -125,6 +176,15 @@ void MasterEffects::process (juce::AudioBuffer<float>& reverbBus, juce::AudioBuf
         case quarter:      factor = 1.0;  break;
         default: break;
     }
+    const int dType = juce::jlimit (0, numDelayTypes - 1, delayType.load());
+    if (dType != lastDelayType)
+    {
+        delayLine.clear();   // switching type starts without the other type's echoes
+        tapeEcho.reset();
+        lastDelayType = dType;
+    }
+    const bool tapeMode = dType == tape;
+
     const int lineLength = delayLine.getNumSamples();
     delayTime.setTargetValue ((float) juce::jlimit (1.0, (double) lineLength - 2.0, beat * factor));
     const float fb = juce::jlimit (0.0f, 0.9f, delayFeedback.load());
@@ -140,21 +200,30 @@ void MasterEffects::process (juce::AudioBuffer<float>& reverbBus, juce::AudioBuf
 
     for (int i = 0; i < numSamples; ++i)
     {
+        float yL = 0.0f, yR = 0.0f;
         const float d = delayTime.getNextValue();
-        double readPos = writePos - d;
-        while (readPos < 0) readPos += lineLength;
-        const int i0 = (int) readPos, i1 = (i0 + 1) % lineLength;
-        const float frac = (float) (readPos - i0);
-        const float yL = dl[i0] + frac * (dl[i1] - dl[i0]);
-        const float yR = dr[i0] + frac * (dr[i1] - dr[i0]);
+        if (! tapeMode)
+        {
+            double readPos = writePos - d;
+            while (readPos < 0) readPos += lineLength;
+            const int i0 = (int) readPos, i1 = (i0 + 1) % lineLength;
+            const float frac = (float) (readPos - i0);
+            yL = dl[i0] + frac * (dl[i1] - dl[i0]);
+            yR = dr[i0] + frac * (dr[i1] - dr[i0]);
 
-        dl[writePos] = inL[i] + yR * fb;   // ping-pong
-        dr[writePos] = inR[i] + yL * fb;
-        writePos = (writePos + 1) % lineLength;
+            dl[writePos] = inL[i] + yR * fb;   // ping-pong
+            dr[writePos] = inR[i] + yL * fb;
+            writePos = (writePos + 1) % lineLength;
+        }
 
         oL[i] += rvL[i] + yL;
         oR[i] += rvR[i] + yR;
     }
+
+    if (tapeMode)
+        tapeEcho.process (inL, inR, oL, oR, numSamples, beat * factor / sr, tapeHeads.load(), fb / 0.9f,
+                          juce::jlimit (0.0f, 1.0f, tapeWow.load()), juce::jlimit (0.0f, 1.0f, tapeTone.load()),
+                          juce::jlimit (0.0f, 1.0f, tapeWear.load()));
 }
 
 } // namespace bizgroove
