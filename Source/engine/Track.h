@@ -59,7 +59,7 @@ struct Track
     PolyParams polyParams;
     WaveParams waveParams;
     FmParams fmParams;
-    ExternalParams external;
+    ExternalParams ext;   // External MIDI tracks
 
     /** External MIDI tracks: the MIDI output they play, by name (kept in
         projects) and identifier (found again on this computer). Message thread. */
@@ -69,7 +69,7 @@ struct Track
     bool playsDrums() const
     {
         const int t = type.load();
-        return t == drums || (t == external && external.drums.load());
+        return t == drums || (t == external && ext.drums.load());
     }
     DrumKit kit;
     Sampler samplerEngine;
