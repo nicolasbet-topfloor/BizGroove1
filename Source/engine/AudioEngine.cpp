@@ -115,6 +115,48 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     // 3. The song clock writes each track's notes for this block.
     bool playing = transport.playing.load();
     const double bpm = transport.bpm.load();
+
+    // The count-in: a bar or two of clicks, then play starts on the very sample the bar is due.
+    numClicks = 0;
+    if (countInCancel.exchange (false))
+    {
+        countInRequest.store (false);
+        countInRemaining = 0.0;
+    }
+    if (countInRequest.exchange (false) && ! playing)
+    {
+        countInRemaining = currentRate * 60.0 / juce::jlimit (20.0, 300.0, bpm) * 4.0 * juce::jlimit (1, 2, countInBars.load());
+        countInNextBeat = 0.0;
+        countInBeat = 0;
+    }
+    if (countInRemaining > 0.0)
+    {
+        const double beat = currentRate * 60.0 / juce::jlimit (20.0, 300.0, bpm);
+        if (playing)
+            countInRemaining = 0.0;   // Play was pressed meanwhile: no need to wait
+        else
+        {
+            while (countInNextBeat < (double) numSamples && countInNextBeat < countInRemaining - 0.5)
+            {
+                addClick ((int) countInNextBeat, countInBeat % 4 == 0);
+                ++countInBeat;
+                countInNextBeat += beat;
+            }
+            if (countInRemaining < (double) numSamples)
+            {
+                song.setStartOffset ((int) countInRemaining);
+                transport.playing.store (true);
+                playing = true;
+                countInRemaining = 0.0;
+            }
+            else
+            {
+                countInRemaining = juce::jmax (1.0e-6, countInRemaining - numSamples);   // ending on a block edge: start at the next block's first sample
+                countInNextBeat -= numSamples;
+            }
+        }
+    }
+    countInBeatsLeft.store (countInRemaining > 0.0 ? (int) std::ceil (countInRemaining / (currentRate * 60.0 / juce::jlimit (20.0, 300.0, bpm)) - 1.0e-6) : 0);
     if (playing && ! wasPlaying)
         transportSamples = 0;
     if (! playing && wasPlaying)
@@ -149,6 +191,13 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         playing = false;
     }
 
+    // The metronome follows the song's beats.
+    const int mode = metronomeMode.load();
+    if (playing && (mode == metronomeOn || (mode == metronomeWhileRecording && recordNotes.load())))
+        for (int i = 0; i < song.getNumStepStarts(); ++i)
+            if (const auto& start = song.getStepStart (i); start.step % 4 == 0)
+                addClick (start.position, start.step == 0);
+
     // 4. Live notes. MIDI channel 10 (the Launchkey pads in Drum mode) plays the
     //    drums: the selected track if it is a drum track, otherwise the first
     //    drum track. Everything else goes to the selected track, so the keys can
@@ -173,10 +222,13 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         }
         trackMidi[(size_t) dest].addEvent (m, meta.samplePosition);
 
-        // Recording: the note lands on the nearest step of the pattern playing.
+        // Recording: the note lands on the nearest step of the pattern playing, with how
+        // hard it was played; letting go of the key sets how long it lasts.
         if (playing && recordNotes.load() && m.isNoteOn() && m.getVelocity() > 0)
             song.recordNote (dest, isDrum[(size_t) dest], m.getNoteNumber(), DrumKit::drumForNote (m.getNoteNumber()),
-                             meta.samplePosition, numSamples, bpm);
+                             meta.samplePosition, numSamples, bpm, (int) m.getVelocity());
+        else if (playing && ! isDrum[(size_t) dest] && (m.isNoteOff() || (m.isNoteOn() && m.getVelocity() == 0)))
+            song.recordNoteOff (dest, m.getNoteNumber(), meta.samplePosition, numSamples, bpm);
     }
 
     // What the effects need: the tempo, the song position, and where the kick drums hit.
@@ -293,6 +345,48 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     liveInputSamples = 0;   // the next block brings its own input, or none (offline export)
 }
 
+void AudioEngine::startWithCountIn()
+{
+    if (transport.playing.load())
+        return;
+    if (countInBars.load() > 0)
+        countInRequest.store (true);
+    else
+        transport.playing.store (true);
+}
+
+void AudioEngine::addClick (int position, bool accent)
+{
+    if (numClicks < (int) clicks.size())
+        clicks[(size_t) numClicks++] = { position, accent };
+}
+
+void AudioEngine::renderMetronome (juce::AudioBuffer<float>& buffer, int startSample, int numSamples)
+{
+    const float level = 0.5f * juce::jlimit (0.0f, 1.0f, metronomeLevel.load());
+    if (numClicks == 0 && clickAmp < 1.0e-4f)
+        return;
+    const float decay = std::exp (-1.0f / (0.018f * (float) currentRate));   // a short tick
+    int next = 0;
+    for (int i = 0; i < numSamples; ++i)
+    {
+        while (next < numClicks && clicks[(size_t) next].position <= i)
+        {
+            clickAmp = level;
+            clickFreq = clicks[(size_t) next].accent ? 1760.0 : 1100.0;
+            clickPhase = 0.0;
+            ++next;
+        }
+        if (clickAmp < 1.0e-4f)
+            continue;
+        const float x = clickAmp * (float) std::sin (clickPhase);
+        clickPhase += juce::MathConstants<double>::twoPi * clickFreq / currentRate;
+        clickAmp *= decay;
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            buffer.getWritePointer (ch, startSample)[i] += x;
+    }
+}
+
 void AudioEngine::setLiveInput (const juce::AudioBuffer<float>& input, int startSample, int numSamples)
 {
     if (numSamples > liveInput.getNumSamples())
@@ -344,7 +438,9 @@ int AudioEngine::getStepNote (int step)
 
 void AudioEngine::setStepNote (int step, int note)
 {
-    song.scene (song.currentScene.load()).tracks[(size_t) selectedTrack.load()].steps[(size_t) step].note.store (juce::jlimit (0, 127, note));
+    // A chord moves as a whole.
+    auto& st = song.scene (song.currentScene.load()).tracks[(size_t) selectedTrack.load()].steps[(size_t) step];
+    st.transpose (juce::jlimit (0, 127, note) - st.note.load());
 }
 
 } // namespace bizgroove
