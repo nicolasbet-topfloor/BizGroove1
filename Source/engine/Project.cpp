@@ -88,6 +88,7 @@ juce::var Project::toVar (AudioEngine& e)
         o->setProperty ("poly", juce::var (poly));
         o->setProperty ("wave", waveParamsToVar (tr.waveParams));
         o->setProperty ("fm", fmParamsToVar (tr.fmParams));
+        o->setProperty ("noise", noiseParamsToVar (tr.noiseParams));
         o->setProperty ("external", externalParamsToVar (tr.ext, tr.externalDeviceName));
         o->setProperty ("inserts", insertsToVar (tr.inserts));
 
@@ -269,6 +270,7 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
 
             applyWaveParams (tr.waveParams, o["wave"]);
             applyFmParams (tr.fmParams, o["fm"]);
+            applyNoiseParams (tr.noiseParams, o["noise"]);
             applyExternalParams (tr.ext, tr.externalDeviceName, o["external"]);
             tr.externalDeviceId = {};   // found again by name on this computer
             applyInserts (tr.inserts, o["inserts"]);
