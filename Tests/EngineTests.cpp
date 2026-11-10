@@ -1438,6 +1438,172 @@ static void testPerform()
     check (back > 0.5f * playing, "perform: letting go brings the music back");
 }
 
+// Chords, lengths and how hard: a step plays all its notes, for as long as it says.
+static void testChordSteps()
+{
+    std::cout << "Chords and note lengths\n";
+    constexpr double sr = 48000.0, bpm = 120.0;
+    constexpr int block = 256;
+    const double samplesPerStep = sr * 60.0 / bpm / 4.0;   // 6000
+
+    Song song;
+    song.clearScene (0);
+    auto& st = song.scene (0).tracks[0].steps[0];
+    st.setSingle (60, 90);
+    st.addNote (64);
+    st.addNote (67);
+    st.length.store (2.0f);
+    st.on.store (true);
+    song.prepare (sr);
+
+    std::array<juce::MidiBuffer, Song::numTracks> out;
+    std::array<bool, Song::numTracks> drums {};
+    std::vector<std::pair<juce::int64, juce::MidiMessage>> events;
+    for (juce::int64 pos = 0; pos < (juce::int64) (samplesPerStep * 4); pos += block)
+    {
+        for (auto& m : out) m.clear();
+        song.process (out, block, bpm, true, drums);
+        for (const auto meta : out[0])
+            events.emplace_back (pos + meta.samplePosition, meta.getMessage());
+    }
+    int ons = 0, offs = 0;
+    bool velocityOk = true, offTimeOk = true;
+    for (const auto& [time, m] : events)
+    {
+        if (m.isNoteOn()) { ++ons; velocityOk = velocityOk && m.getVelocity() == 90; }
+        if (m.isNoteOff())
+        {
+            ++offs;
+            offTimeOk = offTimeOk && std::abs ((double) time - 2.0 * samplesPerStep) < 0.05 * samplesPerStep;
+        }
+    }
+    check (ons == 3, "chord: a step plays its three notes");
+    check (velocityOk, "chord: at the step's velocity");
+    check (offs == 3 && offTimeOk, "chord: they last the step's length (2 steps)");
+
+    std::array<int, Song::maxChord> notes {};
+    st.removeNote (60);
+    check (st.getNotes (notes) == 2 && notes[0] == 64 && st.on.load(), "chord: taking out the first note keeps the others");
+    st.removeNote (64);
+    st.removeNote (67);
+    check (! st.on.load(), "chord: taking out the last note switches the step off");
+}
+
+// Recording a chord, held for a while: one step gets every note and the time it was held.
+static void testRecordChord()
+{
+    std::cout << "Recording chords and lengths\n";
+    AudioEngine e;
+    constexpr int block = 256;
+    e.prepareToPlay (block, 48000.0);
+    e.song.clearScene (0);
+    e.selectedTrack.store (0);
+    e.track (0).type.store (Track::poly);
+    juce::AudioBuffer<float> buf (2, block);
+    auto run = [&] { buf.clear(); e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, block)); };
+
+    e.transport.bpm.store (120.0);
+    e.transport.playing.store (true);
+    e.recordNotes.store (true);
+    for (int i = 0; i < 30; ++i) run();
+    for (int n : { 60, 64, 67 }) e.keyboardState.noteOn (1, n, 0.8f);
+    run();
+    // Hold for about two steps (12000 samples at 120 BPM).
+    for (int i = 0; i < 12000 / block; ++i) run();
+    for (int n : { 60, 64, 67 }) e.keyboardState.noteOff (1, n, 0.0f);
+    run();
+
+    int stepsOn = 0, chordNotes = 0;
+    float length = 0.0f;
+    int velocity = 0;
+    for (auto& step : e.song.scene (0).tracks[0].steps)
+        if (step.on.load())
+        {
+            ++stepsOn;
+            std::array<int, Song::maxChord> notes {};
+            chordNotes = step.getNotes (notes);
+            length = step.length.load();
+            velocity = step.velocity.load();
+        }
+    std::cout << "  info  recorded " << stepsOn << " step(s), " << chordNotes << " notes, length " << length << ", velocity " << velocity << "\n";
+    check (stepsOn == 1 && chordNotes == 3, "record: a chord lands on one step, all three notes");
+    check (length >= 1.75f && length <= 2.25f, "record: the step keeps how long the chord was held");
+    check (velocity > 90 && velocity < 110, "record: and how hard it was played");
+    e.transport.playing.store (false);
+    run();
+
+    // Projects keep chords, lengths and velocities.
+    const auto saved = Project::toVar (e);
+    e.song.clearScene (0);
+    for (auto& step : e.song.scene (0).tracks[0].steps)
+        step.setSingle (48);
+    Project::applyVar (e, saved);
+    int keptNotes = 0;
+    float keptLength = 0.0f;
+    for (auto& step : e.song.scene (0).tracks[0].steps)
+        if (step.on.load())
+        {
+            std::array<int, Song::maxChord> notes {};
+            keptNotes = step.getNotes (notes);
+            keptLength = step.length.load();
+        }
+    check (keptNotes == 3 && std::abs (keptLength - length) < 1.0e-4f, "record: a saved project keeps the chord and its length");
+}
+
+// The metronome clicks on the beats; the count-in clicks a bar, then play starts exactly on time.
+static void testMetronome()
+{
+    std::cout << "Metronome and count-in\n";
+    AudioEngine e;
+    constexpr int block = 256;
+    constexpr double rate = 48000.0;
+    e.prepareToPlay (block, rate);
+    e.metronomeLevel.store (1.0f);
+    juce::AudioBuffer<float> buf (2, block), click (2, block);
+    int onsets = 0;
+    bool quiet = true;
+    juce::int64 sinceLoud = 100000;
+    auto run = [&] {
+        buf.clear();
+        e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, block));
+        click.clear();
+        e.renderMetronome (click, 0, block);
+        for (int i = 0; i < block; ++i)
+        {
+            const bool loud = std::abs (click.getSample (0, i)) > 0.05f;
+            if (loud && quiet && sinceLoud > 4000) ++onsets;
+            sinceLoud = loud ? 0 : sinceLoud + 1;
+            quiet = ! loud;
+        }
+    };
+
+    const int bar = (int) (rate * 2.0);   // 120 BPM
+    e.transport.bpm.store (120.0);
+    e.metronomeMode.store (AudioEngine::metronomeOn);
+    e.transport.playing.store (true);
+    for (int i = 0; i < bar / block; ++i) run();
+    check (onsets == 4, "metronome: four clicks in a bar (" + juce::String (onsets) + ")");
+    e.transport.playing.store (false);
+    run();
+
+    e.metronomeMode.store (AudioEngine::metronomeOff);
+    e.countInBars.store (1);
+    onsets = 0;
+    e.startWithCountIn();
+    int blocks = 0;
+    while (! e.transport.playing.load() && blocks < 2 * bar / block)
+    {
+        run();
+        ++blocks;
+    }
+    const int startedBlock = blocks - 1;   // the block in which play began
+    check (onsets == 4, "count-in: four clicks before play (" + juce::String (onsets) + ")");
+    check (startedBlock == bar / block, "count-in: play starts after exactly one bar");
+    check (e.song.playheadStep.load() == 0, "count-in: on the first step");
+    e.transport.playing.store (false);
+    run();
+}
+
 // While the More window is open, the controller's panel knobs turn its row instead of the main knobs.
 static void testKnobPage()
 {
@@ -1651,6 +1817,9 @@ int main (int argc, char* argv[])
     testLiveRecord();
     testCopyDrum();
     testKnobPage();
+    testChordSteps();
+    testRecordChord();
+    testMetronome();
     testLevels();
     testRender (argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]) : juce::File());
 
