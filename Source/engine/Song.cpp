@@ -94,10 +94,7 @@ void Song::copyScene (int from, int to)
     for (int t = 0; t < numTracks; ++t)
     {
         for (int i = 0; i < numSteps; ++i)
-        {
-            b.tracks[(size_t) t].steps[(size_t) i].on.store (a.tracks[(size_t) t].steps[(size_t) i].on.load());
-            b.tracks[(size_t) t].steps[(size_t) i].note.store (a.tracks[(size_t) t].steps[(size_t) i].note.load());
-        }
+            b.tracks[(size_t) t].steps[(size_t) i].copyFrom (a.tracks[(size_t) t].steps[(size_t) i]);
         for (int d = 0; d < numDrums; ++d)
             b.tracks[(size_t) t].drumLanes[(size_t) d].store (a.tracks[(size_t) t].drumLanes[(size_t) d].load());
     }
@@ -154,9 +151,41 @@ void Song::reset()
     step = -1;
     samplesUntilNextStep = 0.0;
     playheadStep.store (-1);
-    for (auto& p : pending) p.active = false;
+    for (auto& row : pending)
+        for (auto& p : row) p.active = false;
     for (auto& d : delayed) d.active = false;
     for (auto& row : skipOnce) row.fill (0);
+    for (auto& row : held)
+        for (auto& h : row) h.active = false;
+    clock = 0.0;
+    numStepStarts = 0;
+}
+
+void Song::addPendingOff (int track, int note, double remaining)
+{
+    auto& row = pending[(size_t) track];
+    for (auto& p : row)
+        if (! p.active)
+        {
+            p = { true, note, remaining };
+            return;
+        }
+    // All in use: replace the one that ends soonest.
+    auto* soonest = &row[0];
+    for (auto& p : row)
+        if (p.remaining < soonest->remaining)
+            soonest = &p;
+    *soonest = { true, note, remaining };
+}
+
+void Song::flushPending (juce::MidiBuffer& buffer, int track, int note, int position)
+{
+    for (auto& p : pending[(size_t) track])
+        if (p.active && p.note == note)
+        {
+            buffer.addEvent (juce::MidiMessage::noteOff (1, note), position);
+            p.active = false;
+        }
 }
 
 bool Song::startBar()
@@ -245,21 +274,24 @@ void Song::emit (std::array<juce::MidiBuffer, numTracks>& out, int track, int sc
     if (! st.on.load() || (skip & 1u) != 0)
         return;
 
-    auto& p = pending[(size_t) track];
-    if (p.active)
+    std::array<int, maxChord> notes {};
+    const int count = st.getNotes (notes);
+    const auto velocity = (juce::uint8) juce::jlimit (1, 127, st.velocity.load());
+    const float length = st.length.load();
+    const double duration = (length > 0.0f ? juce::jlimit (0.25, 16.0, (double) length) - 0.02 : (double) gate) * samplesPerStep;
+
+    for (int i = 0; i < count; ++i)
     {
-        buffer.addEvent (juce::MidiMessage::noteOff (1, p.note), position);
-        p.active = false;
+        const int note = notes[(size_t) i];
+        flushPending (buffer, track, note, position);   // the same note still sounding: end it first
+        buffer.addEvent (juce::MidiMessage::noteOn (1, note, velocity), position);
+
+        const double offAt = position + duration;
+        if (offAt < numSamples)
+            buffer.addEvent (juce::MidiMessage::noteOff (1, note), juce::jmax (position, (int) offAt));
+        else
+            addPendingOff (track, note, offAt - numSamples);
     }
-
-    const int note = st.note.load();
-    buffer.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), position);
-
-    const double offAt = position + gate * samplesPerStep;
-    if (offAt < numSamples)
-        buffer.addEvent (juce::MidiMessage::noteOff (1, note), juce::jmax (position, (int) offAt));
-    else
-        p = { true, note, offAt - numSamples };
 }
 
 bool Song::process (std::array<juce::MidiBuffer, numTracks>& out, int numSamples, double bpm, bool playing,
@@ -268,11 +300,13 @@ bool Song::process (std::array<juce::MidiBuffer, numTracks>& out, int numSamples
     const double samplesPerStep = sampleRate * 60.0 / juce::jlimit (20.0, 300.0, bpm) / 4.0;   // 1/16 notes
 
     // Note-offs and swung hits carried over from the last block.
+    numStepStarts = 0;
     for (int t = 0; t < numTracks; ++t)
     {
-        auto& p = pending[(size_t) t];
-        if (p.active)
+        for (auto& p : pending[(size_t) t])
         {
+            if (! p.active)
+                continue;
             if (p.remaining < numSamples)
             {
                 out[(size_t) t].addEvent (juce::MidiMessage::noteOff (1, p.note), juce::jmax (0, (int) p.remaining));
@@ -308,6 +342,8 @@ bool Song::process (std::array<juce::MidiBuffer, numTracks>& out, int numSamples
     {
         reset();
         wasPlaying = true;
+        samplesUntilNextStep = (double) juce::jmin (startOffset, numSamples - 1);   // after a count-in, the bar starts mid-block
+        startOffset = 0;
     }
 
     for (;;)
@@ -320,6 +356,8 @@ bool Song::process (std::array<juce::MidiBuffer, numTracks>& out, int numSamples
         if (step == 0 && ! startBar())
             return false;   // the song has ended
         playheadStep.store (step);
+        if (numStepStarts < (int) stepStarts.size())
+            stepStarts[(size_t) numStepStarts++] = { position, step };
 
         for (int t = 0; t < numTracks; ++t)
         {
@@ -337,10 +375,11 @@ bool Song::process (std::array<juce::MidiBuffer, numTracks>& out, int numSamples
     }
 
     samplesUntilNextStep -= numSamples;
+    clock += numSamples;
     return true;
 }
 
-void Song::recordNote (int track, bool isDrum, int note, int drum, int position, int numSamples, double bpm)
+void Song::recordNote (int track, bool isDrum, int note, int drum, int position, int numSamples, double bpm, int velocity)
 {
     if (step < 0 || ! juce::isPositiveAndBelow (track, numTracks) || (isDrum && ! juce::isPositiveAndBelow (drum, numDrums)))
         return;
@@ -366,12 +405,40 @@ void Song::recordNote (int track, bool isDrum, int note, int drum, int position,
     }
     else
     {
+        // An empty step takes the note; a step that already plays gets it added, as a chord.
         auto& st = pattern.steps[(size_t) target];
-        st.note.store (juce::jlimit (0, 127, note));
+        if (! st.on.load())
+            st.setSingle (note, velocity);
+        else if (! st.addNote (note))
+            st.velocity.store (juce::jlimit (1, 127, velocity));   // the same note again: just how hard
         st.on.store (true);
         if (ahead)
             skipOnce[(size_t) track][(size_t) target] = (std::uint16_t) (skipOnce[(size_t) track][(size_t) target] | 1u);
+
+        // Remember it until the key is let go, for its length.
+        if (juce::isPositiveAndBelow (note, 128))
+            held[(size_t) track][(size_t) note] = { true, juce::jlimit (0, numScenes - 1, sc), target,
+                                                    clock - (double) numSamples + (double) position };
     }
+}
+
+void Song::recordNoteOff (int track, int note, int position, int numSamples, double bpm)
+{
+    if (! juce::isPositiveAndBelow (track, numTracks) || ! juce::isPositiveAndBelow (note, 128))
+        return;
+    auto& h = held[(size_t) track][(size_t) note];
+    if (! h.active)
+        return;
+    h.active = false;
+
+    const double samplesPerStep = sampleRate * 60.0 / juce::jlimit (20.0, 300.0, bpm) / 4.0;
+    const double heldSteps = (clock - (double) numSamples + (double) position - h.start) / samplesPerStep;
+    const float length = (float) juce::jlimit (0.25, 16.0, std::round (heldSteps * 4.0) / 4.0);
+
+    auto& st = scenes[(size_t) h.scene]->tracks[(size_t) track].steps[(size_t) h.step];
+    std::array<int, maxChord> notes {};
+    const bool chord = st.getNotes (notes) > 1;
+    st.length.store (chord ? juce::jmax (st.length.load(), length) : length);   // a chord lasts as long as its longest note
 }
 
 } // namespace bizgroove
