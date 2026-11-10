@@ -134,11 +134,21 @@ juce::var Project::toVar (AudioEngine& e)
         {
             const auto& p = e.song.scene (s).tracks[(size_t) t];
             int mask = 0;
-            juce::Array<juce::var> notes, lanes;
+            bool extras = false;
+            juce::Array<juce::var> notes, lanes, chords, lengths, velocities;
             for (int i = 0; i < Song::numSteps; ++i)
             {
-                if (p.steps[(size_t) i].on.load()) mask |= (1 << i);
-                notes.add (p.steps[(size_t) i].note.load());
+                const auto& st = p.steps[(size_t) i];
+                if (st.on.load()) mask |= (1 << i);
+                notes.add (st.note.load());
+                juce::Array<juce::var> chord;
+                for (const auto& c : st.chord)
+                    if (const int v = c.load(); v > 0)
+                        chord.add (v - 1);
+                chords.add (chord);
+                lengths.add (st.length.load());
+                velocities.add (st.velocity.load());
+                extras = extras || ! chord.isEmpty() || st.length.load() > 0.0f || st.velocity.load() != 100;
             }
             for (int d = 0; d < Song::numDrums; ++d)
                 lanes.add ((int) p.drumLanes[(size_t) d].load());
@@ -146,6 +156,12 @@ juce::var Project::toVar (AudioEngine& e)
             o->setProperty ("on", mask);
             o->setProperty ("notes", notes);
             o->setProperty ("drums", lanes);
+            if (extras)   // chords, lengths and how hard: only when some step has them
+            {
+                o->setProperty ("chords", chords);
+                o->setProperty ("lengths", lengths);
+                o->setProperty ("velocities", velocities);
+            }
             perTrack.add (juce::var (o));
         }
         scenes.add (perTrack);
@@ -307,11 +323,21 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
                 const int mask = getI (o, "on", 0);
                 const auto* notes = o["notes"].getArray();
                 const auto* lanes = o["drums"].getArray();
+                const auto* chords = o["chords"].getArray();
+                const auto* lengths = o["lengths"].getArray();
+                const auto* velocities = o["velocities"].getArray();
                 for (int i = 0; i < Song::numSteps; ++i)
                 {
-                    p.steps[(size_t) i].on.store ((mask >> i) & 1);
-                    if (notes != nullptr && i < notes->size())
-                        p.steps[(size_t) i].note.store (juce::jlimit (0, 127, (int) (*notes)[i]));
+                    auto& st = p.steps[(size_t) i];
+                    st.setSingle (notes != nullptr && i < notes->size() ? (int) (*notes)[i] : 48,
+                                  velocities != nullptr && i < velocities->size() ? (int) (*velocities)[i] : 100);
+                    if (chords != nullptr && i < chords->size())
+                        if (const auto* chord = (*chords)[i].getArray())
+                            for (const auto& n : *chord)
+                                st.addNote ((int) n);
+                    if (lengths != nullptr && i < lengths->size())
+                        st.length.store (juce::jlimit (0.0f, 16.0f, (float) (double) (*lengths)[i]));
+                    st.on.store ((mask >> i) & 1);
                 }
                 for (int d = 0; d < Song::numDrums; ++d)
                     p.drumLanes[(size_t) d].store ((std::uint16_t) (lanes != nullptr && d < lanes->size() ? (int) (*lanes)[d] : 0));
@@ -678,9 +704,16 @@ bool Exporter::writeMidi (AudioEngine& e, bool playSong, int bars, const juce::F
                 }
                 else if (p.steps[(size_t) st].on.load())
                 {
-                    const int note = p.steps[(size_t) st].note.load();
-                    seq.addEvent (juce::MidiMessage::noteOn (channel, note, (juce::uint8) 100), tick);
-                    seq.addEvent (juce::MidiMessage::noteOff (channel, note), tick + ticksPerStep / 2);
+                    const auto& step = p.steps[(size_t) st];
+                    std::array<int, Song::maxChord> stepNotes {};
+                    const int count = step.getNotes (stepNotes);
+                    const float length = step.length.load();
+                    const double ticks = length > 0.0f ? length * ticksPerStep : ticksPerStep / 2.0;
+                    for (int i = 0; i < count; ++i)
+                    {
+                        seq.addEvent (juce::MidiMessage::noteOn (channel, stepNotes[(size_t) i], (juce::uint8) juce::jlimit (1, 127, step.velocity.load())), tick);
+                        seq.addEvent (juce::MidiMessage::noteOff (channel, stepNotes[(size_t) i]), tick + ticks);
+                    }
                 }
             }
         }
