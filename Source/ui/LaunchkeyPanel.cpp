@@ -385,7 +385,7 @@ void LaunchkeyPanel::showTrack()
         recordButton.setEnabled (true);
         loadSampleButton.setButtonText (kit ? "Pad..." : "Load...");
         editSampleButton.setButtonText (kit ? "Clear pad" : "Edit...");
-        loadSampleButton.setTooltip (kit ? "The selected pad: put a recording on it (or drop a file onto the panel), or take the same drum from another kit to build your own. Save it with Sound > Save."
+        loadSampleButton.setTooltip (kit ? "The selected pad: put a recording on it (or drop a file onto the panel), or take the same drum from another kit to build your own. Keep it with Sounds > Save as a new sound."
                                          : "Choose a recording for this Sampler track (WAV, AIFF, FLAC or OGG). You can also drop a file onto the panel.");
         editSampleButton.setTooltip (kit ? "Take the recording off the selected pad, so it plays its synthesised drum again."
                                          : "Open the sample editor: trim, chop into slices for the pads, and process the recording.");
@@ -496,7 +496,7 @@ void LaunchkeyPanel::loadSample (const juce::File& file)
 }
 
 // The selected pad: put a recording on it, or take the same drum from another kit
-// (a factory kit or one of yours), to build a kit of your own; then save it with Sound > Save.
+// (a factory kit or one of yours), to build a kit of your own; then keep it with Sounds > Save as a new sound.
 void LaunchkeyPanel::showPadMenu()
 {
     const int t = engine.selectedTrack.load();
@@ -512,7 +512,7 @@ void LaunchkeyPanel::showPadMenu()
     const auto mine = Presets::userSounds (Track::drums);
     if (! mine.isEmpty())
     {
-        menu.addSectionHeader ("Your kits");
+        menu.addSectionHeader ("My kits");
         for (int i = 0; i < mine.size(); ++i)
             menu.addItem (1000 + i, mine[i].getFileNameWithoutExtension());
     }
