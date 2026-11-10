@@ -8,6 +8,7 @@
 #include "Mixer.h"
 #include "SampleRecorder.h"
 #include "PerformFx.h"
+#include "Arpeggiator.h"
 #include <functional>
 
 namespace bizgroove
@@ -93,6 +94,9 @@ public:
         Playing again once every key is up starts a new held chord; switching it off lets them go. */
     std::atomic<bool> hold { false };
 
+    /** The arpeggiator, on the selected track: Arp on the panel. */
+    ArpSettings arp;
+
     /** The metronome: a click on every beat, a higher one on the first beat of the bar.
         Only heard through the sound card: never in exports or in resampling. */
     enum MetronomeMode { metronomeOff = 0, metronomeOn = 1, metronomeWhileRecording = 2 };
@@ -163,6 +167,11 @@ private:
     int keysDown = 0;
     bool wasHold = false;
     void releaseLatched (juce::MidiBuffer& midi, int position);
+
+    // Arpeggiator (audio thread).
+    Arpeggiator arpeggiator;
+    juce::MidiBuffer selInput, arpOut, arpScratch;
+    bool wasArp = false;
     juce::int64 transportSamples = 0;   // samples since play was pressed
     bool wasPlaying = false;
     int lastSelected = 0;
