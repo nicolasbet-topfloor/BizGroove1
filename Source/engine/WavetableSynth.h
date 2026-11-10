@@ -464,4 +464,37 @@ private:
     float level = 0.0f;
 };
 
+/** The Wavetable settings as JSON, for projects and saved sounds. */
+inline juce::var waveParamsToVar (const WaveParams& wp)
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("table", wp.table.load());          o->setProperty ("position", wp.position.load());
+    o->setProperty ("sweep", wp.sweep.load());          o->setProperty ("cutoff", wp.cutoffHz.load());
+    o->setProperty ("resonance", wp.resonance.load());  o->setProperty ("envAmount", wp.envAmount.load());
+    o->setProperty ("attack", wp.attack.load());        o->setProperty ("decay", wp.decay.load());
+    o->setProperty ("sustain", wp.sustain.load());      o->setProperty ("release", wp.release.load());
+    o->setProperty ("detune", wp.detuneCents.load());   o->setProperty ("unison", wp.unison.load());
+    o->setProperty ("sub", wp.sub.load());              o->setProperty ("noise", wp.noise.load());
+    o->setProperty ("glide", wp.glide.load());          o->setProperty ("lfoRate", wp.lfoRate.load());
+    o->setProperty ("lfoPosition", wp.lfoPosition.load()); o->setProperty ("lfoFilter", wp.lfoFilter.load());
+    return juce::var (o);
+}
+
+/** Reads settings written by waveParamsToVar(); anything missing gets its default. */
+inline void applyWaveParams (WaveParams& wp, const juce::var& v)
+{
+    auto f = [&v] (const char* key, float fallback) { return v.hasProperty (key) ? (float) (double) v[key] : fallback; };
+    auto i = [&v] (const char* key, int fallback)   { return v.hasProperty (key) ? (int) v[key] : fallback; };
+    wp.table.store (juce::jlimit (0, Wavetables::numTables - 1, i ("table", 0)));
+    wp.position.store (f ("position", 0.2f));       wp.sweep.store (f ("sweep", 0.3f));
+    wp.cutoffHz.store (f ("cutoff", 8000.0f));      wp.resonance.store (f ("resonance", 0.15f));
+    wp.envAmount.store (f ("envAmount", 0.2f));     wp.attack.store (f ("attack", 0.005f));
+    wp.decay.store (f ("decay", 0.8f));             wp.sustain.store (f ("sustain", 0.7f));
+    wp.release.store (f ("release", 0.4f));         wp.detuneCents.store (f ("detune", 10.0f));
+    wp.unison.store (juce::jlimit (1, 4, i ("unison", 1)));
+    wp.sub.store (f ("sub", 0.0f));                 wp.noise.store (f ("noise", 0.0f));
+    wp.glide.store (f ("glide", 0.0f));             wp.lfoRate.store (f ("lfoRate", 0.5f));
+    wp.lfoPosition.store (f ("lfoPosition", 0.0f)); wp.lfoFilter.store (f ("lfoFilter", 0.0f));
+}
+
 } // namespace bizgroove
