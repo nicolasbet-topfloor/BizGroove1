@@ -47,6 +47,8 @@ inline const std::vector<SynthDefinition>& synthLibrary()
                 { "Hold level", "synth.sustain",   "How loud a note stays while you keep holding the key." }
             } },
             {
+                { "Glide",      "synth.glide",     "Slides from one note to the next instead of jumping: how long the slide takes (per octave, when it glides by distance)." },
+                { "Glide mode", "synth.glidemode", "Fixed time: every slide takes the glide time. By distance: wider jumps slide for longer, the glide time per octave." },
                 { "Volume",     "track.volume",    "How loud this track is." }
             }
         },
@@ -112,7 +114,8 @@ inline const std::vector<SynthDefinition>& synthLibrary()
                 { "Square width",       "poly.pulsewidth", "Changes the colour of the square tone, from hollow to thin and nasal." },
                 { "Second tone octave", "poly.octave",     "Plays the square tone an octave lower, the same, or an octave higher." },
                 { "Stack",              "poly.unison",     "Stacks up to four copies of each note, spread in tune, for a huge sound." },
-                { "Glide",              "poly.glide",      "Slides from one note to the next instead of jumping." },
+                { "Glide",              "poly.glide",      "Slides from one note to the next instead of jumping: how long the slide takes (per octave, when it glides by distance)." },
+                { "Glide mode",         "poly.glidemode",  "Fixed time: every slide takes the glide time. By distance: wider jumps slide for longer, the glide time per octave." },
                 { "Wobble speed",       "poly.lforate",    "How fast the wobble moves." },
                 { "Wobble on brightness", "poly.lfofilter", "How much the wobble opens and closes the brightness." },
                 { "Wobble on square",   "poly.lfopulse",   "How much the wobble moves the square's width, for a lively, chorus-like sound." },
@@ -140,7 +143,8 @@ inline const std::vector<SynthDefinition>& synthLibrary()
                 { "Wah",                   "wave.envamount",   "How much each note opens up when it starts." },
                 { "Stack",                 "wave.unison",      "Stacks up to four copies of each note, spread in tune and from left to right." },
                 { "Sub",                   "wave.sub",         "Adds a pure tone an octave below, for weight." },
-                { "Glide",                 "wave.glide",       "Slides from one note to the next instead of jumping." },
+                { "Glide",                 "wave.glide",       "Slides from one note to the next instead of jumping: how long the slide takes (per octave, when it glides by distance)." },
+                { "Glide mode",            "wave.glidemode",   "Fixed time: every slide takes the glide time. By distance: wider jumps slide for longer, the glide time per octave." },
                 { "Wobble speed",          "wave.lforate",     "How fast the wobble moves." },
                 { "Wobble on position",    "wave.lfoposition", "How much the wobble moves through the wave set, for a sound that keeps changing." },
                 { "Wobble on brightness",  "wave.lfofilter",   "How much the wobble opens and closes the brightness." },
@@ -177,6 +181,8 @@ inline const std::vector<SynthDefinition>& synthLibrary()
                 { "Wobble speed",            "fm.lforate",      "How fast the wobble moves." },
                 { "Wobble on pitch",         "fm.lfopitch",     "Vibrato: how much the wobble moves the pitch." },
                 { "Wobble on brightness",    "fm.lfobrightness","How much the wobble moves the brightness." },
+                { "Glide",                   "fm.glide",        "Slides from one note to the next instead of jumping: how long the slide takes (per octave, when it glides by distance)." },
+                { "Glide mode",              "fm.glidemode",    "Fixed time: every slide takes the glide time. By distance: wider jumps slide for longer, the glide time per octave." },
                 { "Volume",                  "track.volume",    "How loud this track is." }
             }
         },
@@ -238,6 +244,8 @@ inline const std::vector<SynthDefinition>& synthLibrary()
                 { "Wobble on filter",       "noise.lfofilter",  "How much the wobble opens and closes the filter: wind and waves." },
                 { "Wobble on colour",       "noise.lfocolour",  "How much the wobble moves the colour." },
                 { "Level",                  "noise.level",      "The sound's own level: turn it up when a narrow filter makes the noise quiet." },
+                { "Glide",                  "noise.glide",      "Slides from one note to the next instead of jumping: how long the slide takes (per octave, when it glides by distance)." },
+                { "Glide mode",             "noise.glidemode",  "Fixed time: every slide takes the glide time. By distance: wider jumps slide for longer, the glide time per octave." },
                 { "Volume",                 "track.volume",     "How loud this track is." }
             }
         }
