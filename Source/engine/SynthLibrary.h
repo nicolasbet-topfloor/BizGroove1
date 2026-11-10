@@ -210,6 +210,36 @@ inline const std::vector<SynthDefinition>& synthLibrary()
                 { "Knob 8 CC",           "ext.ccnum8",     "Which CC number knob 8 sends, if your gear uses a different one." },
                 { "Volume",                 "track.volume",  "How loud the gear's sound is in the mix (when Hear input is on)." }
             }
+        },
+        {
+            "noise",
+            "Noise",
+            "A noise synth: noise of every colour, from deep brown through pink and white to hissing violet, made into sound in five ways (pure, FM, ring, digital and crackle), then given a pitch, filtered and shaped. For wind, sea, risers, snares and hats, radio static, lasers and metallic textures.",
+            { {
+                { "Colour",     "noise.colour",    "The colour of the noise: brown (deep, rumbling), pink, white, blue, violet (thin, hissing)." },
+                { "Source",     "noise.source",    "How the noise becomes sound: pure coloured noise, FM noise (a tone shaken by noise), ring noise (a band around the note), digital noise (old sound chips) or crackle." },
+                { "Modifier",   "noise.mod",       "Changes with the source: how hard the noise shakes the tone (FM), tone or noise (ring), long or metallic loop (digital), how many clicks (crackle)." },
+                { "Pitch",      "noise.tone",      "Tunes the noise to the note you play: from plain noise to a singing, whistling tone." },
+                { "Filter",     "noise.cutoff",    "Where the filter cuts: left is dark, right is open." },
+                { "Edge",       "noise.resonance", "Adds a ringing peak where the filter is set." },
+                { "Fade in",    "noise.attack",    "How long a note takes to reach full volume after you press a key." },
+                { "Fade out",   "noise.release",   "How long a note keeps sounding after you let go of the key." }
+            } },
+            {
+                { "Filter type",            "noise.filtermode", "Low-pass keeps the lows, band-pass a band in the middle, high-pass the highs." },
+                { "Filter sweep",           "noise.envamount",  "How much each note opens (or closes) the filter as it plays: right opens, left closes." },
+                { "Filter follows note",    "noise.keyfollow",  "How much the filter moves up with higher notes." },
+                { "Grain",                  "noise.grain",      "Holds each value for a moment: from smooth to a coarse, steppy, digital noise." },
+                { "Punch",                  "noise.decay",      "How long the first hit of each note lasts before it settles." },
+                { "Hold level",             "noise.sustain",    "How loud a note stays while you keep holding the key." },
+                { "Width",                  "noise.width",      "Mono, or a different noise on each side for a wide sound." },
+                { "Velocity to volume",     "noise.velocity",   "How much harder hits are louder." },
+                { "Wobble speed",           "noise.lforate",    "How fast the wobble moves." },
+                { "Wobble on filter",       "noise.lfofilter",  "How much the wobble opens and closes the filter: wind and waves." },
+                { "Wobble on colour",       "noise.lfocolour",  "How much the wobble moves the colour." },
+                { "Level",                  "noise.level",      "The sound's own level: turn it up when a narrow filter makes the noise quiet." },
+                { "Volume",                 "track.volume",     "How loud this track is." }
+            }
         }
     };
     return library;
