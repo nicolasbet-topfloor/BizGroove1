@@ -85,6 +85,9 @@ public:
 
     /** Recording what is played into the steps, quantised to 1/16, while the song plays. Stop switches it off. */
     std::atomic<bool> recordNotes { false };
+    /** What the controller's eight panel knobs turn: 0 = the synth's eight main knobs;
+        1, 2... = that row of eight in the More window, while it is open. */
+    std::atomic<int> knobPage { 0 };
 
     /** Records into a Sampler, from the sound card's input or from BizGroove itself. */
     SampleRecorder recorder;
