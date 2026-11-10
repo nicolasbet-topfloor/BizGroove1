@@ -40,6 +40,7 @@ public:
         engine.setLiveInput (*info.buffer, info.startSample, info.numSamples);   // heard through External tracks
         engine.getNextAudioBlock (info);
         engine.recorder.write (*info.buffer, info.startSample, info.numSamples, SampleRecorder::output);
+        engine.renderMetronome (*info.buffer, info.startSample, info.numSamples);   // heard, never recorded
         sendClock (info.numSamples);
         sendExternal();
     }
