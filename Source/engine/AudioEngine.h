@@ -109,6 +109,8 @@ private:
     std::array<juce::MidiBuffer, numTracks> externalMidi;
     juce::AudioBuffer<float> liveInput;
     int liveInputSamples = 0;   // samples of liveInput valid for this block (0: none)
+    double currentRate = 44100.0;
+    juce::int64 freeSamples = 0;   // always running, for effects that move with the beat while stopped
 
     juce::SmoothedValue<float> smoothedGain;
     juce::int64 transportSamples = 0;   // samples since play was pressed
