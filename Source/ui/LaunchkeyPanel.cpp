@@ -1,6 +1,7 @@
 #include "LaunchkeyPanel.h"
 #include "LookAndFeel.h"
 #include "engine/Project.h"
+#include "EffectsPanel.h"
 
 namespace bizgroove
 {
@@ -227,6 +228,12 @@ LaunchkeyPanel::LaunchkeyPanel (AudioEngine& e, const ControlTargets& t)
     moreButton.setButtonText ("More sound settings");
     moreButton.onClick = [this] { showMore(); };
     addAndMakeVisible (moreButton);
+
+    styleHardwareButton (fxButton, "Effects for this track: two slots, from chorus and drive to the moving filter, compressor and duck.", true);
+    fxButton.onClick = [this] {
+        juce::CallOutBox::launchAsynchronously (std::make_unique<EffectsPanel> (engine, targets), fxButton.getBounds(), this);
+    };
+    addAndMakeVisible (fxButton);
 
     pads.setTwoRows (true);
     addAndMakeVisible (pads);
@@ -697,7 +704,9 @@ void LaunchkeyPanel::resized()
     // Right column: wordmark, Arp/Fixed Chord, Track, Play/Record.
     auto right = controls.removeFromRight (176);
     wordmarkArea = { right.getX(), controls.getY() + 4, right.getWidth(), 24 };
-    moreButton.setBounds (right.getX() + 16, controls.getY() + 70, right.getWidth() - 16, 30);
+    const int moreW = (right.getWidth() - 22) * 3 / 5;
+    moreButton.setBounds (right.getX() + 16, controls.getY() + 70, moreW, 30);
+    fxButton.setBounds (right.getX() + 22 + moreW, controls.getY() + 70, right.getWidth() - 22 - moreW, 30);
     const int halfW = (right.getWidth() - 22) / 2;
     loadSampleButton.setBounds (right.getX() + 16, controls.getY() + 106, halfW, 26);
     editSampleButton.setBounds (right.getX() + 22 + halfW, controls.getY() + 106, halfW, 26);
