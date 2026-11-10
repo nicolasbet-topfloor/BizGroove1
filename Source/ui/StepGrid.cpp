@@ -40,7 +40,7 @@ int StepGrid::stepAt (juce::Point<float> position) const
 void StepGrid::paint (juce::Graphics& g)
 {
     const int playhead = engine.song.playheadStep.load();
-    const bool drums = engine.selected().type.load() == Track::drums;
+    const bool drums = engine.selected().playsDrums();
 
     for (int i = 0; i < Song::numSteps; ++i)
     {
@@ -66,7 +66,7 @@ void StepGrid::paint (juce::Graphics& g)
 
 void StepGrid::nudgeNote (int index, int semitones)
 {
-    if (engine.selected().type.load() == Track::drums)
+    if (engine.selected().playsDrums())
         return;   // drum steps have no note
     engine.setStepNote (index, engine.getStepNote (index) + semitones);
     repaint();
@@ -90,7 +90,7 @@ void StepGrid::mouseDrag (const juce::MouseEvent& e)
     if (std::abs (e.getDistanceFromDragStartY()) > 3)
         dragged = true;
 
-    if (engine.selected().type.load() == Track::drums)
+    if (engine.selected().playsDrums())
         return;
     engine.setStepNote (dragStep, dragStartNote + (e.mods.isShiftDown() ? delta / 12 * 12 : delta));
     repaint();
