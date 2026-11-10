@@ -84,6 +84,13 @@ public:
     /** Records into a Sampler, from the sound card's input or from BizGroove itself. */
     SampleRecorder recorder;
 
+    /** The MIDI each External track sent in the last block, for LiveOutput to pass on to its device. */
+    const juce::MidiBuffer& externalMidiFor (int t) const { return externalMidi[(size_t) juce::jlimit (0, numTracks - 1, t)]; }
+
+    /** Live playback, audio thread: the sound card's input for the coming block,
+        heard through External tracks that have Hear input on. */
+    void setLiveInput (const juce::AudioBuffer<float>& input, int startSample, int numSamples);
+
     /** Peak level of the last block per channel, for meters. */
     float getPeak (int channel) const { return peaks[(size_t) juce::jlimit (0, 1, channel)].load(); }
 
@@ -99,6 +106,9 @@ private:
     juce::AudioBuffer<float> trackBuffer, reverbBus, delayBus;
     std::atomic<int> renderOnlyTrack { -1 };
     juce::MidiBuffer liveMidi;
+    std::array<juce::MidiBuffer, numTracks> externalMidi;
+    juce::AudioBuffer<float> liveInput;
+    int liveInputSamples = 0;   // samples of liveInput valid for this block (0: none)
 
     juce::SmoothedValue<float> smoothedGain;
     juce::int64 transportSamples = 0;   // samples since play was pressed
