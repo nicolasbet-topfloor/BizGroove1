@@ -33,6 +33,7 @@ juce::var Project::toVar (AudioEngine& e)
     root->setProperty ("formatVersion", formatVersion);
     root->setProperty ("tempo", e.transport.bpm.load());
     root->setProperty ("masterVolume", e.masterGain.load());
+    root->setProperty ("arp", arpToVar (e.arp));
 
     auto* fx = new Obj();
     fx->setProperty ("reverbSize", e.effects.reverbSize.load());
@@ -72,6 +73,7 @@ juce::var Project::toVar (AudioEngine& e)
         synth->setProperty ("envAmount", sp.envAmount.load()); synth->setProperty ("detune", sp.detuneCents.load());
         synth->setProperty ("attack", sp.attack.load());       synth->setProperty ("decay", sp.decay.load());
         synth->setProperty ("sustain", sp.sustain.load());     synth->setProperty ("release", sp.release.load());
+        synth->setProperty ("glide", sp.glide.load());         synth->setProperty ("glideMode", sp.glideMode.load());
         o->setProperty ("synth", juce::var (synth));
 
         const auto& pp = tr.polyParams;
@@ -85,6 +87,7 @@ juce::var Project::toVar (AudioEngine& e)
         poly->setProperty ("unison", pp.unison.load());      poly->setProperty ("glide", pp.glide.load());
         poly->setProperty ("lfoRate", pp.lfoRate.load());    poly->setProperty ("lfoFilter", pp.lfoFilter.load());
         poly->setProperty ("lfoPulse", pp.lfoPulse.load());  poly->setProperty ("noise", pp.noise.load());
+        poly->setProperty ("glideMode", pp.glideMode.load());
         o->setProperty ("poly", juce::var (poly));
         o->setProperty ("wave", waveParamsToVar (tr.waveParams));
         o->setProperty ("fm", fmParamsToVar (tr.fmParams));
@@ -216,6 +219,7 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
     e.transport.playing.store (false);
     e.transport.bpm.store (juce::jlimit (40.0, 240.0, (double) getF (v, "tempo", 120.0f)));
     e.masterGain.store (getF (v, "masterVolume", 0.8f));
+    applyArp (e.arp, v["arp"]);
 
     const auto fx = v["effects"];
     e.effects.reverbSize.store (getF (fx, "reverbSize", 0.5f));
@@ -254,6 +258,8 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
             sp.envAmount.store (getF (s, "envAmount", 0.6f));  sp.detuneCents.store (getF (s, "detune", 8.0f));
             sp.attack.store (getF (s, "attack", 0.003f));      sp.decay.store (getF (s, "decay", 0.25f));
             sp.sustain.store (getF (s, "sustain", 0.4f));      sp.release.store (getF (s, "release", 0.2f));
+            sp.glide.store (getF (s, "glide", 0.0f));
+            sp.glideMode.store (juce::jlimit (0, Glide::numModes - 1, getI (s, "glideMode", 0)));
 
             const auto pv = o["poly"];
             auto& pp = tr.polyParams;
@@ -265,6 +271,7 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
             pp.mix.store (getF (pv, "mix", 0.5f));             pp.octave.store (juce::jlimit (-1, 1, getI (pv, "octave", 0)));
             pp.unison.store (juce::jlimit (1, 4, getI (pv, "unison", 1)));
             pp.glide.store (getF (pv, "glide", 0.0f));
+            pp.glideMode.store (juce::jlimit (0, Glide::numModes - 1, getI (pv, "glideMode", 0)));
             pp.lfoRate.store (getF (pv, "lfoRate", 5.0f));     pp.lfoFilter.store (getF (pv, "lfoFilter", 0.0f));
             pp.lfoPulse.store (getF (pv, "lfoPulse", 0.0f));   pp.noise.store (getF (pv, "noise", 0.0f));
 
