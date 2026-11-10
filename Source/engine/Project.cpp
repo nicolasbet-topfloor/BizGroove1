@@ -79,6 +79,7 @@ juce::var Project::toVar (AudioEngine& e)
         poly->setProperty ("lfoPulse", pp.lfoPulse.load());  poly->setProperty ("noise", pp.noise.load());
         o->setProperty ("poly", juce::var (poly));
         o->setProperty ("wave", waveParamsToVar (tr.waveParams));
+        o->setProperty ("fm", fmParamsToVar (tr.fmParams));
 
         auto* kit = new Obj();
         kit->setProperty ("choke", tr.kit.choke.load());
@@ -233,6 +234,7 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
             pp.lfoPulse.store (getF (pv, "lfoPulse", 0.0f));   pp.noise.store (getF (pv, "noise", 0.0f));
 
             applyWaveParams (tr.waveParams, o["wave"]);
+            applyFmParams (tr.fmParams, o["fm"]);
 
             const auto k = o["kit"];
             tr.kit.choke.store (getB (k, "choke", true));
