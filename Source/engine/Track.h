@@ -5,6 +5,7 @@
 #include "PolySynth.h"
 #include "WavetableSynth.h"
 #include "FmSynth.h"
+#include "NoiseSynth.h"
 #include "ExternalMidi.h"
 #include "Effects.h"
 #include "DrumKit.h"
@@ -19,8 +20,8 @@ namespace bizgroove
     thread; the atomics are shared with the UI and controllers. */
 struct Track
 {
-    enum Type { testSynth = 0, drums = 1, sampler = 2, poly = 3, wavetable = 4, fm = 5, external = 6 };   // index into synthLibrary()
-    static constexpr int numTypes = 7;
+    enum Type { testSynth = 0, drums = 1, sampler = 2, poly = 3, wavetable = 4, fm = 5, external = 6, noise = 7 };   // index into synthLibrary()
+    static constexpr int numTypes = 8;
 
     /** Each instrument comes out at its own natural level; this evens them out, so
         switching sounds doesn't jump in volume. Measured on the factory sounds
@@ -41,6 +42,7 @@ struct Track
     static constexpr int numPolyVoices = 8;
     static constexpr int numWaveVoices = 8;
     static constexpr int numFmVoices = 8;
+    static constexpr int numNoiseVoices = 8;
 
     Track (const Performance& perf)
     {
@@ -63,6 +65,11 @@ struct Track
             fmSynth.addVoice (new FmVoice (fmParams, perf));
         fmSynth.addSound (new FmSound());
         fmSynth.setNoteStealingEnabled (true);
+
+        for (int i = 0; i < numNoiseVoices; ++i)
+            noiseSynth.addVoice (new NoiseVoice (noiseParams, perf, (std::uint32_t) (i + 1) * 7919u));
+        noiseSynth.addSound (new NoiseSound());
+        noiseSynth.setNoteStealingEnabled (true);
     }
 
     std::atomic<int> type { testSynth };
@@ -75,6 +82,7 @@ struct Track
     PolyParams polyParams;
     WaveParams waveParams;
     FmParams fmParams;
+    NoiseParams noiseParams;
     ExternalParams ext;   // External MIDI tracks
 
     /** External MIDI tracks: the MIDI output they play, by name (kept in
@@ -105,6 +113,7 @@ struct Track
     juce::Synthesiser polySynth;
     juce::Synthesiser waveSynth;
     juce::Synthesiser fmSynth;
+    juce::Synthesiser noiseSynth;
     juce::SmoothedValue<float> gain;
     ChannelStrip strip;
     std::array<InsertProcessor, 2> insertFx;
