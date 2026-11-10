@@ -335,31 +335,88 @@ void LaunchkeyPanel::loadSynth (const SynthDefinition& synth)
 
 void LaunchkeyPanel::showMore()
 {
-    auto content = std::make_unique<juce::Component>();
-    int x = 0;
-    for (const auto& k : moreKnobs)
+    // The loaded synth's other settings, in rows of eight. While the window is open the
+    // controller's eight knobs turn the highlighted row; click a row's button to pick another.
+    struct MoreWindow final : public juce::Component, private juce::Timer
     {
-        auto* knob = new PanelKnob (targets);
-        knob->setKnob (k);
-        knob->setBounds (x, 0, 110, 120);
-        content->addAndMakeVisible (knob);
-        x += 110;
-    }
-    content->setSize (juce::jmax (110, x), 120);
-
-    // The call-out owns its content; the knobs are deleted with it.
-    struct Owner final : public juce::Component
-    {
-        explicit Owner (std::unique_ptr<juce::Component> c) : inner (std::move (c))
+        MoreWindow (AudioEngine& en, const ControlTargets& targets, const std::vector<SynthKnob>& list)
+            : engine (en), track (en.selectedTrack.load()), type (en.selected().type.load())
         {
-            addAndMakeVisible (*inner);
-            setSize (inner->getWidth(), inner->getHeight());
+            const int count = (int) list.size();
+            rows = juce::jmax (1, (count + 7) / 8);
+            for (int r = 0; r < rows; ++r)
+            {
+                auto* b = rowButtons.add (new juce::TextButton ("Knobs " + juce::String (r * 8 + 1) + "-" + juce::String (juce::jmin (count, r * 8 + 8))));
+                b->setWantsKeyboardFocus (false);
+                b->setTooltip ("The controller's eight knobs turn this row while this window is open. Click to choose another row.");
+                b->onClick = [this, r] { engine.knobPage.store (r + 1); showPage(); };
+                addAndMakeVisible (b);
+            }
+            for (const auto& k : list)
+            {
+                auto* knob = knobs.add (new PanelKnob (targets));
+                knob->setKnob (k);
+                addAndMakeVisible (knob);
+            }
+            setSize (labelWidth + juce::jmax (1, juce::jmin (8, count)) * knobWidth, rows * rowHeight);
+            engine.knobPage.store (1);
+            showPage();
+            startTimerHz (15);
         }
-        ~Owner() override { inner->deleteAllChildren(); }
-        std::unique_ptr<juce::Component> inner;
+
+        ~MoreWindow() override { engine.knobPage.store (0); }
+
+        void resized() override
+        {
+            for (int r = 0; r < rowButtons.size(); ++r)
+                rowButtons[r]->setBounds (6, r * rowHeight + rowHeight / 2 - 16, labelWidth - 12, 32);
+            for (int i = 0; i < knobs.size(); ++i)
+                knobs[i]->setBounds (labelWidth + (i % 8) * knobWidth, (i / 8) * rowHeight, knobWidth, rowHeight);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            const int page = engine.knobPage.load();
+            if (page > 0)
+            {
+                g.setColour (Colours::text.withAlpha (0.07f));
+                g.fillRoundedRectangle (getLocalBounds().withY ((page - 1) * rowHeight).withHeight (rowHeight).reduced (2).toFloat(), 6.0f);
+            }
+        }
+
+        void showPage()
+        {
+            shownPage = engine.knobPage.load();
+            for (int r = 0; r < rowButtons.size(); ++r)
+                rowButtons[r]->setToggleState (r + 1 == shownPage, juce::dontSendNotification);
+            repaint();
+        }
+
+        void timerCallback() override
+        {
+            // Another track or instrument: these knobs no longer apply.
+            if (engine.selectedTrack.load() != track || engine.selected().type.load() != type)
+            {
+                stopTimer();
+                if (auto* box = findParentComponentOfClass<juce::CallOutBox>())
+                    box->dismiss();
+                return;
+            }
+            if (engine.knobPage.load() != shownPage)
+                showPage();
+            for (auto* knob : knobs)
+                knob->refresh();
+        }
+
+        static constexpr int labelWidth = 96, knobWidth = 110, rowHeight = 120;
+        AudioEngine& engine;
+        const int track, type;
+        int rows = 1, shownPage = -1;
+        juce::OwnedArray<juce::TextButton> rowButtons;
+        juce::OwnedArray<PanelKnob> knobs;
     };
 
-    juce::CallOutBox::launchAsynchronously (std::make_unique<Owner> (std::move (content)),
+    juce::CallOutBox::launchAsynchronously (std::make_unique<MoreWindow> (engine, targets, moreKnobs),
                                             moreButton.getBounds(), this);
 }
 
