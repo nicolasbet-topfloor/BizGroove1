@@ -95,6 +95,22 @@ MainComponent::MainComponent()
     tempoSlider.onValueChange = [this] { engine.transport.bpm.store (tempoSlider.getValue()); };
     addAndMakeVisible (tempoSlider);
 
+    // The master volume: the whole mix. A controller knob can turn it too (Master volume).
+    volumeLabel.setText ("Volume", juce::dontSendNotification);
+    volumeLabel.setColour (juce::Label::textColourId, Colours::textDim);
+    volumeLabel.setJustificationType (juce::Justification::centredRight);
+    addAndMakeVisible (volumeLabel);
+    masterVolume.setWantsKeyboardFocus (false);
+    masterVolume.setRange (0.0, 1.0, 0.0);
+    masterVolume.setValue (engine.masterGain.load(), juce::dontSendNotification);
+    masterVolume.setDoubleClickReturnValue (true, 0.8);
+    masterVolume.onValueChange = [this] {
+        engine.masterGain.store ((float) masterVolume.getValue());
+        showMasterVolume();
+    };
+    addAndMakeVisible (masterVolume);
+    showMasterVolume();
+
     fileButton.setTooltip ("New, open, save and export");
     fileButton.onClick = [this] { showFileMenu(); };
     addAndMakeVisible (fileButton);
@@ -924,6 +940,11 @@ void MainComponent::timerCallback()
     }
     if (! tempoSlider.isMouseButtonDown() && std::abs (tempoSlider.getValue() - engine.transport.bpm.load()) > 0.05)
         tempoSlider.setValue (engine.transport.bpm.load(), juce::dontSendNotification);
+    if (! masterVolume.isMouseButtonDown() && std::abs (masterVolume.getValue() - (double) engine.masterGain.load()) > 0.001)
+    {
+        masterVolume.setValue (engine.masterGain.load(), juce::dontSendNotification);
+        showMasterVolume();
+    }
 
     if (++timerTicks % 60 == 0)
     {
@@ -983,6 +1004,11 @@ void MainComponent::paint (juce::Graphics& g)
     }
 }
 
+void MainComponent::showMasterVolume()
+{
+    masterVolume.setTooltip ("Master volume: " + juce::String (juce::roundToInt (masterVolume.getValue() * 100.0)) + "%. Drag up or down; double-click for 80%.");
+}
+
 void MainComponent::resized()
 {
     auto r = getLocalBounds().reduced (16, 12);
@@ -991,9 +1017,9 @@ void MainComponent::resized()
     auto top = r.removeFromTop (40);
     fileButton.setBounds (top.removeFromLeft (58).reduced (0, 4));
     top.removeFromLeft (10);
-    title.setBounds (top.removeFromLeft (106));
+    title.setBounds (top.removeFromLeft (96));
     soundLabel.setBounds (top.removeFromLeft (62));
-    soundMenu.setBounds (top.removeFromLeft (120).reduced (0, 6));
+    soundMenu.setBounds (top.removeFromLeft (110).reduced (0, 6));
     top.removeFromLeft (6);
     soundsButton.setBounds (top.removeFromLeft (110).reduced (0, 4));
     top.removeFromLeft (12);
@@ -1001,6 +1027,9 @@ void MainComponent::resized()
     top.removeFromLeft (10);
     tempoLabel.setBounds ({});   // room for the Sounds button; the slider shows BPM
     tempoSlider.setBounds (top.removeFromLeft (124));
+    top.removeFromLeft (6);
+    volumeLabel.setBounds (top.removeFromLeft (52));
+    masterVolume.setBounds (top.removeFromLeft (40));
 
     meterArea = top.removeFromRight (14).reduced (0, 4);
     top.removeFromRight (10);
