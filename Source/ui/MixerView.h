@@ -67,6 +67,7 @@ private:
     juce::OwnedArray<MixKnob> masterKnobs;
     juce::ComboBox delayTime;
     juce::Label delayTimeLabel;
+    juce::TextButton sendFxButton { "Reverb & delay..." };
     juce::Slider masterFader { juce::Slider::LinearVertical, juce::Slider::NoTextBox };
     juce::Rectangle<int> masterArea;
 };
