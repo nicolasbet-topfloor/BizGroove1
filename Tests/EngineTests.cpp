@@ -1437,6 +1437,47 @@ static void testPerform()
     check (back > 0.5f * playing, "perform: letting go brings the music back");
 }
 
+// Kits of your own: one drum taken from another kit, factory or saved, onto the same pad.
+static void testCopyDrum()
+{
+    std::cout << "Kits of your own\n";
+    AudioEngine e;
+    e.prepareToPlay (256, 48000.0);
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    juce::String err;
+    auto& kit = e.track (1).kit;   // track 2 is the drums
+    check (e.track (1).type.load() == Track::drums, "kit: track 2 is a drum track");
+
+    const auto& kits = Presets::factorySounds (Track::drums);
+    const auto& source = kits[4].sound;   // the FM kit
+    const float kickPitch = kit.drums[0].pitch.load();
+    const int kickModel = kit.drums[0].model.load();
+    Presets::copyDrum (e, 1, 2, source);
+    const auto want = source["kit"]["drums"][2];
+    check (std::abs (kit.drums[2].pitch.load() - (float) (double) want[0]) < 1.0e-6f
+               && kit.drums[2].model.load() == (int) want[7]
+               && std::abs (kit.drums[2].colour.load() - (float) (double) want[8]) < 1.0e-6f,
+           "kit: the snare comes from the FM kit");
+    check (kit.drums[0].pitch.load() == kickPitch && kit.drums[0].model.load() == kickModel,
+           "kit: the other drums stay as they were");
+
+    kit.drums[5].pitch.store (7.0f);
+    kit.drums[5].model.store (2);
+    juce::TemporaryFile saved (Presets::fileExtension);
+    check (Presets::save (e.track (1), saved.getFile(), err), "kit: a kit saves");
+    kit.drums[5].pitch.store (0.0f);
+    kit.drums[5].model.store (0);
+    check (Presets::copyDrumFromFile (e, 1, 5, saved.getFile(), formats, err)
+               && kit.drums[5].pitch.load() == 7.0f && kit.drums[5].model.load() == 2,
+           "kit: a drum comes from a saved kit");
+
+    juce::TemporaryFile synthSound (Presets::fileExtension);
+    Presets::save (e.track (0), synthSound.getFile(), err);
+    check (! Presets::copyDrumFromFile (e, 1, 5, synthSound.getFile(), formats, err) && kit.drums[5].pitch.load() == 7.0f,
+           "kit: a sound that is not a kit is refused");
+}
+
 // Live recording: notes played while the song plays land on the nearest step, on synth and drum tracks.
 static void testLiveRecord()
 {
@@ -1521,6 +1562,7 @@ int main (int argc, char* argv[])
     testSendEffects();
     testPerform();
     testLiveRecord();
+    testCopyDrum();
     testRender (argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]) : juce::File());
 
     std::cout << (failures == 0 ? "All tests passed\n" : juce::String (failures) + " test(s) failed\n");
