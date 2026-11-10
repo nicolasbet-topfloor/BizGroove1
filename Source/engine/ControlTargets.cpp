@@ -277,6 +277,39 @@ ControlTargets::ControlTargets (AudioEngine& e)
     add ("fm.lfobrightness", "FM wobble on brightness", "FM", TargetKind::continuous,
          [fp] (float v) { fp().lfoBrightness.store (v); }, [fp] { return fp().lfoBrightness.load(); }, offOrPercent);
 
+    // ---- External MIDI track: the selected track's outside gear
+    auto xp = [&e]() -> ExternalParams& { return e.selected().ext; };
+    auto onOff = [] (float v) { return v >= 0.5f ? juce::String ("On") : juce::String ("Off"); };
+    for (int knob = 0; knob < ExternalParams::numKnobs; ++knob)
+    {
+        const auto n = juce::String (knob + 1);
+        const auto k = (size_t) knob;
+        add ("ext.cc" + n, "External knob " + n, "External MIDI", TargetKind::continuous,
+             [xp, k] (float v) { xp().ccValue[k].store (v); xp().ccChanged[k].store (true); },
+             [xp, k] { return xp().ccValue[k].load(); },
+             [xp, k] (float v) { return "CC " + juce::String (xp().ccNumber[k].load()) + ": " + juce::String (juce::roundToInt (v * 127.0f)); });
+        add ("ext.ccnum" + n, "External knob " + n + " CC number", "External MIDI", TargetKind::continuous,
+             [xp, k] (float v) { xp().ccNumber[k].store (juce::jlimit (0, 127, juce::roundToInt (v * 127.0f))); },
+             [xp, k] { return (float) xp().ccNumber[k].load() / 127.0f; },
+             [n] (float v) { return "Knob " + n + " sends CC " + juce::String (juce::jlimit (0, 127, juce::roundToInt (v * 127.0f))); });
+    }
+    add ("ext.program", "External program change", "External MIDI", TargetKind::continuous,
+         [xp] (float v) { xp().program.store (juce::jlimit (0, 127, juce::roundToInt (v * 127.0f))); xp().programChanged.store (true); },
+         [xp] { return (float) xp().program.load() / 127.0f; },
+         [] (float v) { return "Program " + juce::String (juce::jlimit (0, 127, juce::roundToInt (v * 127.0f)) + 1); });
+    add ("ext.channel", "External MIDI channel", "External MIDI", TargetKind::continuous,
+         [xp] (float v) { xp().channel.store (1 + juce::jlimit (0, 15, (int) (v * 15.999f))); },
+         [xp] { return ((float) xp().channel.load() - 0.5f) / 16.0f; },
+         [] (float v) { return "Channel " + juce::String (1 + juce::jlimit (0, 15, (int) (v * 15.999f))); });
+    add ("ext.drums", "External steps play drums", "External MIDI", TargetKind::continuous,
+         [xp] (float v) { xp().drums.store (v >= 0.5f); }, [xp] { return xp().drums.load() ? 1.0f : 0.0f; }, onOff);
+    add ("ext.monitor", "External: hear the input", "External MIDI", TargetKind::continuous,
+         [xp] (float v) { xp().monitor.store (v >= 0.5f); }, [xp] { return xp().monitor.load() ? 1.0f : 0.0f; }, onOff);
+    add ("ext.inputpair", "External: which inputs", "External MIDI", TargetKind::continuous,
+         [xp] (float v) { xp().inputPair.store (juce::jlimit (0, 3, (int) (v * 3.999f))); },
+         [xp] { return ((float) xp().inputPair.load() + 0.5f) / 4.0f; },
+         [] (float v) { const int p = juce::jlimit (0, 3, (int) (v * 3.999f)); return "Inputs " + juce::String (2 * p + 1) + "-" + juce::String (2 * p + 2); });
+
     // ---- Tracks
     add ("track.volume", "Track volume (selected track)", "Tracks", TargetKind::continuous,
          [&e] (float v) { e.selected().volume.store (v); },
