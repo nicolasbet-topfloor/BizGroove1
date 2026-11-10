@@ -235,6 +235,10 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
                 tr.polySynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
             else
                 tr.synth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
+
+            const float trim = Track::levelTrim (type);   // so every instrument plays at about the same level
+            if (std::abs (trim - 1.0f) > 1.0e-4f)
+                trackBuffer.applyGain (0, numSamples, trim);
         }
 
         for (size_t slot = 0; slot < tr.insertFx.size(); ++slot)
