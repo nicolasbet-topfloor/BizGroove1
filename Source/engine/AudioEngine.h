@@ -83,6 +83,9 @@ public:
     /** The Launchkey pads: true = play the drums (or a Sampler's slices), false = switch steps on and off. */
     std::atomic<bool> padsPlay { true };
 
+    /** Recording what is played into the steps, quantised to 1/16, while the song plays. Stop switches it off. */
+    std::atomic<bool> recordNotes { false };
+
     /** Records into a Sampler, from the sound card's input or from BizGroove itself. */
     SampleRecorder recorder;
 
