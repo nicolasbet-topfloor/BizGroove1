@@ -272,9 +272,10 @@ LaunchkeyPanel::LaunchkeyPanel (AudioEngine& e, const ControlTargets& t)
     addAndMakeVisible (playButton);
 
     recordButton.setWantsKeyboardFocus (false);
-    recordButton.setTooltip ("Record. On a synth or Drums track while playing: what you play on the keys or pads goes into the steps, "
-                             "quantised to the nearest 1/16 (press again, or Stop, to finish). On a Sampler, or a stopped Drums track: "
-                             "records a sound. The Launchkey's Record button does the same.");
+    recordButton.setTooltip ("Record. On a synth or Drums track: what you play on the keys or pads goes into the steps, "
+                             "quantised to the nearest 1/16, with chords, how long and how hard each note is played. From a stop the "
+                             "metronome counts in first. Press again, or Stop, to finish. On a Sampler: records a sound "
+                             "(onto a drum pad: the Pad menu). The Launchkey's Record button does the same once assigned.");
     recordButton.onClick = [this] { engine.recorder.toggleRequested.store (true); };
     addAndMakeVisible (recordButton);
 
@@ -499,7 +500,8 @@ void LaunchkeyPanel::showTrack()
         shownSample = sample;
     }
     if (engine.recordNotes.load())
-        text << dot << "RECORDING NOTES (onto the nearest 1/16)";
+        text << dot << (engine.countInBeatsLeft.load() > 0 ? "COUNT-IN " + juce::String (engine.countInBeatsLeft.load())
+                                                           : juce::String ("RECORDING NOTES (onto the nearest 1/16)"));
     if (type == Track::external)
     {
         text << dot << (tr.externalDeviceName.isNotEmpty() ? tr.externalDeviceName + ", channel " + juce::String (tr.ext.channel.load())
@@ -562,6 +564,10 @@ void LaunchkeyPanel::showPadMenu()
 
     juce::PopupMenu menu;
     menu.addItem (1, "Load a recording onto the " + name + "...");
+    const bool padRecording = engine.recorder.isRecording();
+    menu.addItem (2, padRecording ? juce::String ("Stop recording, and put it on the pad")
+                                  : "Record onto the " + name + " (" + (engine.recorder.source.load() == SampleRecorder::input
+                                                                         ? juce::String ("mic / line in") : juce::String ("BizGroove's sound")) + ")");
     menu.addSectionHeader ("Take the " + name + " from");
     const auto& kits = Presets::factorySounds (Track::drums);
     for (size_t i = 0; i < kits.size(); ++i)
@@ -582,6 +588,11 @@ void LaunchkeyPanel::showPadMenu()
                             if (id == 1)
                             {
                                 self.chooseRecording();
+                                return;
+                            }
+                            if (id == 2)
+                            {
+                                self.engine.recordPadRequested.store (true);   // Record again, or this item, stops it
                                 return;
                             }
                             if (self.engine.track (t).type.load() != Track::drums)
@@ -741,7 +752,7 @@ void LaunchkeyPanel::timerCallback()
 
     // Recording: the time runs in the track line. And the pads and record-source buttons.
     const bool recording = engine.recorder.isRecording() || engine.recordNotes.load();
-    if (recording || recording != shownRecording)
+    if (recording || recording != shownRecording || engine.countInBeatsLeft.load() > 0)
     {
         shownRecording = recording;
         showTrack();
@@ -779,7 +790,7 @@ void LaunchkeyPanel::paint (juce::Graphics& g)
     drawPrinted (g, juce::String::fromUTF8 ("\xe2\x96\xb2"), launchArrowArea);
     drawPrinted (g, juce::String::fromUTF8 ("\xe2\x96\xbc"), ssmArrowArea);
     drawPrinted (g, "Track", trackLabelArea);
-    drawPrinted (g, "Record sample", recordLabelArea, juce::Justification::centredRight, 10.0f);
+    drawPrinted (g, "Record", recordLabelArea, juce::Justification::centredRight, 10.0f);
 
     const char* padModes[8] = { "Session", "Drum", "Custom", "Device", "Volume", "Pan", "Sends", "Custom" };
     const int w = padModeLabelArea.getWidth() / 8;
