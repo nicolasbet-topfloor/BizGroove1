@@ -2,6 +2,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
+#include "Glide.h"
 #include <atomic>
 #include <cmath>
 
@@ -19,6 +20,10 @@ struct TestSynthParams
     std::atomic<float> sustain    { 0.4f };
     std::atomic<float> release    { 0.2f };
     std::atomic<float> detuneCents{ 8.0f };
+    std::atomic<float> glide      { 0.0f };    // seconds (per octave when gliding by distance)
+    std::atomic<int>   glideMode  { Glide::fixedTime };
+
+    mutable double lastNoteHz = 0.0;   // audio thread only: where a glide starts
 
     static constexpr float bendRangeSemitones = 2.0f;
     static constexpr float vibratoMaxSemitones = 0.5f;
@@ -86,7 +91,10 @@ public:
     void startNote (int midiNote, float velocity, juce::SynthesiserSound*, int) override
     {
         const auto sr = getSampleRate();
-        baseHz = juce::MidiMessage::getMidiNoteInHertz (midiNote);
+        const double hz = juce::MidiMessage::getMidiNoteInHertz (midiNote);
+        glide.start (params.lastNoteHz, hz, params.glide.load(), params.glideMode.load(), sr);
+        params.lastNoteHz = hz;
+        baseHz = glide.hz();
         updatePitch (sr);
         if (! ampEnv.isActive())
         {
@@ -146,6 +154,7 @@ public:
 
             if ((i % controlInterval) == 0)
             {
+                baseHz = glide.advance (controlInterval);
                 updatePitch (sr);
 
                 // Envelope sweeps the cutoff up to four octaves above the knob.
@@ -183,6 +192,7 @@ private:
     const Performance& performance;
     double baseHz = 440.0;
     double lfoPhase = 0.0;
+    Glide glide;
     PolyBlepSaw oscA, oscB;
     juce::dsp::StateVariableTPTFilter<float> filter;
     juce::ADSR ampEnv, filterEnv;
