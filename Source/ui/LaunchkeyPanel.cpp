@@ -1,6 +1,7 @@
 #include "LaunchkeyPanel.h"
 #include "LookAndFeel.h"
 #include "engine/Project.h"
+#include "engine/Presets.h"
 #include "EffectsPanel.h"
 
 namespace bizgroove
@@ -382,9 +383,9 @@ void LaunchkeyPanel::showTrack()
         recSourceButton.setTooltip (ext ? "Hear the gear's sound through this track: connect its audio output to your sound card's input. Turn it off if you hear feedback."
                                         : "What Record captures: the sound card's input (a microphone or line in), or BizGroove's own sound (resampling). Click to switch.");
         recordButton.setEnabled (true);
-        loadSampleButton.setButtonText (kit ? "Load pad" : "Load...");
+        loadSampleButton.setButtonText (kit ? "Pad..." : "Load...");
         editSampleButton.setButtonText (kit ? "Clear pad" : "Edit...");
-        loadSampleButton.setTooltip (kit ? "Put a recording on the selected pad (WAV, AIFF, FLAC or OGG). You can also drop a file onto the panel."
+        loadSampleButton.setTooltip (kit ? "The selected pad: put a recording on it (or drop a file onto the panel), or take the same drum from another kit to build your own. Save it with Sound > Save."
                                          : "Choose a recording for this Sampler track (WAV, AIFF, FLAC or OGG). You can also drop a file onto the panel.");
         editSampleButton.setTooltip (kit ? "Take the recording off the selected pad, so it plays its synthesised drum again."
                                          : "Open the sample editor: trim, chop into slices for the pads, and process the recording.");
@@ -460,6 +461,16 @@ void LaunchkeyPanel::chooseSample()
         showMidiOutMenu();   // on an External track this button picks the MIDI output
         return;
     }
+    if (engine.selected().type.load() == Track::drums)
+    {
+        showPadMenu();   // on a Drums track: a recording, or this drum from another kit
+        return;
+    }
+    chooseRecording();
+}
+
+void LaunchkeyPanel::chooseRecording()
+{
     chooser = std::make_unique<juce::FileChooser> ("Load a recording into track " + juce::String (engine.selectedTrack.load() + 1),
                                                    juce::File::getSpecialLocation (juce::File::userMusicDirectory),
                                                    formats.getWildcardForAllFormats());
@@ -482,6 +493,57 @@ void LaunchkeyPanel::loadSample (const juce::File& file)
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Couldn't load the recording",
                                                 file.getFileName() + (error.isNotEmpty() ? ": " + error : juce::String()));
     showTrack();
+}
+
+// The selected pad: put a recording on it, or take the same drum from another kit
+// (a factory kit or one of yours), to build a kit of your own; then save it with Sound > Save.
+void LaunchkeyPanel::showPadMenu()
+{
+    const int t = engine.selectedTrack.load();
+    const int drum = engine.selected().selectedDrum.load();
+    const auto name = DrumKit::drumName (drum);
+
+    juce::PopupMenu menu;
+    menu.addItem (1, "Load a recording onto the " + name + "...");
+    menu.addSectionHeader ("Take the " + name + " from");
+    const auto& kits = Presets::factorySounds (Track::drums);
+    for (size_t i = 0; i < kits.size(); ++i)
+        menu.addItem (100 + (int) i, kits[i].name);
+    const auto mine = Presets::userSounds (Track::drums);
+    if (! mine.isEmpty())
+    {
+        menu.addSectionHeader ("Your kits");
+        for (int i = 0; i < mine.size(); ++i)
+            menu.addItem (1000 + i, mine[i].getFileNameWithoutExtension());
+    }
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&loadSampleButton),
+                        [safe = juce::Component::SafePointer<LaunchkeyPanel> (this), t, drum, mine] (int id) {
+                            if (safe == nullptr || id == 0)
+                                return;
+                            auto& self = *safe;
+                            if (id == 1)
+                            {
+                                self.chooseRecording();
+                                return;
+                            }
+                            if (self.engine.track (t).type.load() != Track::drums)
+                                return;
+                            if (id >= 1000)
+                            {
+                                juce::String error;
+                                if (juce::isPositiveAndBelow (id - 1000, mine.size())
+                                    && ! Presets::copyDrumFromFile (self.engine, t, drum, mine[id - 1000], self.formats, error))
+                                    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Couldn't take the drum", error);
+                            }
+                            else
+                            {
+                                const auto& factory = Presets::factorySounds (Track::drums);
+                                if (juce::isPositiveAndBelow (id - 100, (int) factory.size()))
+                                    Presets::copyDrum (self.engine, t, drum, factory[(size_t) (id - 100)].sound);
+                            }
+                            self.showTrack();
+                        });
 }
 
 void LaunchkeyPanel::openSampleEditor()
