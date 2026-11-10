@@ -152,6 +152,7 @@ private:
     juce::TextButton fxButton { "Effects" };
     juce::TextButton loadSampleButton { "Load sample..." };
     juce::TextButton editSampleButton { "Edit..." }, recSourceButton { "Rec: mic / line in" }, padsModeButton { "Pads: play" };
+    juce::TextButton holdButton { "Hold" };
     bool shownRecording = false;
     juce::AudioFormatManager formats;
     std::unique_ptr<juce::FileChooser> chooser;
