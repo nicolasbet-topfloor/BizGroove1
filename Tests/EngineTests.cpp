@@ -1334,6 +1334,65 @@ static void testInserts()
            "inserts: a project keeps each track's effects");
 }
 
+// Reverb and delay kinds: each pairing sounds, stays sane (even the tape echo at full intensity), and saves.
+static void testSendEffects()
+{
+    std::cout << "Reverb and delay\n";
+    juce::AudioBuffer<float> buf (2, 256);
+    bool allSound = true, allFinite = true, allSane = true;
+    for (int rType = 0; rType < MasterEffects::numReverbTypes; ++rType)
+    {
+        for (int dType = 0; dType < MasterEffects::numDelayTypes; ++dType)
+        {
+            AudioEngine e;
+            e.prepareToPlay (256, 48000.0);
+            e.selectedTrack.store (0);
+            e.track (0).type.store (Track::poly);
+            e.track (0).mix.reverb.store (1.0f);
+            e.track (0).mix.delay.store (1.0f);
+            e.effects.reverbType.store (rType);
+            e.effects.delayType.store (dType);
+            e.effects.delayFeedback.store (0.9f);   // the top: the tape echo self-oscillates
+            e.keyboardState.noteOn (1, 60, 1.0f);
+            float peak = 0.0f, tail = 0.0f;
+            for (int i = 0; i < 1000; ++i)
+            {
+                if (i == 40)
+                    e.keyboardState.noteOff (1, 60, 0.0f);
+                buf.clear();
+                e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 256));
+                peak = juce::jmax (peak, buf.getMagnitude (0, 0, 256), buf.getMagnitude (1, 0, 256));
+                if (i >= 200)
+                    tail = juce::jmax (tail, buf.getMagnitude (0, 0, 256));
+                for (int ch = 0; ch < 2; ++ch)
+                    for (int s = 0; s < 256; ++s)
+                        allFinite = allFinite && std::isfinite (buf.getSample (ch, s));
+            }
+            std::cout << "  info  " << MasterEffects::reverbTypeName (rType) << " + " << MasterEffects::delayTypeName (dType)
+                      << " peak " << peak << " tail " << tail << "\n";
+            allSound = allSound && tail > 1.0e-4f;   // echoes or reverb still there after the note has gone
+            allSane = allSane && peak < 2.5f;
+        }
+    }
+    check (allSound && allFinite, "send effects: every reverb and delay kind sounds, with no NaN");
+    check (allSane, "send effects: even at full intensity they stay at a sane level");
+
+    AudioEngine e;
+    e.effects.reverbType.store (MasterEffects::spring);
+    e.effects.delayType.store (MasterEffects::tape);
+    e.effects.tapeHeads.store (4);
+    e.effects.tapeWear.store (0.8f);
+    juce::String err;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    juce::TemporaryFile project (Project::fileExtension);
+    AudioEngine e2;
+    check (Project::save (e, project.getFile(), err) && Project::open (e2, project.getFile(), formats, err)
+           && e2.effects.reverbType.load() == MasterEffects::spring && e2.effects.delayType.load() == MasterEffects::tape
+           && e2.effects.tapeHeads.load() == 4 && std::abs (e2.effects.tapeWear.load() - 0.8f) < 0.001f,
+           "send effects: a project keeps the reverb and delay kinds");
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI init; // needed by some JUCE singletons
@@ -1361,6 +1420,7 @@ int main (int argc, char* argv[])
     testFm();
     testExternal();
     testInserts();
+    testSendEffects();
     testRender (argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]) : juce::File());
 
     std::cout << (failures == 0 ? "All tests passed\n" : juce::String (failures) + " test(s) failed\n");
