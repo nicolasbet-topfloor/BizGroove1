@@ -213,6 +213,70 @@ ControlTargets::ControlTargets (AudioEngine& e)
     add ("wave.noise", "Wavetable noise", "Wavetable", TargetKind::continuous,
          [wp] (float v) { wp().noise.store (v); }, [wp] { return wp().noise.load(); }, offOrPercent);
 
+    // ---- FM track: the selected track's FM settings
+    auto fp = [&e]() -> FmParams& { return e.selected().fmParams; };
+    auto ratioIndex = [] (float v) { return juce::jlimit (0, (int) fmRatioSteps().size() - 1, (int) (v * ((float) fmRatioSteps().size() - 0.001f))); };
+    auto ratioKnob = [ratioIndex] (float ratio) {
+        const auto& steps = fmRatioSteps();
+        int best = 0;
+        for (int i = 1; i < (int) steps.size(); ++i)
+            if (std::abs (steps[(size_t) i] - ratio) < std::abs (steps[(size_t) best] - ratio))
+                best = i;
+        juce::ignoreUnused (ratioIndex);
+        return ((float) best + 0.5f) / (float) steps.size();
+    };
+    add ("fm.algorithm", "FM layout", "FM", TargetKind::continuous,
+         [fp] (float v) { fp().algorithm.store (juce::jlimit (0, 7, (int) (v * 7.999f))); },
+         [fp] { return ((float) fp().algorithm.load() + 0.5f) / 8.0f; },
+         [] (float v) { return juce::String (FmAlgorithms::get (juce::jlimit (0, 7, (int) (v * 7.999f))).name); });
+    add ("fm.brightness", "FM brightness", "FM", TargetKind::continuous,
+         [fp] (float v) { fp().brightness.store (v); }, [fp] { return fp().brightness.load(); }, percent);
+    for (int op = 0; op < FmParams::numOperators; ++op)
+    {
+        const auto n = juce::String (op + 1);
+        add ("fm.ratio" + n, "FM operator " + n + " pitch", "FM", TargetKind::continuous,
+             [fp, op, ratioIndex] (float v) { fp().ratio[(size_t) op].store (fmRatioSteps()[(size_t) ratioIndex (v)]); },
+             [fp, op, ratioKnob] { return ratioKnob (fp().ratio[(size_t) op].load()); },
+             [ratioIndex] (float v) { return "x " + juce::String (fmRatioSteps()[(size_t) ratioIndex (v)], 2).trimCharactersAtEnd ("0").trimCharactersAtEnd ("."); });
+        add ("fm.level" + n, "FM operator " + n + " level", "FM", TargetKind::continuous,
+             [fp, op] (float v) { fp().level[(size_t) op].store (v); }, [fp, op] { return fp().level[(size_t) op].load(); }, offOrPercent);
+    }
+    add ("fm.feedback", "FM feedback", "FM", TargetKind::continuous,
+         [fp] (float v) { fp().feedback.store (v); }, [fp] { return fp().feedback.load(); }, offOrPercent);
+    add ("fm.detune", "FM thickness", "FM", TargetKind::continuous,
+         [fp] (float v) { fp().detuneCents.store (linMap (v, 0.0f, 25.0f)); },
+         [fp] { return linInv (fp().detuneCents.load(), 0.0f, 25.0f); }, offOrPercent);
+    add ("fm.attack", "FM fade in", "FM", TargetKind::continuous,
+         [fp] (float v) { fp().attack.store (expMap (v, 0.001f, 4.0f)); },
+         [fp] { return expInv (fp().attack.load(), 0.001f, 4.0f); },
+         [] (float v) { return seconds (expMap (v, 0.001f, 4.0f)); });
+    add ("fm.decay", "FM punch", "FM", TargetKind::continuous,
+         [fp] (float v) { fp().decay.store (expMap (v, 0.01f, 8.0f)); },
+         [fp] { return expInv (fp().decay.load(), 0.01f, 8.0f); },
+         [] (float v) { return seconds (expMap (v, 0.01f, 8.0f)); });
+    add ("fm.sustain", "FM hold level", "FM", TargetKind::continuous,
+         [fp] (float v) { fp().sustain.store (v); }, [fp] { return fp().sustain.load(); }, percent);
+    add ("fm.release", "FM fade out", "FM", TargetKind::continuous,
+         [fp] (float v) { fp().release.store (expMap (v, 0.01f, 8.0f)); },
+         [fp] { return expInv (fp().release.load(), 0.01f, 8.0f); },
+         [] (float v) { return seconds (expMap (v, 0.01f, 8.0f)); });
+    add ("fm.bitedecay", "FM bite", "FM", TargetKind::continuous,
+         [fp] (float v) { fp().biteDecay.store (expMap (v, 0.01f, 6.0f)); },
+         [fp] { return expInv (fp().biteDecay.load(), 0.01f, 6.0f); },
+         [] (float v) { return seconds (expMap (v, 0.01f, 6.0f)); });
+    add ("fm.bitesustain", "FM brightness held", "FM", TargetKind::continuous,
+         [fp] (float v) { fp().biteSustain.store (v); }, [fp] { return fp().biteSustain.load(); }, percent);
+    add ("fm.velocity", "FM velocity to brightness", "FM", TargetKind::continuous,
+         [fp] (float v) { fp().velocityBrightness.store (v); }, [fp] { return fp().velocityBrightness.load(); }, offOrPercent);
+    add ("fm.lforate", "FM wobble speed", "FM", TargetKind::continuous,
+         [fp] (float v) { fp().lfoRate.store (expMap (v, 0.1f, 20.0f)); },
+         [fp] { return expInv (fp().lfoRate.load(), 0.1f, 20.0f); },
+         [] (float v) { return juce::String (expMap (v, 0.1f, 20.0f), 1) + " per second"; });
+    add ("fm.lfopitch", "FM wobble on pitch", "FM", TargetKind::continuous,
+         [fp] (float v) { fp().lfoPitch.store (v); }, [fp] { return fp().lfoPitch.load(); }, offOrPercent);
+    add ("fm.lfobrightness", "FM wobble on brightness", "FM", TargetKind::continuous,
+         [fp] (float v) { fp().lfoBrightness.store (v); }, [fp] { return fp().lfoBrightness.load(); }, offOrPercent);
+
     // ---- Tracks
     add ("track.volume", "Track volume (selected track)", "Tracks", TargetKind::continuous,
          [&e] (float v) { e.selected().volume.store (v); },
