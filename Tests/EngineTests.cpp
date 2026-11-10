@@ -1661,7 +1661,7 @@ static void testLevels()
         return std::make_pair (juce::Decibels::gainToDecibels ((float) rms, -120.0f), juce::Decibels::gainToDecibels (peak, -120.0f));
     };
 
-    for (int type : { (int) Track::testSynth, (int) Track::poly, (int) Track::wavetable, (int) Track::fm, (int) Track::drums })
+    for (int type : { (int) Track::testSynth, (int) Track::poly, (int) Track::wavetable, (int) Track::fm, (int) Track::noise, (int) Track::drums })
     {
         for (const auto& s : Presets::factorySounds (type))
         {
@@ -1688,6 +1688,159 @@ static void testLevels()
         }
     }
     e.keyboardState.allNotesOff (1);
+}
+
+// The Noise synth: every colour at about the same loudness, brown deep and violet thin;
+// every source makes sound; the resonator gives it a pitch.
+static void testNoise()
+{
+    std::cout << "Noise\n";
+    // Colours, straight from the generator.
+    std::array<double, 5> rms {}, lowShare {};
+    for (int c = 0; c < 5; ++c)
+    {
+        ColourNoise n (12345u);
+        double sum = 0.0, low = 0.0;
+        float lp = 0.0f;
+        for (int i = 0; i < 96000; ++i)
+        {
+            const float x = n.next ((float) c * 0.25f);
+            lp += 0.0645f * (x - lp);   // about 500 Hz at 48 kHz
+            sum += (double) x * x;
+            low += (double) lp * lp;
+        }
+        rms[(size_t) c] = std::sqrt (sum / 96000.0);
+        lowShare[(size_t) c] = low / juce::jmax (1.0e-12, sum);
+    }
+    std::cout << "  info  rms brown " << rms[0] << " pink " << rms[1] << " white " << rms[2] << " blue " << rms[3] << " violet " << rms[4] << "\n";
+    bool even = true;
+    for (auto r : rms)
+        even = even && std::abs (juce::Decibels::gainToDecibels ((float) (r / rms[2]))) < 3.0f;
+    check (even, "noise: every colour is about as loud as white");
+    check (lowShare[0] > 0.6 && lowShare[1] > lowShare[2] && lowShare[2] > lowShare[3] && lowShare[4] < 0.05,
+           "noise: brown is deep, violet thin, and the colours in between in order");
+
+    AudioEngine e;
+    constexpr int block = 512;
+    e.prepareToPlay (block, 48000.0);
+    e.selectedTrack.store (0);
+    e.track (0).type.store (Track::noise);
+    auto& np = e.track (0).noiseParams;
+    juce::AudioBuffer<float> buf (2, block);
+    auto play = [&] (int note, int blocks) {
+        e.keyboardState.noteOn (1, note, 0.8f);
+        double sum = 0.0;
+        bool finite = true;
+        for (int b = 0; b < blocks; ++b)
+        {
+            buf.clear();
+            e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, block));
+            for (int i = 0; i < block; ++i)
+            {
+                const float x = buf.getSample (0, i);
+                finite = finite && std::isfinite (x);
+                sum += (double) x * x;
+            }
+        }
+        e.keyboardState.noteOff (1, note, 0.0f);
+        for (int b = 0; b < 40; ++b)
+        {
+            buf.clear();
+            e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, block));
+        }
+        return std::make_pair (std::sqrt (sum / (double) (blocks * block)), finite);
+    };
+
+    bool allSound = true, allFinite = true;
+    for (int s = 0; s < NoiseParams::numSources; ++s)
+    {
+        np.source.store (s);
+        for (float grain : { 0.0f, 0.6f })
+            for (float tone : { 0.0f, 0.8f })
+            {
+                np.grain.store (grain);
+                np.tone.store (tone);
+                const auto [level, finite] = play (57, 20);
+                allSound = allSound && level > 1.0e-3;
+                allFinite = allFinite && finite;
+            }
+    }
+    check (allSound, "noise: every source makes sound, with and without grain and pitch");
+    check (allFinite, "noise: with no NaN");
+
+    // The resonator tunes the noise: the sound repeats at the note's period.
+    np.source.store (NoiseParams::pure);
+    np.grain.store (0.0f);
+    np.tone.store (0.95f);
+    np.cutoffHz.store (18000.0f);
+    e.keyboardState.noteOn (1, 57, 0.8f);   // A3, 220 Hz: a period of about 218 samples
+    std::vector<float> tail;
+    for (int b = 0; b < 40; ++b)
+    {
+        buf.clear();
+        e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, block));
+        if (b >= 20)
+            for (int i = 0; i < block; ++i)
+                tail.push_back (buf.getSample (0, i));
+    }
+    e.keyboardState.noteOff (1, 57, 0.0f);
+    auto correlation = [&tail] (int lag) {
+        double ab = 0.0, aa = 0.0, bb = 0.0;
+        for (size_t i = (size_t) lag; i < tail.size(); ++i)
+        {
+            ab += (double) tail[i] * tail[i - (size_t) lag];
+            aa += (double) tail[i] * tail[i];
+            bb += (double) tail[i - (size_t) lag] * tail[i - (size_t) lag];
+        }
+        return ab / juce::jmax (1.0e-12, std::sqrt (aa * bb));
+    };
+    const int period = juce::roundToInt (48000.0 / 220.0);
+    double best = 0.0;
+    for (int lag = period - 2; lag <= period + 2; ++lag)
+        best = juce::jmax (best, correlation (lag));
+    std::cout << "  info  correlation at the note's period " << best << "\n";
+    check (best > 0.5, "noise: the pitch control tunes the noise to the note");
+
+    // Projects and sounds keep the settings; there are factory sounds.
+    np.colour.store (0.83f);
+    np.source.store (NoiseParams::crackle);
+    const auto v = Presets::soundToVar (e.track (0));
+    Presets::applySoundVar (e.track (2), v);
+    check (e.track (2).type.load() == Track::noise && std::abs (e.track (2).noiseParams.colour.load() - 0.83f) < 1.0e-6f
+               && e.track (2).noiseParams.source.load() == NoiseParams::crackle, "noise: a sound keeps its settings");
+    check (Presets::factorySounds (Track::noise).size() >= 10, "noise: has factory sounds");
+}
+
+// Hold: notes keep sounding after the keys are let go, until Hold is switched off.
+static void testHold()
+{
+    std::cout << "Hold\n";
+    AudioEngine e;
+    constexpr int block = 512;
+    e.prepareToPlay (block, 48000.0);
+    e.selectedTrack.store (0);
+    e.track (0).type.store (Track::poly);
+    juce::AudioBuffer<float> buf (2, block);
+    auto level = [&] (int blocks) {
+        float peak = 0.0f;
+        for (int b = 0; b < blocks; ++b)
+        {
+            buf.clear();
+            e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, block));
+            peak = juce::jmax (peak, buf.getMagnitude (0, 0, block));
+        }
+        return peak;
+    };
+
+    e.hold.store (true);
+    e.keyboardState.noteOn (1, 60, 0.8f);
+    level (4);
+    e.keyboardState.noteOff (1, 60, 0.0f);
+    level (100);   // about a second after letting go
+    check (level (4) > 1.0e-3f, "hold: the note keeps sounding after the key is let go");
+    e.hold.store (false);
+    level (300);
+    check (level (4) < 1.0e-4f, "hold: switching Hold off lets it go");
 }
 
 // Kits of your own: one drum taken from another kit, factory or saved, onto the same pad.
@@ -1816,6 +1969,8 @@ int main (int argc, char* argv[])
     testPerform();
     testLiveRecord();
     testCopyDrum();
+    testNoise();
+    testHold();
     testKnobPage();
     testChordSteps();
     testRecordChord();
