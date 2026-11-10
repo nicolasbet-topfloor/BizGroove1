@@ -28,7 +28,8 @@ struct WaveParams
     std::atomic<int>   unison      { 1 };       // 1..4 copies per note, spread across the stereo field
     std::atomic<float> sub         { 0.0f };    // 0..1, a sine an octave below
     std::atomic<float> noise       { 0.0f };    // 0..1
-    std::atomic<float> glide       { 0.0f };    // seconds
+    std::atomic<float> glide       { 0.0f };    // seconds (per octave when gliding by distance)
+    std::atomic<int>   glideMode   { Glide::fixedTime };
     std::atomic<float> lfoRate     { 0.5f };    // Hz
     std::atomic<float> lfoPosition { 0.0f };    // 0..1, wobble on the position
     std::atomic<float> lfoFilter   { 0.0f };    // 0..1, wobble on the brightness
@@ -261,8 +262,8 @@ public:
     void startNote (int midiNote, float velocity, juce::SynthesiserSound*, int) override
     {
         targetHz = juce::MidiMessage::getMidiNoteInHertz (midiNote);
-        const float glide = params.glide.load();
-        currentHz = (glide > 0.001f && params.lastNoteHz > 0.0) ? params.lastNoteHz : targetHz;
+        glide.start (params.lastNoteHz, targetHz, params.glide.load(), params.glideMode.load(), getSampleRate());
+        currentHz = glide.hz();
         params.lastNoteHz = targetHz;
 
         unison = juce::jlimit (1, maxUnison, params.unison.load());
@@ -309,9 +310,6 @@ public:
         const double twoPi = juce::MathConstants<double>::twoPi;
         const double vibratoStep = twoPi * TestSynthParams::vibratoRateHz / sr;
         const double lfoStep = twoPi * juce::jlimit (0.02f, 30.0f, params.lfoRate.load()) / sr;
-        const float glide = params.glide.load();
-        const double glideCoef = glide > 0.001f ? std::exp (-1.0 / (glide * sr)) : 0.0;
-
         const int table = juce::jlimit (0, Wavetables::numTables - 1, params.table.load());
         const float basePosition = juce::jlimit (0.0f, 1.0f, params.position.load());
         const float sweep = juce::jlimit (0.0f, 1.0f, params.sweep.load());
@@ -352,7 +350,7 @@ public:
             if ((i % controlInterval) == 0)
             {
                 const float lfo = (float) std::sin (lfoPhase);
-                currentHz = targetHz + (currentHz - targetHz) * std::pow (glideCoef, (double) controlInterval);
+                currentHz = glide.advance (controlInterval);
                 updatePitch (sr);
 
                 const float pos = juce::jlimit (0.0f, 1.0f, basePosition + sweep * mEnv + 0.5f * lfoPosition * lfo);
@@ -454,6 +452,7 @@ private:
     const Performance& performance;
     const Wavetables& tables;
     double targetHz = 440.0, currentHz = 440.0;
+    Glide glide;
     double vibratoPhase = 0.0, lfoPhase = 0.0, subPhase = 0.0, subIncrement = 0.0;
     int unison = 1;
     std::array<double, maxUnison> phases {}, increments {};
@@ -475,6 +474,7 @@ inline juce::var waveParamsToVar (const WaveParams& wp)
     o->setProperty ("sustain", wp.sustain.load());      o->setProperty ("release", wp.release.load());
     o->setProperty ("detune", wp.detuneCents.load());   o->setProperty ("unison", wp.unison.load());
     o->setProperty ("sub", wp.sub.load());              o->setProperty ("noise", wp.noise.load());
+    o->setProperty ("glideMode", wp.glideMode.load());
     o->setProperty ("glide", wp.glide.load());          o->setProperty ("lfoRate", wp.lfoRate.load());
     o->setProperty ("lfoPosition", wp.lfoPosition.load()); o->setProperty ("lfoFilter", wp.lfoFilter.load());
     return juce::var (o);
@@ -493,6 +493,7 @@ inline void applyWaveParams (WaveParams& wp, const juce::var& v)
     wp.release.store (f ("release", 0.4f));         wp.detuneCents.store (f ("detune", 10.0f));
     wp.unison.store (juce::jlimit (1, 4, i ("unison", 1)));
     wp.sub.store (f ("sub", 0.0f));                 wp.noise.store (f ("noise", 0.0f));
+    wp.glideMode.store (juce::jlimit (0, Glide::numModes - 1, (int) (v.hasProperty ("glideMode") ? (int) v["glideMode"] : 0)));
     wp.glide.store (f ("glide", 0.0f));             wp.lfoRate.store (f ("lfoRate", 0.5f));
     wp.lfoPosition.store (f ("lfoPosition", 0.0f)); wp.lfoFilter.store (f ("lfoFilter", 0.0f));
 }
