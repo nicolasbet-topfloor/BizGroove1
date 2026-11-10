@@ -149,9 +149,9 @@ ControlTargets::ControlTargets (AudioEngine& e)
          [pp] { return (pp().unison.load() - 1) / 3.0f; },
          [] (float v) { const int n = 1 + juce::jlimit (0, 3, (int) (v * 3.999f)); return n == 1 ? juce::String ("Off") : juce::String (n) + " stacked"; });
     add ("poly.glide", "Poly glide", "Poly", TargetKind::continuous,
-         [pp] (float v) { pp().glide.store (v < 0.01f ? 0.0f : expMap (v, 0.005f, 2.0f)); },
-         [pp] { return pp().glide.load() <= 0.001f ? 0.0f : expInv (pp().glide.load(), 0.005f, 2.0f); },
-         [] (float v) { return v < 0.01f ? juce::String ("Off") : seconds (expMap (v, 0.005f, 2.0f)); });
+         [pp] (float v) { pp().glide.store (v < 0.01f ? 0.0f : expMap (v, 0.005f, 4.0f)); },
+         [pp] { return pp().glide.load() <= 0.001f ? 0.0f : expInv (pp().glide.load(), 0.005f, 4.0f); },
+         [] (float v) { return v < 0.01f ? juce::String ("Off") : seconds (expMap (v, 0.005f, 4.0f)); });
     add ("poly.lforate", "Poly wobble speed", "Poly", TargetKind::continuous,
          [pp] (float v) { pp().lfoRate.store (expMap (v, 0.1f, 20.0f)); },
          [pp] { return expInv (pp().lfoRate.load(), 0.1f, 20.0f); },
@@ -204,9 +204,9 @@ ControlTargets::ControlTargets (AudioEngine& e)
     add ("wave.sub", "Wavetable sub", "Wavetable", TargetKind::continuous,
          [wp] (float v) { wp().sub.store (v); }, [wp] { return wp().sub.load(); }, offOrPercent);
     add ("wave.glide", "Wavetable glide", "Wavetable", TargetKind::continuous,
-         [wp] (float v) { wp().glide.store (v < 0.01f ? 0.0f : expMap (v, 0.005f, 2.0f)); },
-         [wp] { return wp().glide.load() <= 0.001f ? 0.0f : expInv (wp().glide.load(), 0.005f, 2.0f); },
-         [] (float v) { return v < 0.01f ? juce::String ("Off") : seconds (expMap (v, 0.005f, 2.0f)); });
+         [wp] (float v) { wp().glide.store (v < 0.01f ? 0.0f : expMap (v, 0.005f, 4.0f)); },
+         [wp] { return wp().glide.load() <= 0.001f ? 0.0f : expInv (wp().glide.load(), 0.005f, 4.0f); },
+         [] (float v) { return v < 0.01f ? juce::String ("Off") : seconds (expMap (v, 0.005f, 4.0f)); });
     add ("wave.lforate", "Wavetable wobble speed", "Wavetable", TargetKind::continuous,
          [wp] (float v) { wp().lfoRate.store (expMap (v, 0.05f, 20.0f)); },
          [wp] { return expInv (wp().lfoRate.load(), 0.05f, 20.0f); },
@@ -581,6 +581,76 @@ ControlTargets::ControlTargets (AudioEngine& e)
          [np] (float v) { np().level.store (expMap (v, 0.25f, 4.0f)); },
          [np] { return expInv (np().level.load(), 0.25f, 4.0f); },
          [] (float v) { const float db = juce::Decibels::gainToDecibels (expMap (v, 0.25f, 4.0f)); return (db >= 0.0f ? "+" : "") + juce::String (db, 1) + " dB"; });
+
+    // ---- Arpeggiator
+    auto pick = [] (float v, int count) { return juce::jlimit (0, count - 1, (int) (v * ((float) count - 0.001f))); };
+    add ("arp.on", "Arpeggiator on / off", "Arpeggiator", TargetKind::toggle,
+         [&e] (float) { toggle (e.arp.on); });
+    add ("arp.mode", "Arpeggiator mode", "Arpeggiator", TargetKind::continuous,
+         [&e, pick] (float v) { e.arp.mode.store (pick (v, ArpSettings::numModes)); },
+         [&e] { return ((float) e.arp.mode.load() + 0.5f) / (float) ArpSettings::numModes; },
+         [pick] (float v) { return ArpSettings::modeName (pick (v, ArpSettings::numModes)); });
+    add ("arp.rate", "Arpeggiator rate", "Arpeggiator", TargetKind::continuous,
+         [&e, pick] (float v) { e.arp.rate.store (pick (v, ArpSettings::numRates)); },
+         [&e] { return ((float) e.arp.rate.load() + 0.5f) / (float) ArpSettings::numRates; },
+         [pick] (float v) { return ArpSettings::rateName (pick (v, ArpSettings::numRates)); });
+    add ("arp.octaves", "Arpeggiator octaves", "Arpeggiator", TargetKind::continuous,
+         [&e, pick] (float v) { e.arp.octaves.store (1 + pick (v, 4)); },
+         [&e] { return ((float) (e.arp.octaves.load() - 1) + 0.5f) / 4.0f; },
+         [pick] (float v) { const int o = 1 + pick (v, 4); return juce::String (o) + (o == 1 ? " octave" : " octaves"); });
+    add ("arp.gate", "Arpeggiator note length", "Arpeggiator", TargetKind::continuous,
+         [&e] (float v) { e.arp.gate.store (linMap (v, 0.05f, 1.0f)); },
+         [&e] { return linInv (e.arp.gate.load(), 0.05f, 1.0f); },
+         [] (float v) { return percent (linMap (v, 0.05f, 1.0f)); });
+    add ("arp.swing", "Arpeggiator swing", "Arpeggiator", TargetKind::continuous,
+         [&e] (float v) { e.arp.swing.store (v); }, [&e] { return e.arp.swing.load(); }, percent);
+
+    // ---- Glide (portamento) on every synth, and one target for the selected track's synth.
+    auto glideSet = [] (std::atomic<float>& g, float v) { g.store (v < 0.01f ? 0.0f : expMap (v, 0.005f, 4.0f)); };
+    auto glideGet = [] (const std::atomic<float>& g) { return g.load() <= 0.001f ? 0.0f : expInv (g.load(), 0.005f, 4.0f); };
+    auto glideShow = [] (float v) { return v < 0.01f ? juce::String ("Off") : seconds (expMap (v, 0.005f, 4.0f)); };
+    auto modeSet = [] (std::atomic<int>& m, float v) { m.store (v < 0.5f ? Glide::fixedTime : Glide::byDistance); };
+    auto modeShow = [] (float v) { return Glide::modeName (v < 0.5f ? Glide::fixedTime : Glide::byDistance); };
+    add ("synth.glide", "Test synth glide", "Test synth", TargetKind::continuous,
+         [&e, glideSet] (float v) { glideSet (e.selected().synthParams.glide, v); },
+         [&e, glideGet] { return glideGet (e.selected().synthParams.glide); }, glideShow);
+    add ("fm.glide", "FM glide", "FM", TargetKind::continuous,
+         [&e, glideSet] (float v) { glideSet (e.selected().fmParams.glide, v); },
+         [&e, glideGet] { return glideGet (e.selected().fmParams.glide); }, glideShow);
+    add ("noise.glide", "Noise glide", "Noise", TargetKind::continuous,
+         [&e, glideSet] (float v) { glideSet (e.selected().noiseParams.glide, v); },
+         [&e, glideGet] { return glideGet (e.selected().noiseParams.glide); }, glideShow);
+    auto glideOf = [&e]() -> std::atomic<float>* {
+        auto& tr = e.selected();
+        switch (tr.type.load())
+        {
+            case Track::testSynth: return &tr.synthParams.glide;
+            case Track::poly:      return &tr.polyParams.glide;
+            case Track::wavetable: return &tr.waveParams.glide;
+            case Track::fm:        return &tr.fmParams.glide;
+            case Track::noise:     return &tr.noiseParams.glide;
+            default:               return nullptr;
+        }
+    };
+    auto glideModeOf = [&e]() -> std::atomic<int>* {
+        auto& tr = e.selected();
+        switch (tr.type.load())
+        {
+            case Track::testSynth: return &tr.synthParams.glideMode;
+            case Track::poly:      return &tr.polyParams.glideMode;
+            case Track::wavetable: return &tr.waveParams.glideMode;
+            case Track::fm:        return &tr.fmParams.glideMode;
+            case Track::noise:     return &tr.noiseParams.glideMode;
+            default:               return nullptr;
+        }
+    };
+    add ("track.glide", "Glide time (selected track's synth)", "Tracks", TargetKind::continuous,
+         [glideOf, glideSet] (float v) { if (auto* g = glideOf()) glideSet (*g, v); },
+         [glideOf, glideGet] { auto* g = glideOf(); return g != nullptr ? glideGet (*g) : 0.0f; }, glideShow);
+    for (const char* id : { "synth.glidemode", "poly.glidemode", "wave.glidemode", "fm.glidemode", "noise.glidemode", "track.glidemode" })
+        add (id, "Glide: fixed time or by distance", "Tracks", TargetKind::continuous,
+             [glideModeOf, modeSet] (float v) { if (auto* m = glideModeOf()) modeSet (*m, v); },
+             [glideModeOf] { auto* m = glideModeOf(); return m != nullptr && m->load() == Glide::byDistance ? 0.75f : 0.25f; }, modeShow);
 
     // ---- Panel knobs 1-8: whatever the loaded synth puts on that knob.
     for (int k = 0; k < 8; ++k)
