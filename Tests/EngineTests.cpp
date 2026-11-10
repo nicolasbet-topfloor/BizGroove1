@@ -1393,6 +1393,50 @@ static void testSendEffects()
            "send effects: a project keeps the reverb and delay kinds");
 }
 
+// Repeat, stutter and tape stop on the whole mix: clean, the tape stop really stops, and the music comes back.
+static void testPerform()
+{
+    std::cout << "Performance effects\n";
+    AudioEngine e;
+    e.prepareToPlay (256, 48000.0);
+    e.selectedTrack.store (0);
+    e.track (0).type.store (Track::poly);
+    e.track (0).polyParams.sustain.store (1.0f);
+    e.keyboardState.noteOn (1, 57, 1.0f);
+    juce::AudioBuffer<float> buf (2, 256);
+    bool finite = true;
+    auto run = [&] (int blocks) {
+        float last = 0.0f;
+        for (int i = 0; i < blocks; ++i)
+        {
+            buf.clear();
+            e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 256));
+            for (int ch = 0; ch < 2; ++ch)
+                for (int s = 0; s < 256; ++s)
+                    finite = finite && std::isfinite (buf.getSample (ch, s));
+            last = buf.getMagnitude (0, 0, 256);
+        }
+        return last;
+    };
+
+    const float playing = run (60);
+    e.perform.repeat.store (true);
+    const float repeating = run (60);
+    e.perform.repeat.store (false);
+    e.perform.stutter.store (true);
+    run (60);
+    e.perform.stutter.store (false);
+    e.perform.stopTime.store (0.0f);   // the quickest stop
+    e.perform.tapeStop.store (true);
+    const float stopped = run (120);
+    e.perform.tapeStop.store (false);
+    const float back = run (20);
+    std::cout << "  info  playing " << playing << " repeat " << repeating << " stopped " << stopped << " back " << back << "\n";
+    check (finite && repeating > 0.01f, "perform: repeat keeps the music going, with no NaN");
+    check (stopped < 1.0e-3f, "perform: tape stop slows the mix to silence");
+    check (back > 0.5f * playing, "perform: letting go brings the music back");
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI init; // needed by some JUCE singletons
@@ -1421,6 +1465,7 @@ int main (int argc, char* argv[])
     testExternal();
     testInserts();
     testSendEffects();
+    testPerform();
     testRender (argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]) : juce::File());
 
     std::cout << (failures == 0 ? "All tests passed\n" : juce::String (failures) + " test(s) failed\n");
