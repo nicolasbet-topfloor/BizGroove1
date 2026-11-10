@@ -291,6 +291,48 @@ void MainComponent::updateClockOutputs()
     liveOutput.setOutputs (ids);
 }
 
+void MainComponent::updateExternalOutputs()
+{
+    // Each External MIDI track plays the output chosen for it: found by its
+    // identifier, or by name when the project comes from another computer.
+    const auto devices = juce::MidiOutput::getAvailableDevices();
+    std::array<juce::String, AudioEngine::numTracks> ids;
+    bool anyHeard = false;
+    for (int t = 0; t < AudioEngine::numTracks; ++t)
+    {
+        auto& tr = engine.track (t);
+        if (tr.type.load() != Track::external)
+            continue;
+        anyHeard = anyHeard || tr.ext.monitor.load();
+
+        juce::String id;
+        for (const auto& d : devices)
+            if (tr.externalDeviceId.isNotEmpty() && d.identifier == tr.externalDeviceId)
+                id = d.identifier;
+        if (id.isEmpty())
+        {
+            for (const auto& d : devices)
+            {
+                if (tr.externalDeviceName.isNotEmpty() && d.name == tr.externalDeviceName)
+                {
+                    id = d.identifier;
+                    tr.externalDeviceId = id;
+                    break;
+                }
+            }
+        }
+        ids[(size_t) t] = id;
+    }
+    liveOutput.setTrackOutputs (ids);
+
+    // Hearing the gear needs the sound card's input: switch it on once.
+    if (anyHeard && ! externalInputAsked)
+    {
+        externalInputAsked = true;
+        ensureAudioInput();
+    }
+}
+
 // ============================================================== program bank
 
 void MainComponent::setCurrentSound (int t, const juce::String& name, const juce::File& file)
@@ -840,6 +882,8 @@ void MainComponent::runExport (const ExportOptions& options, const juce::File& f
 void MainComponent::timerCallback()
 {
     handleRecorder();
+    if (externalTicks++ % 15 == 0)
+        updateExternalOutputs();
 
     // Keep computer-keyboard notes working: the on-screen keyboard takes key
     // focus, and keys it doesn't use (space) bubble up to keyPressed().
