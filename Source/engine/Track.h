@@ -17,7 +17,7 @@ namespace bizgroove
 struct Track
 {
     enum Type { testSynth = 0, drums = 1, sampler = 2, poly = 3, wavetable = 4 };   // index into synthLibrary()
-    static constexpr int lastType = wavetable;
+    static constexpr int numTypes = 5;
 
     static constexpr int numSynthVoices = 16;
     static constexpr int numPolyVoices = 8;
