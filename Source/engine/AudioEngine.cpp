@@ -38,6 +38,10 @@ void AudioEngine::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
         for (int i = 0; i < t->fmSynth.getNumVoices(); ++i)
             if (auto* v = dynamic_cast<FmVoice*> (t->fmSynth.getVoice (i)))
                 v->prepare (sampleRate);
+        t->noiseSynth.setCurrentPlaybackSampleRate (sampleRate);
+        for (int i = 0; i < t->noiseSynth.getNumVoices(); ++i)
+            if (auto* v = dynamic_cast<NoiseVoice*> (t->noiseSynth.getVoice (i)))
+                v->prepare (sampleRate);
         t->kit.prepare (sampleRate);
         t->samplerEngine.prepare (sampleRate, maxBlock);
         t->strip.prepare (sampleRate);
@@ -107,6 +111,8 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         tracks[(size_t) lastSelected]->polySynth.allNotesOff (0, true);
         tracks[(size_t) lastSelected]->waveSynth.allNotesOff (0, true);
         tracks[(size_t) lastSelected]->fmSynth.allNotesOff (0, true);
+        tracks[(size_t) lastSelected]->noiseSynth.allNotesOff (0, true);
+        latched.fill (false);   // Hold: the old track's held notes went with it
         if (tracks[(size_t) lastSelected]->type.load() == Track::external)
             tracks[(size_t) lastSelected]->ext.panic.store (true);   // no notes left hanging on the gear
         lastSelected = sel;
@@ -177,6 +183,7 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
             tracks[(size_t) t]->polySynth.allNotesOff (0, false);
             tracks[(size_t) t]->waveSynth.allNotesOff (0, false);
             tracks[(size_t) t]->fmSynth.allNotesOff (0, false);
+            tracks[(size_t) t]->noiseSynth.allNotesOff (0, false);
             if (lastType[(size_t) t] == Track::external)
                 tracks[(size_t) t]->ext.panic.store (true);
             lastType[(size_t) t] = type;
@@ -210,6 +217,13 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         if (isDrum[(size_t) t])
             drumTarget = t;
 
+    // Hold: notes keep sounding after the keys are let go. Playing again once every key is up
+    // starts a new held chord; switching Hold off lets them all go.
+    const bool holdNow = hold.load();
+    if (wasHold && ! holdNow)
+        releaseLatched (trackMidi[(size_t) sel], 0);
+    wasHold = holdNow;
+
     for (const auto meta : liveMidi)
     {
         const auto m = meta.getMessage();
@@ -219,6 +233,24 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
             const int drum = DrumKit::drumForNote (m.getNoteNumber());
             if (drum >= 0)
                 tracks[(size_t) dest]->selectedDrum.store (drum);
+        }
+        if (! isDrum[(size_t) dest] && (m.isNoteOn() || m.isNoteOff()))
+        {
+            const auto n = (size_t) juce::jlimit (0, 127, m.getNoteNumber());
+            if (m.isNoteOn() && m.getVelocity() > 0)
+            {
+                if (holdNow && keysDown == 0)
+                    releaseLatched (trackMidi[(size_t) dest], meta.samplePosition);
+                if (! keyDown[n]) { keyDown[n] = true; ++keysDown; }
+                if (holdNow)
+                    latched[n] = true;
+            }
+            else
+            {
+                if (keyDown[n]) { keyDown[n] = false; --keysDown; }
+                if (holdNow)
+                    continue;   // held: the note keeps sounding
+            }
         }
         trackMidi[(size_t) dest].addEvent (m, meta.samplePosition);
 
@@ -281,6 +313,8 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         {
             if (type == Track::fm)
                 tr.fmSynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
+            else if (type == Track::noise)
+                tr.noiseSynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
             else if (type == Track::wavetable)
                 tr.waveSynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
             else if (type == Track::poly)
@@ -343,6 +377,16 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         peaks[(size_t) ch].store (peak);
     }
     liveInputSamples = 0;   // the next block brings its own input, or none (offline export)
+}
+
+void AudioEngine::releaseLatched (juce::MidiBuffer& midi, int position)
+{
+    for (int n = 0; n < 128; ++n)
+        if (latched[(size_t) n])
+        {
+            midi.addEvent (juce::MidiMessage::noteOff (1, n), position);
+            latched[(size_t) n] = false;
+        }
 }
 
 void AudioEngine::startWithCountIn()
