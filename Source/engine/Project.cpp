@@ -80,6 +80,7 @@ juce::var Project::toVar (AudioEngine& e)
         o->setProperty ("poly", juce::var (poly));
         o->setProperty ("wave", waveParamsToVar (tr.waveParams));
         o->setProperty ("fm", fmParamsToVar (tr.fmParams));
+        o->setProperty ("external", externalParamsToVar (tr.ext, tr.externalDeviceName));
 
         auto* kit = new Obj();
         kit->setProperty ("choke", tr.kit.choke.load());
@@ -235,6 +236,8 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
 
             applyWaveParams (tr.waveParams, o["wave"]);
             applyFmParams (tr.fmParams, o["fm"]);
+            applyExternalParams (tr.ext, tr.externalDeviceName, o["external"]);
+            tr.externalDeviceId = {};   // found again by name on this computer
 
             const auto k = o["kit"];
             tr.kit.choke.store (getB (k, "choke", true));
@@ -629,7 +632,7 @@ bool Exporter::writeMidi (AudioEngine& e, bool playSong, int bars, const juce::F
 
     for (int t = 0; t < Song::numTracks; ++t)
     {
-        const bool isDrum = e.track (t).type.load() == Track::drums;
+        const bool isDrum = e.track (t).playsDrums();
         const int channel = isDrum ? 10 : 1;
         const double swing = e.song.swing[(size_t) t].load();
         juce::MidiMessageSequence seq;
