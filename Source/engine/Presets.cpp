@@ -174,6 +174,14 @@ namespace
     }
 
     template <typename Tweak>
+    Presets::FactorySound noisePreset (const char* name, Tweak&& tweak)
+    {
+        NoiseParams p;   // starts from the Noise synth's own settings
+        tweak (p);
+        return { name, soundOf (Track::noise, "noise", noiseParamsToVar (p)) };
+    }
+
+    template <typename Tweak>
     Presets::FactorySound externalPreset (const char* name, Tweak&& tweak)
     {
         ExternalParams p;   // standard knob CCs, channel 1
@@ -405,6 +413,63 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
         })
     };
 
+    static const std::vector<FactorySound> noises {
+        noisePreset ("White noise", [] (NoiseParams& p) { p.cutoffHz.store (18000.0f); p.keyFollow.store (0.0f); }),
+        noisePreset ("Ocean waves", [] (NoiseParams& p) {
+            p.colour.store (0.12f); p.cutoffHz.store (900.0f); p.keyFollow.store (0.0f); p.width.store (1.0f);
+            p.lfoRate.store (0.12f); p.lfoFilter.store (0.7f); p.lfoColour.store (0.3f);
+            p.attack.store (1.5f); p.sustain.store (1.0f); p.release.store (3.0f);
+        }),
+        noisePreset ("Wind", [] (NoiseParams& p) {
+            p.colour.store (0.3f); p.filterMode.store (NoiseParams::bandPass); p.cutoffHz.store (700.0f); p.resonance.store (0.7f);
+            p.keyFollow.store (0.3f); p.lfoRate.store (0.25f); p.lfoFilter.store (0.8f); p.width.store (0.9f); p.level.store (2.0f);
+            p.attack.store (1.0f); p.sustain.store (1.0f); p.release.store (2.0f);
+        }),
+        noisePreset ("Snare noise", [] (NoiseParams& p) {
+            p.colour.store (0.55f); p.filterMode.store (NoiseParams::bandPass); p.cutoffHz.store (3000.0f); p.resonance.store (0.1f); p.level.store (1.6f);
+            p.keyFollow.store (0.3f); p.attack.store (0.001f); p.decay.store (0.18f); p.sustain.store (0.0f); p.release.store (0.15f);
+        }),
+        noisePreset ("Hi-hat", [] (NoiseParams& p) {
+            p.colour.store (0.95f); p.filterMode.store (NoiseParams::highPass); p.cutoffHz.store (7000.0f); p.keyFollow.store (0.2f);
+            p.attack.store (0.001f); p.decay.store (0.06f); p.sustain.store (0.0f); p.release.store (0.05f); p.width.store (0.2f);
+        }),
+        noisePreset ("Radio static", [] (NoiseParams& p) {
+            p.source.store (NoiseParams::crackle); p.mod.store (0.75f); p.colour.store (0.6f); p.grain.store (0.3f); p.level.store (1.2f);
+            p.filterMode.store (NoiseParams::bandPass); p.cutoffHz.store (2500.0f); p.resonance.store (0.4f); p.keyFollow.store (0.0f);
+            p.lfoRate.store (0.4f); p.lfoFilter.store (0.4f); p.sustain.store (1.0f);
+        }),
+        noisePreset ("Vinyl crackle", [] (NoiseParams& p) {
+            p.source.store (NoiseParams::crackle); p.mod.store (0.25f); p.colour.store (0.35f); p.cutoffHz.store (6000.0f);
+            p.keyFollow.store (0.0f); p.width.store (0.3f); p.sustain.store (1.0f); p.release.store (0.5f);
+        }),
+        noisePreset ("FM growl", [] (NoiseParams& p) {
+            p.source.store (NoiseParams::fmNoise); p.colour.store (0.2f); p.mod.store (0.4f); p.cutoffHz.store (2500.0f); p.resonance.store (0.3f); p.level.store (0.6f);
+        }),
+        noisePreset ("FM breath", [] (NoiseParams& p) {
+            p.source.store (NoiseParams::fmNoise); p.colour.store (0.8f); p.mod.store (0.25f); p.cutoffHz.store (5000.0f); p.level.store (0.6f);
+            p.attack.store (0.15f); p.release.store (0.5f); p.width.store (0.7f);
+        }),
+        noisePreset ("Ring whistle", [] (NoiseParams& p) {
+            p.source.store (NoiseParams::ring); p.mod.store (0.8f); p.tone.store (0.3f);
+            p.filterMode.store (NoiseParams::bandPass); p.keyFollow.store (1.0f); p.cutoffHz.store (800.0f); p.resonance.store (0.5f); p.level.store (3.0f);
+        }),
+        noisePreset ("Chip noise", [] (NoiseParams& p) {
+            p.source.store (NoiseParams::digital); p.mod.store (0.2f); p.cutoffHz.store (18000.0f); p.keyFollow.store (0.0f);
+            p.decay.store (0.25f); p.sustain.store (0.3f);
+        }),
+        noisePreset ("Metal ring", [] (NoiseParams& p) {
+            p.source.store (NoiseParams::digital); p.mod.store (0.8f); p.tone.store (0.4f); p.cutoffHz.store (9000.0f);
+            p.decay.store (0.6f); p.sustain.store (0.2f); p.release.store (0.6f);
+        }),
+        noisePreset ("Singing noise", [] (NoiseParams& p) {
+            p.tone.store (0.9f); p.attack.store (0.3f); p.release.store (1.0f); p.lfoRate.store (0.3f); p.lfoFilter.store (0.2f);
+        }),
+        noisePreset ("Riser", [] (NoiseParams& p) {
+            p.cutoffHz.store (300.0f); p.keyFollow.store (0.0f); p.envAmount.store (0.9f); p.resonance.store (0.5f);
+            p.attack.store (4.0f); p.sustain.store (1.0f); p.release.store (1.0f); p.width.store (1.0f);
+        })
+    };
+
     static const std::vector<FactorySound> externals {
         externalPreset ("Channel 1", [] (ExternalParams&) {}),
         externalPreset ("Channel 2", [] (ExternalParams& p) { p.channel.store (2); }),
@@ -416,6 +481,7 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
     switch (clampType (type))
     {
         case Track::external: return externals;
+        case Track::noise:   return noises;
         case Track::fm:      return fms;
         case Track::wavetable: return waves;
         case Track::poly:    return polys;
@@ -442,6 +508,8 @@ juce::var Presets::soundToVar (const Track& tr)
         return soundOf (type, "fm", fmParamsToVar (tr.fmParams));
     if (type == Track::external)
         return soundOf (type, "external", externalParamsToVar (tr.ext, tr.externalDeviceName));
+    if (type == Track::noise)
+        return soundOf (type, "noise", noiseParamsToVar (tr.noiseParams));
     return soundOf (type, "synth", synthToVar (tr.synthParams));
 }
 
@@ -490,6 +558,10 @@ void Presets::applySoundVar (Track& tr, const juce::var& v)
     else if (type == Track::fm)
     {
         applyFmParams (tr.fmParams, v["fm"]);
+    }
+    else if (type == Track::noise)
+    {
+        applyNoiseParams (tr.noiseParams, v["noise"]);
     }
     else if (type == Track::external)
     {
