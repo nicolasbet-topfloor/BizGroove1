@@ -59,6 +59,7 @@ void AudioEngine::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
     reverbBus.setSize (2, maxBlock);
     delayBus.setSize (2, maxBlock);
     effects.prepare (sampleRate, maxBlock);
+    performFx.prepare (sampleRate);
 
     song.prepare (sampleRate);
     stems.prepare (sampleRate, samplesPerBlockExpected);
@@ -260,6 +261,9 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     if (playing)
         transportSamples += numSamples;
     freeSamples += numSamples;
+
+    // Repeat, stutter and tape stop play on the whole mix.
+    performFx.process (*info.buffer, info.startSample, numSamples, perform, bpm);
 
     smoothedGain.setTargetValue (masterGain.load());
     const int numChannels = info.buffer->getNumChannels();
