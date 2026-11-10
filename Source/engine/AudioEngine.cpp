@@ -121,6 +121,8 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         for (auto& tr : tracks)
             if (tr->type.load() == Track::external)
                 tr->ext.panic.store (true);   // Stop silences the outside gear too
+    if (! playing && wasPlaying)
+        recordNotes.store (false);   // Stop ends a recording pass
     wasPlaying = playing;
 
     std::array<bool, numTracks> isDrum {};
@@ -170,6 +172,11 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
                 tracks[(size_t) dest]->selectedDrum.store (drum);
         }
         trackMidi[(size_t) dest].addEvent (m, meta.samplePosition);
+
+        // Recording: the note lands on the nearest step of the pattern playing.
+        if (playing && recordNotes.load() && m.isNoteOn() && m.getVelocity() > 0)
+            song.recordNote (dest, isDrum[(size_t) dest], m.getNoteNumber(), DrumKit::drumForNote (m.getNoteNumber()),
+                             meta.samplePosition, numSamples, bpm);
     }
 
     // What the effects need: the tempo, the song position, and where the kick drums hit.
