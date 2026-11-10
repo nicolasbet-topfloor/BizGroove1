@@ -43,6 +43,9 @@ ControlTargets::ControlTargets (AudioEngine& e)
          [&e] (float) { e.transport.bpm.store (juce::jmin (240.0, std::round (e.transport.bpm.load()) + 1.0)); });
     add ("transport.tempodown", "Tempo -1 BPM", "Transport", TargetKind::trigger,
          [&e] (float) { e.transport.bpm.store (juce::jmax (40.0, std::round (e.transport.bpm.load()) - 1.0)); });
+    add ("transport.metronome", "Metronome on / off", "Transport", TargetKind::toggle,
+         [&e] (float) { e.metronomeMode.store (e.metronomeMode.load() == AudioEngine::metronomeOn ? AudioEngine::metronomeOff
+                                                                                                  : AudioEngine::metronomeOn); });
     add ("master.volume", "Master volume", "Transport", TargetKind::continuous,
          [&e] (float v) { e.masterGain.store (v); },
          [&e] { return e.masterGain.load(); }, percent);
