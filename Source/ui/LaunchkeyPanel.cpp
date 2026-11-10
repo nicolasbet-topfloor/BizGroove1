@@ -339,7 +339,7 @@ void LaunchkeyPanel::showMore()
     // controller's eight knobs turn the highlighted row; click a row's button to pick another.
     struct MoreWindow final : public juce::Component, private juce::Timer
     {
-        MoreWindow (AudioEngine& en, const ControlTargets& targets, const std::vector<SynthKnob>& list)
+        MoreWindow (AudioEngine& en, const ControlTargets& controls, const std::vector<SynthKnob>& list)
             : engine (en), track (en.selectedTrack.load()), type (en.selected().type.load())
         {
             const int count = (int) list.size();
@@ -354,7 +354,7 @@ void LaunchkeyPanel::showMore()
             }
             for (const auto& k : list)
             {
-                auto* knob = knobs.add (new PanelKnob (targets));
+                auto* knob = knobs.add (new PanelKnob (controls));
                 knob->setKnob (k);
                 addAndMakeVisible (knob);
             }
