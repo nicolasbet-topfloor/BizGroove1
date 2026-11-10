@@ -408,7 +408,7 @@ void LaunchkeyPanel::showMore()
                 knob->refresh();
         }
 
-        static constexpr int labelWidth = 96, knobWidth = 110, rowHeight = 120;
+        const int labelWidth = 96, knobWidth = 110, rowHeight = 120;   // a local class cannot hold static members
         AudioEngine& engine;
         const int track, type;
         int rows = 1, shownPage = -1;
