@@ -119,6 +119,34 @@ inline const std::vector<SynthDefinition>& synthLibrary()
                 { "Noise",              "poly.noise",      "Adds a breath of noise, for wind and percussive sounds." },
                 { "Volume",             "track.volume",    "How loud this track is." }
             }
+        },
+        {
+            "wavetable",
+            "Wavetable",
+            "A wavetable synth: each note plays a wave that morphs smoothly through a set of eight (classic shapes, harmonics, vowel-like voices or digital sync sweeps), into a resonant filter. Stack up to four copies across left and right for wide pads and leads.",
+            { {
+                { "Position",   "wave.position",  "Moves through the wave set: each step along changes the colour of the sound." },
+                { "Sweep",      "wave.sweep",     "How far each note travels through the wave set as it starts, before settling back." },
+                { "Brightness", "wave.cutoff",    "How bright or muffled the sound is. Left is dark, right is bright." },
+                { "Edge",       "wave.resonance", "Adds a singing, whistling edge where the brightness is set." },
+                { "Thickness",  "wave.detune",    "Puts the stacked copies slightly out of tune with each other, for a fuller sound." },
+                { "Fade in",    "wave.attack",    "How long a note takes to reach full volume after you press a key." },
+                { "Fade out",   "wave.release",   "How long a note keeps sounding after you let go of the key." },
+                { "Hold level", "wave.sustain",   "How loud a note stays while you keep holding the key." }
+            } },
+            {
+                { "Wave set",              "wave.table",       "Which set of waves to play: Classic, Harmonics, Voices or Digital." },
+                { "Punch",                 "wave.decay",       "How long the first hit of each note lasts before it settles." },
+                { "Wah",                   "wave.envamount",   "How much each note opens up when it starts." },
+                { "Stack",                 "wave.unison",      "Stacks up to four copies of each note, spread in tune and from left to right." },
+                { "Sub",                   "wave.sub",         "Adds a pure tone an octave below, for weight." },
+                { "Glide",                 "wave.glide",       "Slides from one note to the next instead of jumping." },
+                { "Wobble speed",          "wave.lforate",     "How fast the wobble moves." },
+                { "Wobble on position",    "wave.lfoposition", "How much the wobble moves through the wave set, for a sound that keeps changing." },
+                { "Wobble on brightness",  "wave.lfofilter",   "How much the wobble opens and closes the brightness." },
+                { "Noise",                 "wave.noise",       "Adds a breath of noise, for wind and percussive sounds." },
+                { "Volume",                "track.volume",     "How loud this track is." }
+            }
         }
     };
     return library;
