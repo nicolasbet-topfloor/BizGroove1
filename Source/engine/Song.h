@@ -112,6 +112,10 @@ public:
 
     void reset();
 
+    /** Audio thread, right after process(): records a note played live at `position` in this block onto the
+        nearest 1/16 step (quantised) of the pattern playing. Drum tracks set `drum`'s lane; synth tracks set the step's note. */
+    void recordNote (int track, bool isDrum, int note, int drum, int position, int numSamples, double bpm);
+
 private:
     bool startBar();   // false = song finished
     void emit (std::array<juce::MidiBuffer, numTracks>& out, int track, int sceneIndex, int stepIndex, int position,
@@ -132,6 +136,9 @@ private:
     // Swung off-beats: per track, a step delayed into the second half of its slot.
     struct Delayed { bool active = false; int stepIndex = 0; int sceneIndex = 0; double remaining = 0.0; };
     std::array<Delayed, numTracks> delayed;
+
+    // Steps just recorded ahead of the playhead: skipped once, so the live note isn't heard twice.
+    std::array<std::array<std::uint16_t, numSteps>, numTracks> skipOnce {};
     int playingScene = 0;   // audio-thread copy of currentScene
     std::array<int, numTracks> trackScene {};   // scene each track plays this bar (-1 = silent)
 };
