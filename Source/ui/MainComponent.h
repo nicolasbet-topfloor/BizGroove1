@@ -105,6 +105,9 @@ private:
     juce::TextButton playButton { "Play" };
     juce::Slider tempoSlider { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
     juce::Label tempoLabel;
+    juce::Slider masterVolume { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
+    juce::Label volumeLabel;
+    void showMasterVolume();
     juce::TextButton fileButton { "File" };
     juce::TextButton panelViewButton { "Keys & pads" }, songViewButton { "Song" }, mixerViewButton { "Mixer" },
                      stemViewButton { "Stem deck" };
