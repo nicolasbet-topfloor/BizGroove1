@@ -35,6 +35,7 @@ struct PolyParams
     std::atomic<float> noise       { 0.0f };    // 0..1
 
     double lastNoteHz = 0.0;   // audio thread only: where a glide starts
+    OscSettings osc;           // the Oscillators section
 };
 
 /** Band-limited pulse wave (PolyBLEP), with a variable width. */
@@ -106,6 +107,7 @@ public:
                 saws[(size_t) i].reset (0.13 * i);
                 pulses[(size_t) i].reset (0.29 * i + 0.5);
             }
+            layer.reset();
             ic1 = ic2 = 0.0f;
         }
 
@@ -189,7 +191,8 @@ public:
                 sawSum += saws[(size_t) u].next();
                 pulseSum += pulses[(size_t) u].next (w);
             }
-            float x = (1.0f - mix) * sawSum + mix * pulseSum;
+            float x = params.osc.main.load() * ((1.0f - mix) * sawSum + mix * pulseSum)
+                    + 2.0f * std::sqrt ((float) unison) * layer.next (params.osc);
             if (noiseLevel > 0.0f)
                 x += noiseLevel * (random.nextFloat() * 2.0f - 1.0f) * (float) unison;
 
@@ -223,6 +226,7 @@ private:
         const double semitones = performance.pitchBend.load() * TestSynthParams::bendRangeSemitones
                                + performance.modWheel.load() * TestSynthParams::vibratoMaxSemitones * std::sin (vibratoPhase);
         const double hz = currentHz * std::pow (2.0, semitones / 12.0);
+        layer.setPitch (hz, sampleRate, params.osc);
         const double octave = std::pow (2.0, (double) juce::jlimit (-1, 1, params.octave.load()));
         const double cents = params.detuneCents.load();
 
@@ -245,6 +249,7 @@ private:
     int unison = 1;
     std::array<PolyBlepSaw, maxUnison> saws;
     std::array<PolyBlepPulse, maxUnison> pulses;
+    OscLayer layer;
     float ic1 = 0.0f, ic2 = 0.0f;
     juce::ADSR ampEnv, filterEnv;
     juce::Random random;

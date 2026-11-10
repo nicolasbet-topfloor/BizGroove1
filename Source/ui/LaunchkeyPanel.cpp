@@ -4,6 +4,7 @@
 #include "engine/Presets.h"
 #include "EffectsPanel.h"
 #include "ArpPanel.h"
+#include "OscPanel.h"
 
 namespace bizgroove
 {
@@ -237,6 +238,13 @@ LaunchkeyPanel::LaunchkeyPanel (AudioEngine& e, const ControlTargets& t)
     };
     addAndMakeVisible (fxButton);
 
+    styleHardwareButton (oscButton, "This synth's Oscillators section: two oscillators of its own (sine, triangle, saw, square, "
+                                    "pulse or noise, tuned in octaves, semitones and cents, with sync and ring), mixed with its sound.", true);
+    oscButton.onClick = [this] {
+        juce::CallOutBox::launchAsynchronously (std::make_unique<OscPanel> (engine, targets), oscButton.getBounds(), this);
+    };
+    addChildComponent (oscButton);
+
     pads.setTwoRows (true);
     addAndMakeVisible (pads);
 
@@ -447,6 +455,7 @@ void LaunchkeyPanel::showTrack()
         // A Sampler track loads and edits its recording; a Drums track puts recordings on the selected pad.
         const bool sampler = type == Track::sampler, kit = type == Track::drums, ext = type == Track::external;
         loadSampleButton.setVisible (sampler || kit || ext);
+        oscButton.setVisible (! (sampler || kit || ext));
         editSampleButton.setVisible (sampler || kit || ext);
         recSourceButton.setVisible (sampler || kit || ext);
         recSourceButton.setTooltip (ext ? "Hear the gear's sound through this track: connect its audio output to your sound card's input. Turn it off if you hear feedback."
@@ -866,6 +875,7 @@ void LaunchkeyPanel::resized()
     fxButton.setBounds (right.getX() + 22 + moreW, controls.getY() + 70, right.getWidth() - 22 - moreW, 30);
     const int halfW = (right.getWidth() - 22) / 2;
     loadSampleButton.setBounds (right.getX() + 16, controls.getY() + 106, halfW, 26);
+    oscButton.setBounds (right.getX() + 16, controls.getY() + 106, right.getWidth() - 16, 26);
     editSampleButton.setBounds (right.getX() + 22 + halfW, controls.getY() + 106, halfW, 26);
     recSourceButton.setBounds (right.getX() + 16, controls.getY() + 136, right.getWidth() - 16, 24);
     trackInfo.setBounds (right.getX() - 120, controls.getY() + 34, right.getWidth() + 120, 22);

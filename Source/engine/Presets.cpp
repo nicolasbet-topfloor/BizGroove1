@@ -24,6 +24,7 @@ namespace
         s->setProperty ("attack", sp.attack.load());       s->setProperty ("decay", sp.decay.load());
         s->setProperty ("sustain", sp.sustain.load());     s->setProperty ("release", sp.release.load());
         s->setProperty ("glide", sp.glide.load());         s->setProperty ("glideMode", sp.glideMode.load());
+        s->setProperty ("osc", oscToVar (sp.osc));
         return juce::var (s);
     }
 
@@ -125,6 +126,7 @@ namespace
         p->setProperty ("lfoRate", pp.lfoRate.load());    p->setProperty ("lfoFilter", pp.lfoFilter.load());
         p->setProperty ("lfoPulse", pp.lfoPulse.load());  p->setProperty ("noise", pp.noise.load());
         p->setProperty ("glideMode", pp.glideMode.load());
+        p->setProperty ("osc", oscToVar (pp.osc));
         return juce::var (p);
     }
 
@@ -139,6 +141,7 @@ namespace
         pp.unison.store (juce::jlimit (1, 4, getI (p, "unison", 1)));
         pp.glide.store (getF (p, "glide", 0.0f));
         pp.glideMode.store (juce::jlimit (0, Glide::numModes - 1, getI (p, "glideMode", 0)));
+        applyOsc (pp.osc, p["osc"]);
         pp.lfoRate.store (getF (p, "lfoRate", 5.0f));     pp.lfoFilter.store (getF (p, "lfoFilter", 0.0f));
         pp.lfoPulse.store (getF (p, "lfoPulse", 0.0f));   pp.noise.store (getF (p, "noise", 0.0f));
     }
@@ -530,6 +533,7 @@ void Presets::applySoundVar (Track& tr, const juce::var& v)
         sp.sustain.store (getF (s, "sustain", 0.4f));      sp.release.store (getF (s, "release", 0.2f));
         sp.glide.store (getF (s, "glide", 0.0f));
         sp.glideMode.store (juce::jlimit (0, Glide::numModes - 1, getI (s, "glideMode", 0)));
+        applyOsc (sp.osc, s["osc"]);
     }
     else if (type == Track::drums)
     {

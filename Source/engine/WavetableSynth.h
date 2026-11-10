@@ -35,6 +35,7 @@ struct WaveParams
     std::atomic<float> lfoFilter   { 0.0f };    // 0..1, wobble on the brightness
 
     double lastNoteHz = 0.0;   // audio thread only: where a glide starts
+    OscSettings osc;           // the Oscillators section
 };
 
 /** The built-in sets of waves. Each set has eight waves that the position
@@ -272,6 +273,7 @@ public:
             for (int u = 0; u < maxUnison; ++u)
                 phases[(size_t) u] = 0.17 * u;
             subPhase = 0.0;
+            layer.reset();
             for (auto& s : filterState)
                 s = 0.0f;
         }
@@ -387,7 +389,10 @@ public:
                 if (ph >= 1.0) ph -= 1.0;
             }
 
-            float common = 0.0f;
+            const float main = params.osc.main.load();
+            left *= main;
+            right *= main;
+            float common = 2.0f * std::sqrt ((float) unison) * layer.next (params.osc);
             if (subLevel > 0.0f)
             {
                 common += subLevel * (float) std::sin (twoPi * subPhase) * std::sqrt ((float) unison);
@@ -446,6 +451,7 @@ private:
             mips[(size_t) u] = Wavetables::mipFor (copyHz, sampleRate);
         }
         subIncrement = 0.5 * hz / sampleRate;
+        layer.setPitch (hz, sampleRate, params.osc);
     }
 
     WaveParams& params;
@@ -456,6 +462,7 @@ private:
     double vibratoPhase = 0.0, lfoPhase = 0.0, subPhase = 0.0, subIncrement = 0.0;
     int unison = 1;
     std::array<double, maxUnison> phases {}, increments {};
+    OscLayer layer;
     std::array<int, maxUnison> mips {};
     std::array<float, 4> filterState {};
     juce::ADSR ampEnv, modEnv;
@@ -475,6 +482,7 @@ inline juce::var waveParamsToVar (const WaveParams& wp)
     o->setProperty ("detune", wp.detuneCents.load());   o->setProperty ("unison", wp.unison.load());
     o->setProperty ("sub", wp.sub.load());              o->setProperty ("noise", wp.noise.load());
     o->setProperty ("glideMode", wp.glideMode.load());
+    o->setProperty ("osc", oscToVar (wp.osc));
     o->setProperty ("glide", wp.glide.load());          o->setProperty ("lfoRate", wp.lfoRate.load());
     o->setProperty ("lfoPosition", wp.lfoPosition.load()); o->setProperty ("lfoFilter", wp.lfoFilter.load());
     return juce::var (o);
@@ -494,7 +502,8 @@ inline void applyWaveParams (WaveParams& wp, const juce::var& v)
     wp.unison.store (juce::jlimit (1, 4, i ("unison", 1)));
     wp.sub.store (f ("sub", 0.0f));                 wp.noise.store (f ("noise", 0.0f));
     wp.glideMode.store (juce::jlimit (0, Glide::numModes - 1, (int) (v.hasProperty ("glideMode") ? (int) v["glideMode"] : 0)));
-    wp.glide.store (f ("glide", 0.0f));             wp.lfoRate.store (f ("lfoRate", 0.5f));
+    wp.glide.store (f ("glide", 0.0f));
+    applyOsc (wp.osc, v["osc"]);             wp.lfoRate.store (f ("lfoRate", 0.5f));
     wp.lfoPosition.store (f ("lfoPosition", 0.0f)); wp.lfoFilter.store (f ("lfoFilter", 0.0f));
 }
 

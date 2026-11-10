@@ -652,6 +652,57 @@ ControlTargets::ControlTargets (AudioEngine& e)
              [glideModeOf, modeSet] (float v) { if (auto* m = glideModeOf()) modeSet (*m, v); },
              [glideModeOf] { auto* m = glideModeOf(); return m != nullptr && m->load() == Glide::byDistance ? 0.75f : 0.25f; }, modeShow);
 
+    // ---- Oscillators section of the selected track's synth
+    auto oscOf = [&e]() -> OscSettings* {
+        auto& tr = e.selected();
+        switch (tr.type.load())
+        {
+            case Track::testSynth: return &tr.synthParams.osc;
+            case Track::poly:      return &tr.polyParams.osc;
+            case Track::wavetable: return &tr.waveParams.osc;
+            case Track::fm:        return &tr.fmParams.osc;
+            case Track::noise:     return &tr.noiseParams.osc;
+            default:               return nullptr;
+        }
+    };
+    add ("osc.main", "Oscillators: the synth's own sound", "Oscillators", TargetKind::continuous,
+         [oscOf] (float v) { if (auto* o = oscOf()) o->main.store (v); },
+         [oscOf] { auto* o = oscOf(); return o != nullptr ? o->main.load() : 0.0f; }, percent);
+    add ("osc.sync", "Oscillators: sync 2 to 1 on / off", "Oscillators", TargetKind::toggle,
+         [oscOf] (float) { if (auto* o = oscOf()) toggle (o->sync); });
+    add ("osc.ring", "Oscillators: ring 1 x 2 on / off", "Oscillators", TargetKind::toggle,
+         [oscOf] (float) { if (auto* o = oscOf()) toggle (o->ring); });
+    for (int n = 0; n < 2; ++n)
+    {
+        const auto id = "osc" + juce::String (n + 1);
+        const auto name = "Oscillator " + juce::String (n + 1);
+        auto one = [oscOf, n]() -> OscSettings::Osc* { auto* o = oscOf(); return o != nullptr ? &o->osc[(size_t) n] : nullptr; };
+        add (id + ".wave", name + " wave", "Oscillators", TargetKind::continuous,
+             [one] (float v) { if (auto* o = one()) o->wave.store (juce::jlimit (0, OscSettings::numWaves - 1, (int) (v * ((float) OscSettings::numWaves - 0.001f)))); },
+             [one] { auto* o = one(); return o != nullptr ? ((float) o->wave.load() + 0.5f) / (float) OscSettings::numWaves : 0.0f; },
+             [] (float v) { return OscSettings::waveName (juce::jlimit (0, OscSettings::numWaves - 1, (int) (v * ((float) OscSettings::numWaves - 0.001f)))); });
+        add (id + ".octave", name + " octave", "Oscillators", TargetKind::continuous,
+             [one] (float v) { if (auto* o = one()) o->octave.store (juce::jlimit (-2, 2, juce::roundToInt (v * 4.0f) - 2)); },
+             [one] { auto* o = one(); return o != nullptr ? (float) (o->octave.load() + 2) / 4.0f : 0.5f; },
+             [] (float v) { const int o = juce::jlimit (-2, 2, juce::roundToInt (v * 4.0f) - 2); return o == 0 ? juce::String ("0") : (o > 0 ? "+" : "") + juce::String (o) + " oct"; });
+        add (id + ".semi", name + " semitone", "Oscillators", TargetKind::continuous,
+             [one] (float v) { if (auto* o = one()) o->semi.store (juce::jlimit (-12, 12, juce::roundToInt (v * 24.0f) - 12)); },
+             [one] { auto* o = one(); return o != nullptr ? (float) (o->semi.load() + 12) / 24.0f : 0.5f; },
+             [] (float v) { const int s = juce::jlimit (-12, 12, juce::roundToInt (v * 24.0f) - 12); return (s > 0 ? "+" : "") + juce::String (s) + " st"; });
+        add (id + ".fine", name + " fine tune", "Oscillators", TargetKind::continuous,
+             [one] (float v) { if (auto* o = one()) o->fine.store (linMap (v, -50.0f, 50.0f)); },
+             [one] { auto* o = one(); return o != nullptr ? linInv (o->fine.load(), -50.0f, 50.0f) : 0.5f; },
+             [] (float v) { const int c = juce::roundToInt (linMap (v, -50.0f, 50.0f)); return (c > 0 ? "+" : "") + juce::String (c) + " cents"; });
+        add (id + ".width", name + " pulse width", "Oscillators", TargetKind::continuous,
+             [one] (float v) { if (auto* o = one()) o->width.store (linMap (v, 0.05f, 0.95f)); },
+             [one] { auto* o = one(); return o != nullptr ? linInv (o->width.load(), 0.05f, 0.95f) : 0.5f; },
+             [] (float v) { return percent (linMap (v, 0.05f, 0.95f)); });
+        add (id + ".level", name + " level", "Oscillators", TargetKind::continuous,
+             [one] (float v) { if (auto* o = one()) o->level.store (v); },
+             [one] { auto* o = one(); return o != nullptr ? o->level.load() : 0.0f; },
+             [] (float v) { return v < 0.005f ? juce::String ("Off") : percent (v); });
+    }
+
     // ---- Panel knobs 1-8: whatever the loaded synth puts on that knob.
     for (int k = 0; k < 8; ++k)
     {

@@ -150,6 +150,7 @@ private:
     juce::OwnedArray<PanelKnob> knobs;
     juce::TextButton moreButton { "More" };
     juce::TextButton fxButton { "Effects" };
+    juce::TextButton oscButton { "Oscillators" };
     juce::TextButton loadSampleButton { "Load sample..." };
     juce::TextButton editSampleButton { "Edit..." }, recSourceButton { "Rec: mic / line in" }, padsModeButton { "Pads: play" };
     juce::TextButton holdButton { "Hold" };

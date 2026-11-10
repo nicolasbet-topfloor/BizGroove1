@@ -74,6 +74,7 @@ juce::var Project::toVar (AudioEngine& e)
         synth->setProperty ("attack", sp.attack.load());       synth->setProperty ("decay", sp.decay.load());
         synth->setProperty ("sustain", sp.sustain.load());     synth->setProperty ("release", sp.release.load());
         synth->setProperty ("glide", sp.glide.load());         synth->setProperty ("glideMode", sp.glideMode.load());
+        synth->setProperty ("osc", oscToVar (sp.osc));
         o->setProperty ("synth", juce::var (synth));
 
         const auto& pp = tr.polyParams;
@@ -88,6 +89,7 @@ juce::var Project::toVar (AudioEngine& e)
         poly->setProperty ("lfoRate", pp.lfoRate.load());    poly->setProperty ("lfoFilter", pp.lfoFilter.load());
         poly->setProperty ("lfoPulse", pp.lfoPulse.load());  poly->setProperty ("noise", pp.noise.load());
         poly->setProperty ("glideMode", pp.glideMode.load());
+        poly->setProperty ("osc", oscToVar (pp.osc));
         o->setProperty ("poly", juce::var (poly));
         o->setProperty ("wave", waveParamsToVar (tr.waveParams));
         o->setProperty ("fm", fmParamsToVar (tr.fmParams));
@@ -260,6 +262,7 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
             sp.sustain.store (getF (s, "sustain", 0.4f));      sp.release.store (getF (s, "release", 0.2f));
             sp.glide.store (getF (s, "glide", 0.0f));
             sp.glideMode.store (juce::jlimit (0, Glide::numModes - 1, getI (s, "glideMode", 0)));
+            applyOsc (sp.osc, s["osc"]);
 
             const auto pv = o["poly"];
             auto& pp = tr.polyParams;
@@ -272,6 +275,7 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
             pp.unison.store (juce::jlimit (1, 4, getI (pv, "unison", 1)));
             pp.glide.store (getF (pv, "glide", 0.0f));
             pp.glideMode.store (juce::jlimit (0, Glide::numModes - 1, getI (pv, "glideMode", 0)));
+            applyOsc (pp.osc, pv["osc"]);
             pp.lfoRate.store (getF (pv, "lfoRate", 5.0f));     pp.lfoFilter.store (getF (pv, "lfoFilter", 0.0f));
             pp.lfoPulse.store (getF (pv, "lfoPulse", 0.0f));   pp.noise.store (getF (pv, "noise", 0.0f));
 

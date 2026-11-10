@@ -3,6 +3,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 #include "Glide.h"
+#include "OscLayer.h"
 #include <atomic>
 #include <cmath>
 
@@ -24,6 +25,7 @@ struct TestSynthParams
     std::atomic<int>   glideMode  { Glide::fixedTime };
 
     mutable double lastNoteHz = 0.0;   // audio thread only: where a glide starts
+    OscSettings osc;                    // the Oscillators section
 
     static constexpr float bendRangeSemitones = 2.0f;
     static constexpr float vibratoMaxSemitones = 0.5f;
@@ -100,6 +102,7 @@ public:
         {
             oscA.reset (0.0);
             oscB.reset (0.37);
+            layer.reset();
             filter.reset();
         }
 
@@ -162,7 +165,7 @@ public:
                 filter.setCutoffFrequency (juce::jlimit (20.0f, nyquistLimit, cutoff));
             }
 
-            const float raw = 0.5f * (oscA.next() + oscB.next());
+            const float raw = params.osc.main.load() * 0.5f * (oscA.next() + oscB.next()) + 2.0f * layer.next (params.osc);
             const float sample = filter.processSample (0, raw) * ampEnv.getNextSample() * level;
 
             for (int ch = 0; ch < numChannels; ++ch)
@@ -186,6 +189,7 @@ private:
         const double spread = std::pow (2.0, params.detuneCents.load() / 1200.0);
         oscA.setFrequency (hz * spread, sampleRate);
         oscB.setFrequency (hz / spread, sampleRate);
+        layer.setPitch (hz, sampleRate, params.osc);
     }
 
     const TestSynthParams& params;
@@ -194,6 +198,7 @@ private:
     double lfoPhase = 0.0;
     Glide glide;
     PolyBlepSaw oscA, oscB;
+    OscLayer layer;
     juce::dsp::StateVariableTPTFilter<float> filter;
     juce::ADSR ampEnv, filterEnv;
     float level = 0.0f;

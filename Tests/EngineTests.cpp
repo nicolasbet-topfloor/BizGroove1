@@ -1980,6 +1980,122 @@ static void testTremolo()
     check (InsertEffects::describe (InsertEffects::tremolo, 1, 0.75f).contains ("in time"), "tremolo: the right half of Speed follows the tempo");
 }
 
+// The Oscillators section: two oscillators in tune, every wave, sync and ring, in every synth.
+static void testOscillators()
+{
+    std::cout << "Oscillators\n";
+    constexpr double rate = 48000.0;
+    auto crossingsHz = [] (const std::vector<float>& x) {
+        int up = 0;
+        for (size_t i = 1; i < x.size(); ++i)
+            if (x[i - 1] < 0.0f && x[i] >= 0.0f) ++up;
+        return (double) up * rate / (double) x.size();
+    };
+    {
+        OscSettings s;
+        OscLayer layer;
+        check (std::abs (layer.next (s)) < 1.0e-9f, "osc: at their starting levels the oscillators are silent");
+        s.osc[0].wave.store (OscSettings::sine);
+        s.osc[0].level.store (1.0f);
+        layer.setPitch (440.0, rate, s);
+        std::vector<float> x;
+        for (int i = 0; i < 48000; ++i) x.push_back (layer.next (s));
+        check (std::abs (crossingsHz (x) - 440.0) < 2.0, "osc: oscillator 1 plays the note");
+
+        s.osc[0].level.store (0.0f);
+        s.osc[1].wave.store (OscSettings::sine);
+        s.osc[1].level.store (1.0f);
+        s.osc[1].octave.store (1);
+        s.osc[1].semi.store (7);
+        layer.setPitch (440.0, rate, s);
+        x.clear();
+        for (int i = 0; i < 48000; ++i) x.push_back (layer.next (s));
+        const double want = 440.0 * 2.0 * std::pow (2.0, 7.0 / 12.0);
+        check (std::abs (crossingsHz (x) - want) < 3.0, "osc: octave and semitones tune oscillator 2 (" + juce::String (crossingsHz (x), 1) + " Hz)");
+
+        bool allSound = true, allFinite = true;
+        for (int w = 0; w < OscSettings::numWaves; ++w)
+            for (bool sync : { false, true })
+                for (bool ring : { false, true })
+                {
+                    s.osc[0].wave.store (w);
+                    s.osc[1].wave.store ((w + 2) % OscSettings::numWaves);
+                    s.osc[0].level.store (1.0f);
+                    s.sync.store (sync);
+                    s.ring.store (ring);
+                    layer.setPitch (220.0, rate, s);
+                    double sum = 0.0;
+                    for (int i = 0; i < 4800; ++i)
+                    {
+                        const float v = layer.next (s);
+                        allFinite = allFinite && std::isfinite (v);
+                        sum += (double) v * v;
+                    }
+                    allSound = allSound && sum > 1.0;
+                }
+        check (allSound && allFinite, "osc: every wave sounds, with sync and ring, with no NaN");
+
+        // Sync: oscillator 2 restarts with oscillator 1, so the sound repeats at oscillator 1's period.
+        s.osc[0].wave.store (OscSettings::saw);
+        s.osc[1].wave.store (OscSettings::saw);
+        s.osc[0].level.store (0.0f);
+        s.osc[1].level.store (1.0f);
+        s.osc[1].octave.store (0);
+        s.osc[1].semi.store (5);
+        s.ring.store (false);
+        s.sync.store (true);
+        layer.setPitch (200.0, rate, s);   // period 240 samples
+        x.clear();
+        for (int i = 0; i < 9600; ++i) x.push_back (layer.next (s));
+        double ab = 0.0, aa = 0.0;
+        for (size_t i = 240; i < x.size(); ++i) { ab += (double) x[i] * x[i - 240]; aa += (double) x[i] * x[i]; }
+        check (ab / juce::jmax (1.0e-9, aa) > 0.9, "osc: sync locks oscillator 2 to oscillator 1's period");
+    }
+
+    // In every synth: the oscillators alone (the synth's own sound off), and saved with the sound.
+    bool allSound = true, silentOff = true;
+    for (int type : { (int) Track::testSynth, (int) Track::poly, (int) Track::wavetable, (int) Track::fm, (int) Track::noise })
+    {
+        for (bool oscOn : { true, false })
+        {
+            AudioEngine e;
+            e.prepareToPlay (512, rate);
+            e.selectedTrack.store (0);
+            auto& tr = e.track (0);
+            tr.type.store (type);
+            for (auto* o : { &tr.synthParams.osc, &tr.polyParams.osc, &tr.waveParams.osc, &tr.fmParams.osc, &tr.noiseParams.osc })
+            {
+                o->main.store (0.0f);
+                o->osc[0].wave.store (OscSettings::square);
+                o->osc[0].level.store (oscOn ? 1.0f : 0.0f);
+            }
+            juce::AudioBuffer<float> buf (2, 512);
+            e.keyboardState.noteOn (1, 57, 0.9f);
+            float peak = 0.0f;
+            for (int b = 0; b < 20; ++b)
+            {
+                buf.clear();
+                e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 512));
+                if (b > 2) peak = juce::jmax (peak, buf.getMagnitude (0, 0, 512));
+            }
+            if (oscOn) allSound = allSound && peak > 1.0e-3f;
+            else       silentOff = silentOff && peak < 1.0e-4f;
+        }
+    }
+    check (allSound, "osc: every synth plays its oscillators");
+    check (silentOff, "osc: with the synth's own sound and both oscillators off, it is silent");
+
+    AudioEngine e;
+    e.track (0).type.store (Track::poly);
+    e.track (0).polyParams.osc.osc[1].wave.store (OscSettings::pulse);
+    e.track (0).polyParams.osc.osc[1].level.store (0.7f);
+    e.track (0).polyParams.osc.ring.store (true);
+    Presets::applySoundVar (e.track (3), Presets::soundToVar (e.track (0)));
+    const auto& kept = e.track (3).polyParams.osc;
+    check (kept.osc[1].wave.load() == OscSettings::pulse && std::abs (kept.osc[1].level.load() - 0.7f) < 1.0e-6f && kept.ring.load(),
+           "osc: a sound keeps its oscillators");
+}
+
 // Hold: notes keep sounding after the keys are let go, until Hold is switched off.
 static void testHold()
 {
@@ -2143,6 +2259,7 @@ int main (int argc, char* argv[])
     testGlide();
     testArpeggiator();
     testTremolo();
+    testOscillators();
     testKnobPage();
     testChordSteps();
     testRecordChord();

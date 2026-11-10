@@ -55,6 +55,7 @@ struct NoiseParams
     std::atomic<int>   glideMode   { Glide::fixedTime };
 
     mutable double lastNoteHz = 0.0;   // audio thread only: where a glide starts
+    OscSettings osc;                    // the Oscillators section
 };
 
 /** White, pink, brown, blue and violet noise, and any colour in between.
@@ -140,8 +141,11 @@ public:
         glide.start (params.lastNoteHz, noteHz, params.glide.load(), params.glideMode.load(), getSampleRate());
         params.lastNoteHz = noteHz;
         if (! ampEnv.isActive())
+        {
             for (auto& s : sides)
                 s.reset();
+            layer.reset();
+        }
         const float vs = juce::jlimit (0.0f, 1.0f, params.velocity.load());
         level = 0.3f * juce::jlimit (0.25f, 4.0f, params.level.load()) * ((1.0f - vs) + vs * vel);
         ampEnv.setParameters ({ params.attack.load(), params.decay.load(), params.sustain.load(), params.release.load() });
@@ -195,6 +199,7 @@ public:
                 const double semitones = performance.pitchBend.load() * TestSynthParams::bendRangeSemitones
                                        + performance.modWheel.load() * TestSynthParams::vibratoMaxSemitones * std::sin (vibratoPhase);
                 hz = glide.advance (controlInterval) * std::pow (2.0, semitones / 12.0);
+                layer.setPitch (hz, sr, params.osc);
                 colourNow = juce::jlimit (0.0f, 1.0f, params.colour.load() + 0.5f * params.lfoColour.load() * lfo);
 
                 // The filter: its cutoff, following the note, the envelope and the wobble.
@@ -212,10 +217,12 @@ public:
             }
 
             float shared = 0.0f;
+            const float oscs = 2.0f * layer.next (params.osc);
+            const float main = params.osc.main.load();
             for (size_t ch = 0; ch < 2; ++ch)
             {
                 auto& s = sides[ch];
-                float x = makeSource (s, source, mod, sr, twoPi);
+                float x = main * makeSource (s, source, mod, sr, twoPi) + oscs;
 
                 // Sample and hold.
                 if (holdLength > 1.0)
@@ -358,6 +365,7 @@ private:
     std::array<Side, 2> sides;
     double noteHz = 440.0, hz = 440.0, lfoPhase = 0.0, vibratoPhase = 0.0;
     Glide glide;
+    OscLayer layer;
     double holdLength = 1.0, combLength = 100.0;
     float colourNow = 0.5f, level = 0.0f;
     float g = 0.5f, a1 = 0.0f, a2 = 0.0f, a3 = 0.0f;
@@ -379,6 +387,7 @@ inline juce::var noiseParamsToVar (const NoiseParams& p)
     o->setProperty ("lfoRate", p.lfoRate.load());      o->setProperty ("lfoFilter", p.lfoFilter.load());
     o->setProperty ("lfoColour", p.lfoColour.load());  o->setProperty ("level", p.level.load());
     o->setProperty ("glide", p.glide.load());          o->setProperty ("glideMode", p.glideMode.load());
+    o->setProperty ("osc", oscToVar (p.osc));
     return juce::var (o);
 }
 
@@ -401,6 +410,7 @@ inline void applyNoiseParams (NoiseParams& p, const juce::var& v)
     p.lfoColour.store (f ("lfoColour", 0.0f));       p.level.store (f ("level", 1.0f));
     p.glide.store (f ("glide", 0.0f));
     p.glideMode.store (juce::jlimit (0, Glide::numModes - 1, i ("glideMode", 0)));
+    applyOsc (p.osc, v["osc"]);
 }
 
 } // namespace bizgroove
