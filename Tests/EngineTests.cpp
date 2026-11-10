@@ -1437,6 +1437,60 @@ static void testPerform()
     check (back > 0.5f * playing, "perform: letting go brings the music back");
 }
 
+// Live recording: notes played while the song plays land on the nearest step, on synth and drum tracks.
+static void testLiveRecord()
+{
+    std::cout << "Live recording\n";
+    AudioEngine e;
+    e.prepareToPlay (256, 48000.0);
+    e.song.clearScene (0);
+    e.selectedTrack.store (0);   // track 1 is a synth
+    juce::AudioBuffer<float> buf (2, 256);
+    auto block = [&] { buf.clear(); e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 256)); };
+    auto& pattern = e.song.scene (0).tracks[0];
+    auto stepsWith = [&pattern] (int note) {
+        std::vector<int> found;
+        for (int s = 0; s < Song::numSteps; ++s)
+            if (pattern.steps[(size_t) s].on.load() && pattern.steps[(size_t) s].note.load() == note)
+                found.push_back (s);
+        return found;
+    };
+
+    e.recordNotes.store (true);
+    e.keyboardState.noteOn (1, 62, 1.0f);
+    block();
+    e.keyboardState.noteOff (1, 62, 0.0f);
+    block();
+    check (stepsWith (62).empty(), "record: nothing is recorded while stopped");
+
+    e.transport.bpm.store (120.0);
+    e.transport.playing.store (true);
+    for (int i = 0; i < 40; ++i)
+        block();
+    const int playhead = e.song.playheadStep.load();
+    e.keyboardState.noteOn (1, 64, 1.0f);
+    block();
+    e.keyboardState.noteOff (1, 64, 0.0f);
+    block();
+    const auto found = stepsWith (64);
+    const int distance = found.size() == 1 ? (found[0] - playhead + Song::numSteps) % Song::numSteps : 99;
+    std::cout << "  info  playhead " << playhead << " recorded on " << (found.empty() ? -1 : found[0]) << "\n";
+    check (found.size() == 1 && (distance <= 1 || distance == Song::numSteps - 1),
+           "record: a played note lands on the nearest step, once");
+
+    e.selectedTrack.store (1);   // track 2 is the drums
+    e.keyboardState.noteOn (1, 38, 1.0f);   // the snare
+    block();
+    e.keyboardState.noteOff (1, 38, 0.0f);
+    block();
+    check (e.song.scene (0).tracks[1].drumLanes[2].load() != 0 && e.song.scene (0).tracks[1].drumLanes[0].load() == 0,
+           "record: a drum hit lands in that drum's lane");
+
+    e.transport.playing.store (false);
+    block();
+    check (! e.recordNotes.load(), "record: Stop ends the recording");
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI init; // needed by some JUCE singletons
@@ -1466,6 +1520,7 @@ int main (int argc, char* argv[])
     testInserts();
     testSendEffects();
     testPerform();
+    testLiveRecord();
     testRender (argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]) : juce::File());
 
     std::cout << (failures == 0 ? "All tests passed\n" : juce::String (failures) + " test(s) failed\n");
