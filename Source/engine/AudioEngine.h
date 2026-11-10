@@ -89,6 +89,26 @@ public:
         1, 2... = that row of eight in the More window, while it is open. */
     std::atomic<int> knobPage { 0 };
 
+    /** The metronome: a click on every beat, a higher one on the first beat of the bar.
+        Only heard through the sound card: never in exports or in resampling. */
+    enum MetronomeMode { metronomeOff = 0, metronomeOn = 1, metronomeWhileRecording = 2 };
+    std::atomic<int> metronomeMode { metronomeWhileRecording };
+    std::atomic<float> metronomeLevel { 0.5f };   // 0..1
+    std::atomic<int> countInBars { 1 };           // clicks before recording from a stop: 0, 1 or 2 bars
+
+    /** Message thread: starts play after the count-in (at once when it is 0 bars). */
+    void startWithCountIn();
+    void cancelCountIn() { countInCancel.store (true); }
+
+    /** Read-out: beats left in the count-in; 0 when not counting in. */
+    std::atomic<int> countInBeatsLeft { 0 };
+
+    /** Live playback, audio thread, after the output was recorded: adds the metronome's clicks for the block just rendered. */
+    void renderMetronome (juce::AudioBuffer<float>& buffer, int startSample, int numSamples);
+
+    /** Message thread: record from the input (or resample) onto the selected drum pad. */
+    std::atomic<bool> recordPadRequested { false };
+
     /** Records into a Sampler, from the sound card's input or from BizGroove itself. */
     SampleRecorder recorder;
 
@@ -122,6 +142,17 @@ private:
     juce::int64 freeSamples = 0;   // always running, for effects that move with the beat while stopped
 
     juce::SmoothedValue<float> smoothedGain;
+
+    // Metronome and count-in (audio thread).
+    std::atomic<bool> countInRequest { false }, countInCancel { false };
+    double countInRemaining = 0.0, countInNextBeat = 0.0;
+    int countInBeat = 0;
+    struct Click { int position = 0; bool accent = false; };
+    std::array<Click, 32> clicks {};
+    int numClicks = 0;
+    double clickPhase = 0.0, clickFreq = 1000.0;
+    float clickAmp = 0.0f;
+    void addClick (int position, bool accent);
     juce::int64 transportSamples = 0;   // samples since play was pressed
     bool wasPlaying = false;
     int lastSelected = 0;
