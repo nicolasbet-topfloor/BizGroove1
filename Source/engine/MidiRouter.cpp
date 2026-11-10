@@ -216,7 +216,7 @@ void MidiRouter::route (const juce::String& deviceIdentifier, const juce::String
     {
         // On a drum track, a key picks the drum that the knobs and pads edit.
         auto& tr = engine.selected();
-        if (message.isNoteOn() && message.getVelocity() > 0 && tr.type.load() == Track::drums)
+        if (message.isNoteOn() && message.getVelocity() > 0 && tr.playsDrums())
         {
             const int drum = DrumKit::drumForNote (message.getNoteNumber());
             if (drum >= 0)
