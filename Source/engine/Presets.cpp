@@ -659,4 +659,76 @@ bool Presets::load (AudioEngine& e, int trackIndex, const juce::File& file,
     return true;
 }
 
+// ================================================================ one drum from another kit
+
+namespace
+{
+    void applyDrum (DrumKit::DrumParams& dp, const juce::var& v)
+    {
+        const auto* a = v.getArray();
+        if (a == nullptr || a->size() < 7)
+            return;
+        dp.pitch.store ((float) (double) (*a)[0]);  dp.length.store ((float) (double) (*a)[1]);
+        dp.tone.store ((float) (double) (*a)[2]);   dp.snap.store ((float) (double) (*a)[3]);
+        dp.drive.store ((float) (double) (*a)[4]);  dp.pan.store ((float) (double) (*a)[5]);
+        dp.volume.store ((float) (double) (*a)[6]);
+        dp.model.store (a->size() > 7 ? juce::jlimit (0, 2, juce::roundToInt ((double) (*a)[7])) : 0);
+        dp.colour.store (a->size() > 8 ? (float) (double) (*a)[8] : 0.5f);
+    }
+
+    juce::var drumOf (const juce::var& kitSound, int drum)
+    {
+        const auto* drums = kitSound["kit"]["drums"].getArray();
+        return drums != nullptr && drum < drums->size() ? (*drums)[drum] : juce::var();
+    }
+}
+
+void Presets::copyDrum (AudioEngine& e, int trackIndex, int drum, const juce::var& kitSound)
+{
+    if (! juce::isPositiveAndBelow (drum, DrumKit::numDrums))
+        return;
+    Project::clearPad (e, trackIndex, drum);
+    applyDrum (e.track (trackIndex).kit.drums[(size_t) drum], drumOf (kitSound, drum));
+}
+
+bool Presets::copyDrumFromFile (AudioEngine& e, int trackIndex, int drum, const juce::File& file,
+                                juce::AudioFormatManager& formats, juce::String& error)
+{
+    if (! juce::isPositiveAndBelow (drum, DrumKit::numDrums))
+        return false;
+
+    juce::ZipFile zip (file);
+    const int jsonIndex = zip.getIndexOfFileName ("sound.json");
+    std::unique_ptr<juce::InputStream> jsonStream (jsonIndex >= 0 ? zip.createStreamForEntry (jsonIndex) : nullptr);
+    const auto sound = juce::JSON::parse (jsonStream != nullptr ? jsonStream->readEntireStreamAsString() : juce::String());
+    if (sound["app"].toString() != "BizGroove" || clampType (getI (sound, "type", 0)) != Track::drums)
+    {
+        error = file.getFileName() + " is not a BizGroove drum kit.";
+        return false;
+    }
+
+    Project::clearPad (e, trackIndex, drum);
+    bool ok = true;
+    const auto* padEntries = sound["kit"]["padEntries"].getArray();
+    const auto entry = padEntries != nullptr && drum < padEntries->size() ? (*padEntries)[drum].toString() : juce::String();
+    if (entry.isNotEmpty())
+    {
+        const int index = zip.getIndexOfFileName (entry);
+        std::unique_ptr<juce::InputStream> stream (index >= 0 ? zip.createStreamForEntry (index) : nullptr);
+        juce::MemoryBlock data;
+        if (stream != nullptr)
+            stream->readIntoMemoryBlock (data);
+        const auto* padFiles = sound["kit"]["padFiles"].getArray();
+        const auto name = padFiles != nullptr && drum < padFiles->size() ? (*padFiles)[drum].toString()
+                                                                         : entry.fromLastOccurrenceOf ("/", false, false);
+        if (stream == nullptr || ! Project::loadSampleIntoPad (e, trackIndex, drum, name, data, formats, error))
+        {
+            error = "The recording on this pad in " + file.getFileName() + " could not be loaded.";
+            ok = false;
+        }
+    }
+    applyDrum (e.track (trackIndex).kit.drums[(size_t) drum], drumOf (sound, drum));
+    return ok;
+}
+
 } // namespace bizgroove
