@@ -1437,6 +1437,65 @@ static void testPerform()
     check (back > 0.5f * playing, "perform: letting go brings the music back");
 }
 
+// Levels: how loud each factory sound plays the same notes, to even them out. Information only.
+static void testLevels()
+{
+    std::cout << "Levels\n";
+    AudioEngine e;
+    constexpr int block = 512;
+    constexpr double rate = 48000.0;
+    e.prepareToPlay (block, rate);
+    e.selectedTrack.store (0);
+    juce::AudioBuffer<float> buf (2, block);
+    auto render = [&] (double seconds) {
+        double sum = 0.0;
+        float peak = 0.0f;
+        const int blocks = (int) (seconds * rate / block);
+        for (int b = 0; b < blocks; ++b)
+        {
+            buf.clear();
+            e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, block));
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < block; ++i)
+                {
+                    const float x = buf.getSample (ch, i);
+                    sum += (double) x * x;
+                    peak = juce::jmax (peak, std::abs (x));
+                }
+        }
+        const double rms = std::sqrt (sum / juce::jmax (1.0, (double) blocks * block * 2.0));
+        return std::make_pair (juce::Decibels::gainToDecibels ((float) rms, -120.0f), juce::Decibels::gainToDecibels (peak, -120.0f));
+    };
+
+    for (int type : { (int) Track::testSynth, (int) Track::poly, (int) Track::wavetable, (int) Track::fm, (int) Track::drums })
+    {
+        for (const auto& s : Presets::factorySounds (type))
+        {
+            Presets::applySoundVar (e.track (0), s.sound);
+            render (1.0);   // let the last sound die away
+            std::pair<float, float> level;
+            if (type == Track::drums)
+            {
+                for (int note : { 36, 38, 42, 36 })
+                {
+                    e.keyboardState.noteOn (1, note, 100.0f / 127.0f);
+                    e.keyboardState.noteOff (1, note, 0.0f);
+                }
+                level = render (1.0);
+            }
+            else
+            {
+                e.keyboardState.noteOn (1, 48, 100.0f / 127.0f);
+                level = render (1.5);
+                e.keyboardState.noteOff (1, 48, 0.0f);
+            }
+            std::cout << "  info  level " << Presets::instrumentName (type) << " / " << s.name
+                      << ": rms " << juce::String (level.first, 1) << " dB, peak " << juce::String (level.second, 1) << " dB\n";
+        }
+    }
+    e.keyboardState.allNotesOff (1);
+}
+
 // Kits of your own: one drum taken from another kit, factory or saved, onto the same pad.
 static void testCopyDrum()
 {
@@ -1563,6 +1622,7 @@ int main (int argc, char* argv[])
     testPerform();
     testLiveRecord();
     testCopyDrum();
+    testLevels();
     testRender (argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]) : juce::File());
 
     std::cout << (failures == 0 ? "All tests passed\n" : juce::String (failures) + " test(s) failed\n");
