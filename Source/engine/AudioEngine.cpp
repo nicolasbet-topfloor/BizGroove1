@@ -54,6 +54,9 @@ void AudioEngine::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
     for (auto& m : trackMidi)
         m.ensureSize (2048);
     liveMidi.ensureSize (2048);
+    selInput.ensureSize (2048);
+    arpOut.ensureSize (2048);
+    arpScratch.ensureSize (512);
     for (auto& m : externalMidi)
         m.ensureSize (2048);
     liveInput.setSize (8, maxBlock);
@@ -113,6 +116,8 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         tracks[(size_t) lastSelected]->fmSynth.allNotesOff (0, true);
         tracks[(size_t) lastSelected]->noiseSynth.allNotesOff (0, true);
         latched.fill (false);   // Hold: the old track's held notes went with it
+        arpScratch.clear();
+        arpeggiator.reset (arpScratch, 0);   // and the arpeggiator's (all notes off above)
         if (tracks[(size_t) lastSelected]->type.load() == Track::external)
             tracks[(size_t) lastSelected]->ext.panic.store (true);   // no notes left hanging on the gear
         lastSelected = sel;
@@ -219,10 +224,23 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
 
     // Hold: notes keep sounding after the keys are let go. Playing again once every key is up
     // starts a new held chord; switching Hold off lets them all go.
+    // What the keys play on the selected track goes through Hold and then the arpeggiator.
+    selInput.clear();
     const bool holdNow = hold.load();
     if (wasHold && ! holdNow)
-        releaseLatched (trackMidi[(size_t) sel], 0);
+        releaseLatched (selInput, 0);
     wasHold = holdNow;
+
+    // Recording: the note lands on the nearest step of the pattern playing, with how
+    // hard it was played; letting go of the key sets how long it lasts.
+    auto deliver = [&] (const juce::MidiMessage& m, int position, int dest) {
+        trackMidi[(size_t) dest].addEvent (m, position);
+        if (playing && recordNotes.load() && m.isNoteOn() && m.getVelocity() > 0)
+            song.recordNote (dest, isDrum[(size_t) dest], m.getNoteNumber(), DrumKit::drumForNote (m.getNoteNumber()),
+                             position, numSamples, bpm, (int) m.getVelocity());
+        else if (playing && ! isDrum[(size_t) dest] && (m.isNoteOff() || (m.isNoteOn() && m.getVelocity() == 0)))
+            song.recordNoteOff (dest, m.getNoteNumber(), position, numSamples, bpm);
+    };
 
     for (const auto meta : liveMidi)
     {
@@ -240,7 +258,7 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
             if (m.isNoteOn() && m.getVelocity() > 0)
             {
                 if (holdNow && keysDown == 0)
-                    releaseLatched (trackMidi[(size_t) dest], meta.samplePosition);
+                    releaseLatched (selInput, meta.samplePosition);
                 if (! keyDown[n]) { keyDown[n] = true; ++keysDown; }
                 if (holdNow)
                     latched[n] = true;
@@ -252,15 +270,28 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
                     continue;   // held: the note keeps sounding
             }
         }
-        trackMidi[(size_t) dest].addEvent (m, meta.samplePosition);
+        if (! isDrum[(size_t) dest] && dest == sel)
+            selInput.addEvent (m, meta.samplePosition);
+        else
+            deliver (m, meta.samplePosition, dest);
+    }
 
-        // Recording: the note lands on the nearest step of the pattern playing, with how
-        // hard it was played; letting go of the key sets how long it lasts.
-        if (playing && recordNotes.load() && m.isNoteOn() && m.getVelocity() > 0)
-            song.recordNote (dest, isDrum[(size_t) dest], m.getNoteNumber(), DrumKit::drumForNote (m.getNoteNumber()),
-                             meta.samplePosition, numSamples, bpm, (int) m.getVelocity());
-        else if (playing && ! isDrum[(size_t) dest] && (m.isNoteOff() || (m.isNoteOn() && m.getVelocity() == 0)))
-            song.recordNoteOff (dest, m.getNoteNumber(), meta.samplePosition, numSamples, bpm);
+    // The arpeggiator: the held notes become a pattern in time with the song.
+    const bool arpNow = arp.on.load() && ! isDrum[(size_t) sel];
+    if (wasArp && ! arpNow)
+        arpeggiator.reset (trackMidi[(size_t) sel], 0);
+    wasArp = arpNow;
+    if (arpNow)
+    {
+        arpOut.clear();
+        arpeggiator.process (selInput, arpOut, numSamples, currentRate, bpm, playing, transportSamples, arp);
+        for (const auto meta : arpOut)
+            deliver (meta.getMessage(), meta.samplePosition, sel);
+    }
+    else
+    {
+        for (const auto meta : selInput)
+            deliver (meta.getMessage(), meta.samplePosition, sel);
     }
 
     // What the effects need: the tempo, the song position, and where the kick drums hit.
