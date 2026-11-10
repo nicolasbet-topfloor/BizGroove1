@@ -27,7 +27,8 @@ struct PolyParams
     std::atomic<float> mix         { 0.5f };    // 0 = saw tone only, 1 = pulse tone only
     std::atomic<int>   octave      { 0 };       // second tone: -1, 0 or +1 octave
     std::atomic<int>   unison      { 1 };       // tones stacked per note: 1..4
-    std::atomic<float> glide       { 0.0f };    // seconds
+    std::atomic<float> glide       { 0.0f };    // seconds (per octave when gliding by distance)
+    std::atomic<int>   glideMode   { Glide::fixedTime };
     std::atomic<float> lfoRate     { 5.0f };    // Hz
     std::atomic<float> lfoFilter   { 0.0f };    // 0..1
     std::atomic<float> lfoPulse    { 0.0f };    // 0..1
@@ -93,8 +94,8 @@ public:
     void startNote (int midiNote, float velocity, juce::SynthesiserSound*, int) override
     {
         targetHz = juce::MidiMessage::getMidiNoteInHertz (midiNote);
-        const float glide = params.glide.load();
-        currentHz = (glide > 0.001f && params.lastNoteHz > 0.0) ? params.lastNoteHz : targetHz;
+        glide.start (params.lastNoteHz, targetHz, params.glide.load(), params.glideMode.load(), getSampleRate());
+        currentHz = glide.hz();
         params.lastNoteHz = targetHz;
 
         unison = juce::jlimit (1, maxUnison, params.unison.load());
@@ -142,9 +143,6 @@ public:
         const double twoPi = juce::MathConstants<double>::twoPi;
         const double vibratoStep = twoPi * TestSynthParams::vibratoRateHz / sr;
         const double lfoStep = twoPi * juce::jlimit (0.05f, 30.0f, params.lfoRate.load()) / sr;
-        const float glide = params.glide.load();
-        const double glideCoef = glide > 0.001f ? std::exp (-1.0 / (glide * sr)) : 0.0;
-
         const float baseCutoff = params.cutoffHz.load();
         const float envDepth = params.envAmount.load();
         const float lfoFilter = params.lfoFilter.load();
@@ -172,7 +170,7 @@ public:
             if ((i % controlInterval) == 0)
             {
                 lfo = (float) std::sin (lfoPhase);
-                currentHz = targetHz + (currentHz - targetHz) * std::pow (glideCoef, (double) controlInterval);
+                currentHz = glide.advance (controlInterval);
                 updatePitch (sr);
 
                 // The envelope opens the filter up to five octaves; the wobble up to two either way.
@@ -242,6 +240,7 @@ private:
     PolyParams& params;
     const Performance& performance;
     double targetHz = 440.0, currentHz = 440.0;
+    Glide glide;
     double vibratoPhase = 0.0, lfoPhase = 0.0;
     int unison = 1;
     std::array<PolyBlepSaw, maxUnison> saws;
