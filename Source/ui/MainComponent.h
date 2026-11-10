@@ -11,6 +11,7 @@
 #include "StemPanel.h"
 #include "SessionBar.h"
 #include "SongView.h"
+#include "PatternView.h"
 #include "ControllersWindow.h"
 #include "MixerView.h"
 #include "ExportDialog.h"
@@ -45,7 +46,7 @@ private:
     void togglePlay();
     void showAudioSettings();
     void showControllers();
-    enum class View { panel, song, mixer, stems };
+    enum class View { panel, pattern, song, mixer, stems };
     void showView (View view);
     void loadSynth (int index);
     void enableNewMidiInputs();
@@ -109,16 +110,22 @@ private:
     juce::Label volumeLabel;
     void showMasterVolume();
     juce::TextButton fileButton { "File" };
-    juce::TextButton panelViewButton { "Keys & pads" }, songViewButton { "Song" }, mixerViewButton { "Mixer" },
-                     stemViewButton { "Stem deck" };
+    juce::TextButton panelViewButton { "Keys & pads" }, patternViewButton { "Pattern" }, songViewButton { "Song" },
+                     mixerViewButton { "Mixer" }, stemViewButton { "Stems" };
     juce::TextButton settingsButton { "Audio / MIDI" };
     juce::TextButton controllersButton { "Controllers" };
+    juce::TextButton setupButton { "Setup" };          // Audio / MIDI and Controllers, in one menu
+    juce::TextButton metronomeButton { "Click" };      // the metronome and its count-in
+    void showMetronomeMenu();
+    void showSetupMenu();
+    int shownMetronome = -1;
     juce::Label midiStatus;
 
     // Views
     LaunchkeyPanel panel { engine, controlTargets };
     StemPanel stemPanel { engine };
     SongView songView { engine };
+    PatternView patternView { engine };
     MixerView mixerView { engine };
     SessionBar sessionBar { engine };
     int shownSoundTrack = -1, shownSoundType = -1;
