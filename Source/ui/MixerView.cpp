@@ -181,6 +181,130 @@ void ChannelView::resized()
 
 // ============================================================== MixerView
 
+namespace
+{
+    /** The master reverb and delay: which kind each is, and the knobs that kind has. */
+    class SendFxPanel final : public juce::Component, private juce::Timer
+    {
+    public:
+        explicit SendFxPanel (MasterEffects& f) : fx (f)
+        {
+            for (auto* l : { &reverbTitle, &delayTitle })
+            {
+                l->setFont (juce::FontOptions (13.0f, juce::Font::bold));
+                l->setColour (juce::Label::textColourId, Colours::accent);
+                addAndMakeVisible (*l);
+            }
+            reverbTitle.setText ("REVERB", juce::dontSendNotification);
+            delayTitle.setText ("DELAY", juce::dontSendNotification);
+
+            for (int t = 0; t < MasterEffects::numReverbTypes; ++t)
+                reverbType.addItem (MasterEffects::reverbTypeName (t), t + 1);
+            reverbType.setTooltip ("Room / hall: a space. Plate: dense and bright. Spring: the springy boing of guitar amps and dub.");
+            reverbType.onChange = [this] { fx.reverbType.store (reverbType.getSelectedId() - 1); };
+
+            for (int t = 0; t < MasterEffects::numDelayTypes; ++t)
+                delayType.addItem (MasterEffects::delayTypeName (t), t + 1);
+            delayType.setTooltip ("Digital: clean echoes that bounce left and right. Tape echo: a multi-head tape loop, warm, wobbly and able to run away into self-oscillation.");
+            delayType.onChange = [this] { fx.delayType.store (delayType.getSelectedId() - 1); };
+
+            for (int d = 0; d < 4; ++d)
+                delayTime.addItem (MasterEffects::divisionName (d), d + 1);
+            delayTime.setTooltip ("Time between echoes, in step with the tempo. On the tape echo: the time to the first head.");
+            delayTime.onChange = [this] { fx.delayDivision.store (delayTime.getSelectedId() - 1); };
+
+            for (int m = 0; m < TapeEcho::numModes; ++m)
+                heads.addItem (TapeEcho::modeName (m), m + 1);
+            heads.setTooltip ("Which playback heads you hear. Each head repeats later than the one before: together they make rhythms.");
+            heads.onChange = [this] { fx.tapeHeads.store (heads.getSelectedId() - 1); };
+
+            for (auto* c : { &reverbType, &delayType, &delayTime, &heads })
+            {
+                c->setWantsKeyboardFocus (false);
+                addAndMakeVisible (*c);
+            }
+
+            size = knob ("SIZE / DECAY", 1.0, 0.5, fx.reverbSize, "How big the room is, or how long the spring rings.", percentText);
+            tone = knob ("TONE", 1.0, 0.5, fx.reverbTone, "Dark (left) to bright (right).", percentText);
+            drip = knob ("DRIP", 1.0, 0.5, fx.springDrip, "How springy the spring's boing is.", percentText);
+            repeats = knob ("REPEATS", 0.9, 0.35, fx.delayFeedback,
+                            "How many echoes before they fade. On the tape echo, near the top it feeds back into self-oscillation.",
+                            [] (float v) { return v < 0.05f ? juce::String ("One echo") : percentText (v / 0.9f); });
+            wow = knob ("WOW / FLUTTER", 1.0, 0.4, fx.tapeWow, "How much the tape's pitch sways.", percentText);
+            tapeTone = knob ("TAPE TONE", 1.0, 0.5, fx.tapeTone, "Dark (left) to bright (right) echoes.", percentText);
+            wear = knob ("WEAR", 1.0, 0.3, fx.tapeWear, "New tape (left) to old, worn tape: duller, hissier, with the odd dropout.", percentText);
+
+            setSize (160 + 4 * 92, 250);
+            update();
+            startTimerHz (15);
+        }
+
+        void resized() override
+        {
+            reverbTitle.setBounds (6, 4, 150, 20);
+            reverbType.setBounds (6, 28, 150, 26);
+            delayTitle.setBounds (6, 124, 150, 20);
+            delayType.setBounds (6, 148, 150, 26);
+            delayTime.setBounds (6, 180, 150, 26);
+            heads.setBounds (6, 212, 150, 26);
+            int x = 164;
+            for (auto* k : { size, tone, drip })
+            {
+                k->setBounds (x, 8, 90, 100);
+                x += 92;
+            }
+            x = 164;
+            for (auto* k : { repeats, wow, tapeTone, wear })
+            {
+                k->setBounds (x, 130, 90, 100);
+                x += 92;
+            }
+        }
+
+    private:
+        MixKnob* knob (const juce::String& name, double max, double reset, std::atomic<float>& value,
+                       const juce::String& tip, std::function<juce::String (float)> show)
+        {
+            auto* k = knobs.add (new MixKnob (name, 0.0, max, reset, [&value] { return value.load(); },
+                                              [&value] (float v) { value.store (v); }, std::move (show)));
+            k->setTooltip (tip);
+            addAndMakeVisible (k);
+            return k;
+        }
+
+        void update()
+        {
+            reverbType.setSelectedId (fx.reverbType.load() + 1, juce::dontSendNotification);
+            delayType.setSelectedId (fx.delayType.load() + 1, juce::dontSendNotification);
+            delayTime.setSelectedId (fx.delayDivision.load() + 1, juce::dontSendNotification);
+            heads.setSelectedId (fx.tapeHeads.load() + 1, juce::dontSendNotification);
+            const bool spring = fx.reverbType.load() == MasterEffects::spring;
+            const bool tape = fx.delayType.load() == MasterEffects::tape;
+            drip->setVisible (spring);
+            heads.setVisible (tape);
+            wow->setVisible (tape);
+            tapeTone->setVisible (tape);
+            wear->setVisible (tape);
+            for (auto* k : knobs)
+                k->refresh();
+        }
+
+        void timerCallback() override { update(); }
+
+        MasterEffects& fx;
+        juce::Label reverbTitle, delayTitle;
+        juce::ComboBox reverbType, delayType, delayTime, heads;
+        juce::OwnedArray<MixKnob> knobs;
+        MixKnob* size = nullptr;
+        MixKnob* tone = nullptr;
+        MixKnob* drip = nullptr;
+        MixKnob* repeats = nullptr;
+        MixKnob* wow = nullptr;
+        MixKnob* tapeTone = nullptr;
+        MixKnob* wear = nullptr;
+    };
+}
+
 MixerView::MixerView (AudioEngine& e) : engine (e)
 {
     for (int t = 0; t < AudioEngine::numTracks; ++t)
@@ -215,6 +339,13 @@ MixerView::MixerView (AudioEngine& e) : engine (e)
     delayTimeLabel.setJustificationType (juce::Justification::centred);
     delayTimeLabel.setColour (juce::Label::textColourId, Colours::textDim);
     addAndMakeVisible (delayTimeLabel);
+
+    sendFxButton.setTooltip ("The kinds of reverb (room, plate, spring) and delay (digital, tape echo) every track sends to, and their settings.");
+    sendFxButton.setWantsKeyboardFocus (false);
+    sendFxButton.onClick = [this] {
+        juce::CallOutBox::launchAsynchronously (std::make_unique<SendFxPanel> (engine.effects), sendFxButton.getBounds(), this);
+    };
+    addAndMakeVisible (sendFxButton);
 
     masterFader.setRange (0.0, 1.0);
     masterFader.setValue (e.masterGain.load(), juce::dontSendNotification);
@@ -264,6 +395,8 @@ void MixerView::resized()
         k->setBounds (m.removeFromTop (70));
     delayTimeLabel.setBounds (m.removeFromTop (14));
     delayTime.setBounds (m.removeFromTop (26));
+    m.removeFromTop (6);
+    sendFxButton.setBounds (m.removeFromTop (26));
     m.removeFromTop (10);
     masterFader.setBounds (m.withSizeKeepingCentre (40, m.getHeight()));
 }
