@@ -156,6 +156,23 @@ namespace
         return { name, soundOf (Track::wavetable, "wave", waveParamsToVar (p)) };
     }
 
+    template <typename Tweak>
+    Presets::FactorySound fmPreset (const char* name, Tweak&& tweak)
+    {
+        FmParams p;   // starts from the FM synth's own settings
+        tweak (p);
+        return { name, soundOf (Track::fm, "fm", fmParamsToVar (p)) };
+    }
+
+    void setOperators (FmParams& p, std::array<float, 4> ratios, std::array<float, 4> levels)
+    {
+        for (size_t op = 0; op < 4; ++op)
+        {
+            p.ratio[op].store (ratios[op]);
+            p.level[op].store (levels[op]);
+        }
+    }
+
 }
 
 // ================================================================ names and folders
@@ -334,8 +351,53 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
         })
     };
 
+    static const std::vector<FactorySound> fms {
+        fmPreset ("Init", [] (FmParams&) {}),
+        fmPreset ("Electric piano", [] (FmParams& p) {
+            p.algorithm.store (3); setOperators (p, { 1.0f, 1.0f, 1.0f, 15.0f }, { 1.0f, 0.5f, 0.5f, 0.25f });
+            p.brightness.store (0.5f); p.biteDecay.store (0.8f); p.biteSustain.store (0.1f);
+            p.decay.store (2.5f); p.sustain.store (0.2f); p.release.store (0.5f); p.velocityBrightness.store (0.8f); p.detuneCents.store (3.0f);
+        }),
+        fmPreset ("Bell", [] (FmParams& p) {
+            p.algorithm.store (2); setOperators (p, { 1.0f, 3.5f, 1.0f, 11.0f }, { 1.0f, 0.6f, 0.4f, 0.3f });
+            p.brightness.store (0.6f); p.biteDecay.store (2.0f); p.biteSustain.store (0.2f);
+            p.decay.store (4.0f); p.sustain.store (0.0f); p.release.store (3.0f);
+        }),
+        fmPreset ("FM bass", [] (FmParams& p) {
+            p.algorithm.store (0); setOperators (p, { 1.0f, 1.0f, 2.0f, 1.0f }, { 1.0f, 0.7f, 0.3f, 0.2f });
+            p.feedback.store (0.3f); p.brightness.store (0.7f); p.biteDecay.store (0.25f); p.biteSustain.store (0.1f);
+            p.decay.store (0.4f); p.sustain.store (0.6f); p.release.store (0.1f);
+        }),
+        fmPreset ("Glass pad", [] (FmParams& p) {
+            p.algorithm.store (4); setOperators (p, { 1.0f, 2.0f, 4.0f, 3.5f }, { 1.0f, 0.5f, 0.3f, 0.3f });
+            p.brightness.store (0.4f); p.biteDecay.store (1.5f); p.biteSustain.store (0.5f);
+            p.attack.store (1.0f); p.decay.store (2.0f); p.sustain.store (0.9f); p.release.store (2.5f); p.detuneCents.store (8.0f);
+        }),
+        fmPreset ("Brass", [] (FmParams& p) {
+            p.algorithm.store (6); setOperators (p, { 1.0f, 1.0f, 2.0f, 3.0f }, { 1.0f, 0.7f, 0.3f, 0.2f });
+            p.attack.store (0.06f); p.biteDecay.store (0.3f); p.biteSustain.store (0.6f);
+            p.sustain.store (0.8f); p.brightness.store (0.6f); p.velocityBrightness.store (0.6f);
+        }),
+        fmPreset ("Organ", [] (FmParams& p) {
+            p.algorithm.store (7); setOperators (p, { 0.5f, 1.0f, 2.0f, 4.0f }, { 0.8f, 0.7f, 0.5f, 0.3f });
+            p.attack.store (0.005f); p.decay.store (1.0f); p.sustain.store (1.0f); p.release.store (0.1f);
+            p.lfoPitch.store (0.1f); p.lfoRate.store (6.0f);
+        }),
+        fmPreset ("Metal hit", [] (FmParams& p) {
+            p.algorithm.store (0); setOperators (p, { 1.0f, 1.41f, 3.5f, 7.0f }, { 1.0f, 0.8f, 0.7f, 0.6f });
+            p.feedback.store (0.5f); p.brightness.store (0.9f); p.biteDecay.store (0.4f); p.biteSustain.store (0.0f);
+            p.decay.store (0.6f); p.sustain.store (0.0f); p.release.store (0.4f);
+        }),
+        fmPreset ("Pluck", [] (FmParams& p) {
+            p.algorithm.store (1); setOperators (p, { 1.0f, 3.0f, 1.0f, 5.0f }, { 1.0f, 0.6f, 0.4f, 0.3f });
+            p.brightness.store (0.7f); p.biteDecay.store (0.08f); p.biteSustain.store (0.0f);
+            p.decay.store (0.5f); p.sustain.store (0.0f); p.release.store (0.3f);
+        })
+    };
+
     switch (clampType (type))
     {
+        case Track::fm:      return fms;
         case Track::wavetable: return waves;
         case Track::poly:    return polys;
         case Track::drums:   return kits;
@@ -357,6 +419,8 @@ juce::var Presets::soundToVar (const Track& tr)
         return soundOf (type, "poly", polyToVar (tr.polyParams));
     if (type == Track::wavetable)
         return soundOf (type, "wave", waveParamsToVar (tr.waveParams));
+    if (type == Track::fm)
+        return soundOf (type, "fm", fmParamsToVar (tr.fmParams));
     return soundOf (type, "synth", synthToVar (tr.synthParams));
 }
 
@@ -401,6 +465,10 @@ void Presets::applySoundVar (Track& tr, const juce::var& v)
     else if (type == Track::wavetable)
     {
         applyWaveParams (tr.waveParams, v["wave"]);
+    }
+    else if (type == Track::fm)
+    {
+        applyFmParams (tr.fmParams, v["fm"]);
     }
     else
     {
