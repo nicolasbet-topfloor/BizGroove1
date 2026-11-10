@@ -31,6 +31,10 @@ struct FmParams
     std::atomic<float> lfoRate     { 5.0f };    // Hz
     std::atomic<float> lfoPitch    { 0.0f };    // 0..1, vibrato
     std::atomic<float> lfoBrightness { 0.0f };  // 0..1
+    std::atomic<float> glide       { 0.0f };    // seconds (per octave when gliding by distance)
+    std::atomic<int>   glideMode   { Glide::fixedTime };
+
+    mutable double lastNoteHz = 0.0;   // audio thread only: where a glide starts
 };
 
 /** The eight layouts. Operators are numbered 0..3 here and 1..4 to people;
@@ -96,6 +100,8 @@ public:
     void startNote (int midiNote, float velocity, juce::SynthesiserSound*, int) override
     {
         noteHz = juce::MidiMessage::getMidiNoteInHertz (midiNote);
+        glide.start (params.lastNoteHz, noteHz, params.glide.load(), params.glideMode.load(), getSampleRate());
+        params.lastNoteHz = noteHz;
         if (! ampEnv.isActive())
         {
             phases = {};
@@ -171,7 +177,7 @@ public:
                 const double semitones = performance.pitchBend.load() * TestSynthParams::bendRangeSemitones
                                        + performance.modWheel.load() * TestSynthParams::vibratoMaxSemitones * std::sin (vibratoPhase)
                                        + 0.5 * params.lfoPitch.load() * lfo;
-                const double hz = noteHz * std::pow (2.0, semitones / 12.0);
+                const double hz = glide.advance (controlInterval) * std::pow (2.0, semitones / 12.0);
                 const double cents = params.detuneCents.load();
                 float highest = 1.0f;
                 for (size_t op = 0; op < 4; ++op)
@@ -235,6 +241,7 @@ private:
     const FmParams& params;
     const Performance& performance;
     double noteHz = 440.0;
+    Glide glide;
     double vibratoPhase = 0.0, lfoPhase = 0.0;
     std::array<double, 4> phases {};
     float fb1 = 0.0f, fb2 = 0.0f;
@@ -268,6 +275,7 @@ inline juce::var fmParamsToVar (const FmParams& fp)
     o->setProperty ("velocityBrightness", fp.velocityBrightness.load());
     o->setProperty ("lfoRate", fp.lfoRate.load());       o->setProperty ("lfoPitch", fp.lfoPitch.load());
     o->setProperty ("lfoBrightness", fp.lfoBrightness.load());
+    o->setProperty ("glide", fp.glide.load());           o->setProperty ("glideMode", fp.glideMode.load());
     return juce::var (o);
 }
 
@@ -295,6 +303,8 @@ inline void applyFmParams (FmParams& fp, const juce::var& v)
     fp.velocityBrightness.store (f ("velocityBrightness", 0.5f));
     fp.lfoRate.store (f ("lfoRate", 5.0f));          fp.lfoPitch.store (f ("lfoPitch", 0.0f));
     fp.lfoBrightness.store (f ("lfoBrightness", 0.0f));
+    fp.glide.store (f ("glide", 0.0f));
+    fp.glideMode.store (juce::jlimit (0, Glide::numModes - 1, i ("glideMode", 0)));
 }
 
 } // namespace bizgroove
