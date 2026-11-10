@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_basics/juce_audio_basics.h>
+#include "SendEffects.h"
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -93,11 +94,24 @@ class MasterEffects
 public:
     enum Division { sixteenth = 0, eighth, dottedEighth, quarter };
 
-    std::atomic<float> reverbSize     { 0.5f };   // 0..1, small room to large hall
+    enum ReverbType { roomHall = 0, plate, spring, numReverbTypes };
+    enum DelayType { digital = 0, tape, numDelayTypes };
+
+    std::atomic<float> reverbSize     { 0.5f };   // 0..1, small room to large hall (spring: how long it rings)
     std::atomic<int>   delayDivision  { dottedEighth };
-    std::atomic<float> delayFeedback  { 0.35f };  // 0..0.9
+    std::atomic<float> delayFeedback  { 0.35f };  // 0..0.9 (tape echo: at the top it self-oscillates)
+    std::atomic<int>   reverbType     { roomHall };
+    std::atomic<float> reverbTone     { 0.5f };   // 0..1, dark to bright
+    std::atomic<float> springDrip     { 0.5f };   // 0..1, how springy the spring's chirp is
+    std::atomic<int>   delayType      { digital };
+    std::atomic<int>   tapeHeads      { 6 };      // see TapeEcho::modeName
+    std::atomic<float> tapeWow        { 0.4f };   // 0..1, wow and flutter
+    std::atomic<float> tapeTone       { 0.5f };   // 0..1, dark to bright
+    std::atomic<float> tapeWear       { 0.3f };   // 0..1, new tape to worn
 
     static juce::String divisionName (int division);
+    static juce::String reverbTypeName (int type);
+    static juce::String delayTypeName (int type);
 
     void prepare (double sampleRate, int maxBlock);
     void reset();
@@ -108,11 +122,15 @@ public:
 
 private:
     juce::Reverb reverb;
-    float lastSize = -1.0f;
+    float lastSize = -1.0f, lastTone = -1.0f;
+    int lastReverbType = -1, lastDelayType = -1;
     juce::AudioBuffer<float> delayLine;
     int writePos = 0;
     double sr = 44100.0;
     juce::SmoothedValue<float> delayTime;   // in samples
+    TapeEcho tapeEcho;
+    SpringReverb springReverb;
+    juce::AudioBuffer<float> wet;   // the spring's output for one block
 };
 
 } // namespace bizgroove
