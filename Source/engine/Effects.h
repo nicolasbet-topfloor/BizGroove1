@@ -13,7 +13,7 @@ namespace bizgroove
     before its volume, pan and sends. */
 struct InsertEffects
 {
-    enum Type { off = 0, chorus, flanger, phaser, ensemble, drive, lofi, autoFilter, compressor, duck, numTypes };
+    enum Type { off = 0, chorus, flanger, phaser, ensemble, drive, lofi, autoFilter, compressor, duck, tremolo, harmonicTremolo, numTypes };
 
     static juce::String name (int type)
     {
@@ -28,6 +28,8 @@ struct InsertEffects
             case autoFilter: return "Moving filter";
             case compressor: return "Compressor";
             case duck:       return "Duck (sidechain)";
+            case tremolo:    return "Tremolo";
+            case harmonicTremolo: return "Harmonic tremolo (vintage)";
             default:         return "Off";
         }
     }
@@ -46,6 +48,8 @@ struct InsertEffects
             case autoFilter: return { { "Brightness", "Edge", "Movement", "Speed" } };
             case compressor: return { { "Threshold", "Ratio", "Speed", "Mix" } };
             case duck:       return { { "Amount", "Release", "Trigger", "Smooth" } };
+            case tremolo:    return { { "Depth", "Speed", "Shape", "Stereo" } };
+            case harmonicTremolo: return { { "Depth", "Speed", "Crossover", "Stereo" } };
             default:         return { { "-", "-", "-", "-" } };
         }
     }
@@ -64,6 +68,8 @@ struct InsertEffects
             case autoFilter: return { { 0.45f, 0.4f, 0.5f, 0.5f } };
             case compressor: return { { 0.5f, 0.3f, 0.5f, 1.0f } };
             case duck:       return { { 0.7f, 0.35f, 0.0f, 0.2f } };
+            case tremolo:    return { { 0.6f, 0.3f, 0.0f, 0.0f } };
+            case harmonicTremolo: return { { 0.6f, 0.25f, 0.45f, 0.0f } };
             default:         return { { 0.5f, 0.5f, 0.5f, 0.5f } };
         }
     }
@@ -109,6 +115,12 @@ struct InsertEffects
                 if (knob == 1) return juce::String (juce::roundToInt (1000.0f * duckRelease (v))) + " ms";
                 if (knob == 2) return v < 0.5f ? juce::String ("Kick drum") : juce::String ("Every beat");
                 break;
+            case tremolo: case harmonicTremolo:
+                if (knob == 1) return v < 0.5f ? hz (tremoloHz (v)) : tremoloSyncedName (v) + " (in time)";
+                if (knob == 2 && type == tremolo) return tremoloShapeName (tremoloShape (v));
+                if (knob == 2) return juce::String (juce::roundToInt (crossoverHz (v))) + " Hz";
+                if (knob == 3) return v < 0.01f ? juce::String ("Mono") : pct (v);
+                break;
             default:
                 return "-";
         }
@@ -123,6 +135,28 @@ struct InsertEffects
     static float threshold (float v)   { return -40.0f * (1.0f - juce::jlimit (0.0f, 1.0f, v)); }             // -40 .. 0 dB
     static float ratio (float v)       { return 1.0f + 19.0f * juce::jlimit (0.0f, 1.0f, v) * juce::jlimit (0.0f, 1.0f, v); }
     static float duckRelease (float v) { return 0.04f * std::pow (25.0f, juce::jlimit (0.0f, 1.0f, v)); }      // 40 ms .. 1 s
+
+    // Tremolo: the Speed knob is free on its left half (0.2 .. 20 Hz) and in time with the tempo on its right half.
+    static constexpr int numTremoloRates = 8, numTremoloShapes = 6;
+    static float tremoloHz (float v)   { return 0.2f * std::pow (100.0f, juce::jlimit (0.0f, 1.0f, v * 2.0f)); }
+    static int tremoloRate (float v)   { return juce::jlimit (0, numTremoloRates - 1, (int) ((v - 0.5f) * 2.0f * ((float) numTremoloRates - 0.001f))); }
+    static double tremoloBeats (float v)
+    {
+        static constexpr double beats[numTremoloRates] = { 4.0, 2.0, 1.0, 0.5, 1.0 / 3.0, 0.25, 1.0 / 6.0, 0.125 };
+        return beats[tremoloRate (v)];
+    }
+    static juce::String tremoloSyncedName (float v)
+    {
+        static const char* names[numTremoloRates] = { "1 bar", "1/2", "1/4", "1/8", "1/8 triplet", "1/16", "1/16 triplet", "1/32" };
+        return names[tremoloRate (v)];
+    }
+    static int tremoloShape (float v)  { return juce::jlimit (0, numTremoloShapes - 1, (int) (v * ((float) numTremoloShapes - 0.001f))); }
+    static juce::String tremoloShapeName (int s)
+    {
+        static const char* names[numTremoloShapes] = { "Sine", "Triangle", "Square", "Saw down", "Saw up", "Random" };
+        return names[juce::jlimit (0, numTremoloShapes - 1, s)];
+    }
+    static float crossoverHz (float v) { return 200.0f * std::pow (10.0f, juce::jlimit (0.0f, 1.0f, v)); }      // 200 Hz .. 2 kHz
 };
 
 /** One insert slot's settings, shared with the UI and controllers. */
@@ -181,6 +215,10 @@ public:
         svf = {};
         gainDb = 0.0f;
         duckEnv = 0.0f; duckTarget = 0.0f;
+        tremPhase = 0.0;
+        tremGainL = tremGainR = 0.5f;
+        tremLowL = tremLowR = 0.0f;
+        tremCycle = { { -1, -1 } };
         lastType = -1;
     }
 
@@ -216,6 +254,8 @@ public:
             case InsertEffects::autoFilter: filterProcess (l, r, numSamples, k, ctx); break;
             case InsertEffects::compressor: compressorProcess (l, r, numSamples, k); break;
             case InsertEffects::duck:       duckProcess (l, r, numSamples, k, ctx); break;
+            case InsertEffects::tremolo:    tremoloProcess (l, r, numSamples, k, ctx, false); break;
+            case InsertEffects::harmonicTremolo: tremoloProcess (l, r, numSamples, k, ctx, true); break;
             default: break;
         }
     }
@@ -472,6 +512,75 @@ private:
         }
     }
 
+    /** Tremolo: the volume beats up and down. The vintage harmonic tremolo of 1960s amps splits the
+        sound in lows and highs and beats them in turn, so it pulses without ever going quiet. */
+    void tremoloProcess (float* l, float* r, int n, const std::array<float, 4>& k, const EffectContext& ctx, bool harmonic)
+    {
+        const float depth = k[0];
+        const bool synced = k[1] >= 0.5f;
+        const double beats = InsertEffects::tremoloBeats (k[1]);
+        const double hz = InsertEffects::tremoloHz (k[1]);
+        const double beatsPerSample = juce::jlimit (20.0, 300.0, ctx.bpm) / 60.0 / sr;
+        const int shape = harmonic ? 0 : InsertEffects::tremoloShape (k[2]);
+        const double stereo = 0.5 * (double) k[3];   // up to half a cycle apart
+        const float crossover = std::exp (-juce::MathConstants<float>::twoPi * InsertEffects::crossoverHz (k[2]) / (float) sr);
+        const float smooth = 1.0f - std::exp (-1.0f / (0.002f * (float) sr));   // 2 ms, so square and random don't click
+
+        auto wave = [this, shape] (double cycle, int side) {
+            const double p = cycle - std::floor (cycle);
+            switch (shape)
+            {
+                case 1:  return (float) (1.0 - std::abs (2.0 * p - 1.0));
+                case 2:  return p < 0.5 ? 1.0f : 0.0f;
+                case 3:  return (float) (1.0 - p);
+                case 4:  return (float) p;
+                case 5:
+                {
+                    const auto whole = (juce::int64) std::floor (cycle);
+                    if (whole != tremCycle[(size_t) side])
+                    {
+                        tremCycle[(size_t) side] = whole;
+                        tremRandom[(size_t) side] = random.nextFloat();
+                    }
+                    return tremRandom[(size_t) side];
+                }
+                default: return (float) (0.5 + 0.5 * std::sin (twoPi * p));
+            }
+        };
+
+        for (int i = 0; i < n; ++i)
+        {
+            double cycle;
+            if (synced)
+                cycle = (ctx.beatAtStart + (double) i * beatsPerSample) / beats;
+            else
+            {
+                tremPhase += hz / sr;
+                if (tremPhase > 1.0e6) tremPhase -= 1.0e6;
+                cycle = tremPhase;
+            }
+            const float wl = wave (cycle, 0), wr = wave (cycle + stereo, 1);
+            tremGainL += smooth * (wl - tremGainL);
+            tremGainR += smooth * (wr - tremGainR);
+
+            if (harmonic)
+            {
+                tremLowL = l[i] + crossover * (tremLowL - l[i]);
+                tremLowR = r[i] + crossover * (tremLowR - r[i]);
+                const float highL = l[i] - tremLowL, highR = r[i] - tremLowR;
+                // Each band dips by up to three quarters, as on the amps: the sound pulses, it never stops.
+                const float d = 0.75f * depth;
+                l[i] = tremLowL * (1.0f - d * tremGainL) + highL * (1.0f - d * (1.0f - tremGainL));
+                r[i] = tremLowR * (1.0f - d * tremGainR) + highR * (1.0f - d * (1.0f - tremGainR));
+            }
+            else
+            {
+                l[i] *= 1.0f - depth * tremGainL;
+                r[i] *= 1.0f - depth * tremGainR;
+            }
+        }
+    }
+
     double sr = 44100.0;
     std::array<std::vector<float>, 2> lines;
     int write = 0, mask = 0;
@@ -485,6 +594,11 @@ private:
     struct SvfState { float l1 = 0.0f, l2 = 0.0f, r1 = 0.0f, r2 = 0.0f; } svf;
     float gainDb = 0.0f;
     float duckEnv = 0.0f, duckTarget = 0.0f;
+    double tremPhase = 0.0;
+    float tremGainL = 0.0f, tremGainR = 0.0f, tremLowL = 0.0f, tremLowR = 0.0f;
+    std::array<juce::int64, 2> tremCycle { { -1, -1 } };
+    std::array<float, 2> tremRandom {};
+    juce::Random random { 0x7e40 };
     int lastType = -1;
 };
 
