@@ -173,6 +173,14 @@ namespace
         }
     }
 
+    template <typename Tweak>
+    Presets::FactorySound externalPreset (const char* name, Tweak&& tweak)
+    {
+        ExternalParams p;   // standard knob CCs, channel 1
+        tweak (p);
+        return { name, soundOf (Track::external, "external", externalParamsToVar (p, {})) };
+    }
+
 }
 
 // ================================================================ names and folders
@@ -395,8 +403,17 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
         })
     };
 
+    static const std::vector<FactorySound> externals {
+        externalPreset ("Channel 1", [] (ExternalParams&) {}),
+        externalPreset ("Channel 2", [] (ExternalParams& p) { p.channel.store (2); }),
+        externalPreset ("Channel 3", [] (ExternalParams& p) { p.channel.store (3); }),
+        externalPreset ("Drums on channel 10", [] (ExternalParams& p) { p.channel.store (10); p.drums.store (true); }),
+        externalPreset ("Channel 1, hearing the input", [] (ExternalParams& p) { p.monitor.store (true); })
+    };
+
     switch (clampType (type))
     {
+        case Track::external: return externals;
         case Track::fm:      return fms;
         case Track::wavetable: return waves;
         case Track::poly:    return polys;
@@ -421,6 +438,8 @@ juce::var Presets::soundToVar (const Track& tr)
         return soundOf (type, "wave", waveParamsToVar (tr.waveParams));
     if (type == Track::fm)
         return soundOf (type, "fm", fmParamsToVar (tr.fmParams));
+    if (type == Track::external)
+        return soundOf (type, "external", externalParamsToVar (tr.ext, tr.externalDeviceName));
     return soundOf (type, "synth", synthToVar (tr.synthParams));
 }
 
@@ -469,6 +488,17 @@ void Presets::applySoundVar (Track& tr, const juce::var& v)
     else if (type == Track::fm)
     {
         applyFmParams (tr.fmParams, v["fm"]);
+    }
+    else if (type == Track::external)
+    {
+        // A sound keeps the track's MIDI output unless it names one.
+        juce::String device;
+        applyExternalParams (tr.ext, device, v["external"]);
+        if (device.isNotEmpty())
+        {
+            tr.externalDeviceName = device;
+            tr.externalDeviceId = {};
+        }
     }
     else
     {
