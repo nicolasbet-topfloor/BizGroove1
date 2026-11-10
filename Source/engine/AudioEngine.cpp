@@ -46,6 +46,11 @@ void AudioEngine::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
     for (auto& m : trackMidi)
         m.ensureSize (2048);
     liveMidi.ensureSize (2048);
+    for (auto& m : externalMidi)
+        m.ensureSize (2048);
+    liveInput.setSize (8, maxBlock);
+    liveInput.clear();
+    liveInputSamples = 0;
     trackBuffer.setSize (2, maxBlock);
     reverbBus.setSize (2, maxBlock);
     delayBus.setSize (2, maxBlock);
@@ -97,6 +102,8 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         tracks[(size_t) lastSelected]->polySynth.allNotesOff (0, true);
         tracks[(size_t) lastSelected]->waveSynth.allNotesOff (0, true);
         tracks[(size_t) lastSelected]->fmSynth.allNotesOff (0, true);
+        if (tracks[(size_t) lastSelected]->type.load() == Track::external)
+            tracks[(size_t) lastSelected]->ext.panic.store (true);   // no notes left hanging on the gear
         lastSelected = sel;
     }
 
@@ -105,6 +112,10 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     const double bpm = transport.bpm.load();
     if (playing && ! wasPlaying)
         transportSamples = 0;
+    if (! playing && wasPlaying)
+        for (auto& tr : tracks)
+            if (tr->type.load() == Track::external)
+                tr->ext.panic.store (true);   // Stop silences the outside gear too
     wasPlaying = playing;
 
     std::array<bool, numTracks> isDrum {};
@@ -117,9 +128,11 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
             tracks[(size_t) t]->polySynth.allNotesOff (0, false);
             tracks[(size_t) t]->waveSynth.allNotesOff (0, false);
             tracks[(size_t) t]->fmSynth.allNotesOff (0, false);
+            if (lastType[(size_t) t] == Track::external)
+                tracks[(size_t) t]->ext.panic.store (true);
             lastType[(size_t) t] = type;
         }
-        isDrum[(size_t) t] = type == Track::drums;
+        isDrum[(size_t) t] = tracks[(size_t) t]->playsDrums();
         trackMidi[(size_t) t].clear();
     }
 
@@ -166,7 +179,20 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         trackBuffer.clear (0, numSamples);
 
         const int type = tr.type.load();
-        if (type == Track::drums)
+        const bool isExternal = type == Track::external;
+        buildExternalMidi (tr.ext, trackMidi[(size_t) t], externalMidi[(size_t) t], isExternal);
+        if (isExternal)
+        {
+            // The gear's sound comes back through the sound card's input, if it is heard.
+            if (tr.ext.monitor.load() && liveInputSamples == numSamples)
+            {
+                const int last = liveInput.getNumChannels() - 1;
+                const int first = juce::jlimit (0, last, 2 * tr.ext.inputPair.load());
+                trackBuffer.copyFrom (0, 0, liveInput, first, 0, numSamples);
+                trackBuffer.copyFrom (1, 0, liveInput, juce::jmin (first + 1, last), 0, numSamples);
+            }
+        }
+        else if (type == Track::drums)
             tr.kit.render (trackBuffer, 0, numSamples, trackMidi[(size_t) t]);
         else if (type == Track::sampler)
             tr.samplerEngine.render (trackBuffer, 0, numSamples, trackMidi[(size_t) t]);
@@ -224,6 +250,22 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         const float peak = ch < numChannels ? info.buffer->getMagnitude (ch, info.startSample, numSamples) : 0.0f;
         peaks[(size_t) ch].store (peak);
     }
+    liveInputSamples = 0;   // the next block brings its own input, or none (offline export)
+}
+
+void AudioEngine::setLiveInput (const juce::AudioBuffer<float>& input, int startSample, int numSamples)
+{
+    if (numSamples > liveInput.getNumSamples())
+    {
+        liveInputSamples = 0;
+        return;
+    }
+    const int channels = juce::jmin (liveInput.getNumChannels(), input.getNumChannels());
+    for (int ch = 0; ch < channels; ++ch)
+        liveInput.copyFrom (ch, 0, input, ch, startSample, numSamples);
+    for (int ch = channels; ch < liveInput.getNumChannels(); ++ch)
+        liveInput.clear (ch, 0, numSamples);
+    liveInputSamples = numSamples;
 }
 
 // ============================================================== editing helpers
@@ -232,7 +274,7 @@ bool AudioEngine::isStepOn (int step)
 {
     auto& tr = selected();
     auto& pattern = song.scene (song.currentScene.load()).tracks[(size_t) selectedTrack.load()];
-    if (tr.type.load() == Track::drums)
+    if (tr.playsDrums())
         return ((pattern.drumLanes[(size_t) tr.selectedDrum.load()].load() >> step) & 1u) != 0;
     return pattern.steps[(size_t) step].on.load();
 }
@@ -243,7 +285,7 @@ void AudioEngine::toggleStep (int step)
         return;
     auto& tr = selected();
     auto& pattern = song.scene (song.currentScene.load()).tracks[(size_t) selectedTrack.load()];
-    if (tr.type.load() == Track::drums)
+    if (tr.playsDrums())
     {
         auto& lane = pattern.drumLanes[(size_t) tr.selectedDrum.load()];
         lane.store ((std::uint16_t) (lane.load() ^ (1u << step)));
