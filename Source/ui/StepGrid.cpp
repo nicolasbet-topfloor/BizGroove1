@@ -42,22 +42,56 @@ void StepGrid::paint (juce::Graphics& g)
     const int playhead = engine.song.playheadStep.load();
     const bool drums = engine.selected().playsDrums();
 
+    const bool playing = engine.transport.playing.load() && playhead >= 0;
+    auto& pattern = engine.song.scene (engine.song.currentScene.load()).tracks[(size_t) engine.selectedTrack.load()];
+
     for (int i = 0; i < Song::numSteps; ++i)
     {
         const auto r = cellBounds (i);
         const bool on = engine.isStepOn (i);
+        const bool now = playing && i == playhead;
 
         g.setColour (on ? Colours::accent : (twoRows ? juce::Colour (0xff3a3c42) : Colours::panel));
         g.fillRoundedRectangle (r, twoRows ? 4.0f : 6.0f);
 
-        g.setColour (i == playhead ? Colours::playhead : Colours::panelEdge);
-        g.drawRoundedRectangle (r.reduced (1.0f), 6.0f, i == playhead ? 3.0f : 1.0f);
+        // The step playing lights up, so the running light is easy to follow.
+        if (now)
+        {
+            g.setColour (Colours::playhead.withAlpha (on ? 0.55f : 0.35f));
+            g.fillRoundedRectangle (r, twoRows ? 4.0f : 6.0f);
+        }
+        g.setColour (now ? Colours::playhead : (i % 4 == 0 ? Colours::textDim.withAlpha (0.6f) : Colours::panelEdge));
+        g.drawRoundedRectangle (r.reduced (1.0f), 6.0f, now ? 3.0f : 1.0f);
 
         g.setColour (on ? juce::Colours::black : Colours::textDim);
         g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
         if (! drums)
-            g.drawText (juce::MidiMessage::getMidiNoteName (engine.getStepNote (i), true, true, 4),
-                        r.reduced (2.0f, 6.0f), juce::Justification::centredBottom);
+        {
+            // The note, and "+2" when it is a chord of three.
+            const auto& st = pattern.steps[(size_t) i];
+            std::array<int, Song::maxChord> notes {};
+            const int count = st.getNotes (notes);
+            auto label = juce::MidiMessage::getMidiNoteName (notes[0], true, true, 4);
+            if (count > 1)
+                label << " +" << (count - 1);
+            g.drawText (label, r.reduced (2.0f, 6.0f), juce::Justification::centredBottom);
+        }
+        else
+        {
+            // Every drum that plays on this step: a dot each, the selected drum's bigger.
+            const float dot = juce::jmin (6.0f, (r.getWidth() - 8.0f) / 8.0f - 1.0f);
+            const int picked = engine.selected().selectedDrum.load();
+            for (int d = 0; d < Song::numDrums; ++d)
+            {
+                if (((pattern.drumLanes[(size_t) d].load() >> i) & 1u) == 0)
+                    continue;
+                const float x = r.getX() + 4.0f + (float) (d % 8) * (dot + 1.0f);
+                const float y = r.getBottom() - 6.0f - (float) (2 - d / 8) * (dot + 1.0f);
+                g.setColour (on ? juce::Colours::black.withAlpha (d == picked ? 0.9f : 0.5f)
+                                : Colours::text.withAlpha (d == picked ? 0.9f : 0.5f));
+                g.fillEllipse (x, y, dot, dot);
+            }
+        }
 
         g.setFont (juce::FontOptions (11.0f));
         g.drawText (juce::String (i + 1), r.reduced (2.0f, 6.0f), juce::Justification::centredTop);
@@ -120,8 +154,17 @@ void StepGrid::timerCallback()
 {
     // Repaint when the playhead moves or any shown step changes (e.g. from a controller).
     std::uint32_t hash = (std::uint32_t) engine.song.playheadStep.load() * 2654435761u;
+    auto& pattern = engine.song.scene (engine.song.currentScene.load()).tracks[(size_t) engine.selectedTrack.load()];
     for (int i = 0; i < Song::numSteps; ++i)
+    {
+        const auto& st = pattern.steps[(size_t) i];
         hash = hash * 31u + (engine.isStepOn (i) ? 1u : 0u) + (std::uint32_t) engine.getStepNote (i) * 7u;
+        for (const auto& c : st.chord)
+            hash = hash * 31u + (std::uint32_t) c.load();
+    }
+    for (const auto& lane : pattern.drumLanes)
+        hash = hash * 31u + lane.load();
+    hash = hash * 31u + (engine.transport.playing.load() ? 1u : 0u) + (std::uint32_t) engine.selected().selectedDrum.load() * 17u;
     hash = hash * 31u + (std::uint32_t) engine.selectedTrack.load() * 131u + (std::uint32_t) engine.song.currentScene.load();
     if (hash != lastHash)
     {
