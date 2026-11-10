@@ -1110,6 +1110,72 @@ static void testWavetable()
     check (Presets::factorySounds (Track::wavetable).size() >= 8, "wavetable: has factory sounds");
 }
 
+// The FM synth: every layout plays cleanly, notes fade out, and its settings survive saving.
+static void testFm()
+{
+    std::cout << "FM\n";
+    AudioEngine e;
+    e.prepareToPlay (256, 48000.0);
+    e.selectedTrack.store (0);
+    e.track (0).type.store (Track::fm);
+    auto& fp = e.track (0).fmParams;
+    fp.brightness.store (1.0f);
+    fp.feedback.store (1.0f);
+    fp.ratio[1].store (15.0f);
+
+    juce::AudioBuffer<float> buf (2, 256);
+    bool allSound = true, allFinite = true, allSane = true, allFade = true;
+    for (int alg = 0; alg < 8; ++alg)
+    {
+        fp.algorithm.store (alg);
+        for (int note : { 36, 60, 64, 108 })
+            e.keyboardState.noteOn (1, note, 1.0f);
+        float peak = 0.0f;
+        for (int i = 0; i < 100; ++i)
+        {
+            buf.clear();
+            e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 256));
+            peak = juce::jmax (peak, buf.getMagnitude (0, 0, 256));
+            for (int s = 0; s < 256; ++s)
+                allFinite = allFinite && std::isfinite (buf.getSample (0, s));
+        }
+        std::cout << "  info  layout " << (alg + 1) << " peak " << peak << "\n";
+        allSound = allSound && peak > 0.01f;
+        allSane = allSane && peak < 1.5f;
+
+        for (int note : { 36, 60, 64, 108 })
+            e.keyboardState.noteOff (1, note, 0.0f);
+        for (int i = 0; i < 1200; ++i)
+        {
+            buf.clear();
+            e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 256));
+        }
+        allFade = allFade && e.track (0).level.load() < 1.0e-4f;
+    }
+    check (allSound && allFinite, "fm: every layout makes sound, with no NaN");
+    check (allSane, "fm: full brightness and feedback stays at a sane level");
+    check (allFade, "fm: notes fade out after release");
+
+    fp.algorithm.store (5);
+    fp.ratio[2].store (7.0f);
+    const auto v = Presets::soundToVar (e.track (0));
+    e.track (2).type.store (Track::sampler);
+    Presets::applySoundVar (e.track (2), v);
+    check (e.track (2).type.load() == Track::fm && e.track (2).fmParams.algorithm.load() == 5
+           && std::abs (e.track (2).fmParams.ratio[2].load() - 7.0f) < 0.001f,
+           "fm: its sound carries over to another track");
+
+    juce::String err;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    juce::TemporaryFile project (Project::fileExtension);
+    AudioEngine e2;
+    check (Project::save (e, project.getFile(), err) && Project::open (e2, project.getFile(), formats, err)
+           && e2.track (0).type.load() == Track::fm && e2.track (0).fmParams.algorithm.load() == 5,
+           "fm: a project keeps the FM track and its settings");
+    check (Presets::factorySounds (Track::fm).size() >= 8, "fm: has factory sounds");
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI init; // needed by some JUCE singletons
@@ -1134,6 +1200,7 @@ int main (int argc, char* argv[])
     testDrumPads();
     testDrumModels();
     testWavetable();
+    testFm();
     testRender (argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]) : juce::File());
 
     std::cout << (failures == 0 ? "All tests passed\n" : juce::String (failures) + " test(s) failed\n");
