@@ -6,6 +6,7 @@
 #include "WavetableSynth.h"
 #include "FmSynth.h"
 #include "ExternalMidi.h"
+#include "Effects.h"
 #include "DrumKit.h"
 #include "Sampler.h"
 #include "Mixer.h"
@@ -74,6 +75,7 @@ struct Track
     DrumKit kit;
     Sampler samplerEngine;
     ChannelSettings mix;
+    std::array<InsertSettings, 2> inserts;   // two effect slots, after the sound
 
     /** The sampler's original file, kept so projects can save it (message thread). */
     juce::String sampleFileName;
@@ -90,6 +92,7 @@ struct Track
     juce::Synthesiser fmSynth;
     juce::SmoothedValue<float> gain;
     ChannelStrip strip;
+    std::array<InsertProcessor, 2> insertFx;
 };
 
 } // namespace bizgroove
