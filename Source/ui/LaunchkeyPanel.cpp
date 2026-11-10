@@ -299,6 +299,12 @@ LaunchkeyPanel::LaunchkeyPanel (AudioEngine& e, const ControlTargets& t)
     padsModeButton.onClick = [this] { targets.applyButton ("pads.mode", true); };
     addAndMakeVisible (padsModeButton);
 
+    styleHardwareButton (holdButton, "Hold: notes keep sounding after you let go of the keys, for long, evolving sounds. "
+                                     "Play again once every key is up for a new held chord; switch Hold off to let them go. "
+                                     "A controller button can do this too (Hold notes on / off).", true);
+    holdButton.onClick = [this] { targets.applyButton ("perform.hold", true); };
+    addAndMakeVisible (holdButton);
+
     // 25 keys, like the Launchkey Mini.
     keyboard.setAvailableRange (lowestKey, lowestKey + 24);
     keyboard.setOctaveForMiddleC (4);
@@ -760,6 +766,12 @@ void LaunchkeyPanel::timerCallback()
     const auto padsText = engine.padsPlay.load() ? juce::String ("Pads: play") : juce::String ("Pads: steps");
     if (padsModeButton.getButtonText() != padsText)
         padsModeButton.setButtonText (padsText);
+    if (holdButton.getToggleState() != engine.hold.load())
+    {
+        holdButton.setToggleState (engine.hold.load(), juce::dontSendNotification);
+        holdButton.setColour (juce::TextButton::buttonColourId, engine.hold.load() ? Colours::accent : buttonOff);
+        holdButton.setColour (juce::TextButton::textColourOffId, engine.hold.load() ? juce::Colours::black : Colours::text);
+    }
     const auto sourceText = engine.selected().type.load() == Track::external
                                 ? juce::String (engine.selected().ext.monitor.load() ? "Hear input: on" : "Hear input: off")
                                 : (engine.recorder.source.load() == SampleRecorder::input ? juce::String ("Rec: mic / line in")
@@ -828,6 +840,7 @@ void LaunchkeyPanel::resized()
     auto left = controls.removeFromLeft (86);
     shiftButton.setBounds (left.getX(), controls.getY() + 30, left.getWidth(), 34);
     padsModeButton.setBounds (left.getX(), controls.getY() + 74, left.getWidth(), 30);
+    holdButton.setBounds (left.getX(), controls.getY() + 112, left.getWidth(), 30);
     transposeButton.setBounds (left.getX(), padTop + rowH / 2 - 17, left.getWidth(), 34);
     octaveLabelArea = { left.getX(), padTop + rowH + 10, left.getWidth(), 16 };
     octaveDown.setBounds (left.getX(), padTop + rowH + 28, left.getWidth() / 2 - 3, rowH - 28);
