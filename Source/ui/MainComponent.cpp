@@ -68,8 +68,8 @@ MainComponent::MainComponent()
     addAndMakeVisible (soundsButton);
 
     // Only the on-screen keyboard takes key focus, so A-K always play notes.
-    for (auto* b : { &fileButton, &playButton, &panelViewButton, &songViewButton, &mixerViewButton, &stemViewButton,
-                     &settingsButton, &controllersButton, &soundsButton })
+    for (auto* b : { &fileButton, &playButton, &panelViewButton, &patternViewButton, &songViewButton, &mixerViewButton, &stemViewButton,
+                     &settingsButton, &controllersButton, &soundsButton, &setupButton, &metronomeButton })
         b->setWantsKeyboardFocus (false);
     tempoSlider.setWantsKeyboardFocus (false);
 
@@ -96,7 +96,7 @@ MainComponent::MainComponent()
     addAndMakeVisible (tempoSlider);
 
     // The master volume: the whole mix. A controller knob can turn it too (Master volume).
-    volumeLabel.setText ("Volume", juce::dontSendNotification);
+    volumeLabel.setText ("Vol", juce::dontSendNotification);
     volumeLabel.setColour (juce::Label::textColourId, Colours::textDim);
     volumeLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (volumeLabel);
@@ -115,7 +115,7 @@ MainComponent::MainComponent()
     fileButton.onClick = [this] { showFileMenu(); };
     addAndMakeVisible (fileButton);
 
-    for (auto* b : { &panelViewButton, &songViewButton, &mixerViewButton, &stemViewButton })
+    for (auto* b : { &panelViewButton, &patternViewButton, &songViewButton, &mixerViewButton, &stemViewButton })
     {
         b->setClickingTogglesState (true);
         b->setRadioGroupId (1);
@@ -125,18 +125,21 @@ MainComponent::MainComponent()
     stemViewButton.setTooltip ("Four looping audio stems, for playing live with the Kontrol F1");
     songViewButton.setTooltip ("Arrange scenes into a song");
     panelViewButton.onClick = [this] { showView (View::panel); };
+    patternViewButton.setTooltip ("The whole pattern of the selected track, with the step playing running across it: watch what you record land");
+    patternViewButton.onClick = [this] { showView (View::pattern); };
     songViewButton.onClick = [this] { showView (View::song); };
     mixerViewButton.setTooltip ("Volume, pan, tone and effects for every track");
     mixerViewButton.onClick = [this] { showView (View::mixer); };
     stemViewButton.onClick = [this] { showView (View::stems); };
 
-    settingsButton.setTooltip ("Sound card, sample rate and which MIDI devices are on");
-    settingsButton.onClick = [this] { showAudioSettings(); };
-    addAndMakeVisible (settingsButton);
+    // Audio / MIDI and Controllers share one Setup menu, to leave room in the top bar.
+    setupButton.setTooltip ("Audio / MIDI: the sound card and MIDI devices. Controllers: what each knob, pad and button on your controller does.");
+    setupButton.onClick = [this] { showSetupMenu(); };
+    addAndMakeVisible (setupButton);
 
-    controllersButton.setTooltip ("Choose and customise what each knob, pad and button on your controller does");
-    controllersButton.onClick = [this] { showControllers(); };
-    addAndMakeVisible (controllersButton);
+    metronomeButton.setTooltip ("The metronome: on, off, or only while recording; the count-in before recording; how loud it is");
+    metronomeButton.onClick = [this] { showMetronomeMenu(); };
+    addAndMakeVisible (metronomeButton);
 
     midiStatus.setColour (juce::Label::textColourId, Colours::textDim);
     midiStatus.setFont (juce::FontOptions (12.0f));
@@ -146,6 +149,7 @@ MainComponent::MainComponent()
     addAndMakeVisible (panel);
     addChildComponent (stemPanel);
     addChildComponent (songView);
+    addChildComponent (patternView);
     addChildComponent (mixerView);
     addAndMakeVisible (sessionBar);
     panelViewButton.setToggleState (true, juce::dontSendNotification);
@@ -226,7 +230,8 @@ bool MainComponent::ensureAudioInput()
 void MainComponent::handleRecorder()
 {
     auto& rec = engine.recorder;
-    const bool pressed = rec.toggleRequested.exchange (false);
+    const bool padPressed = engine.recordPadRequested.exchange (false);   // "Record onto this pad" in the Pad menu
+    const bool pressed = rec.toggleRequested.exchange (false) || padPressed;
     const bool full = rec.hasStoppedItself();
     if (! pressed && ! full)
         return;
@@ -234,9 +239,10 @@ void MainComponent::handleRecorder()
     const int t = engine.selectedTrack.load();
 
     // Recording notes: Record again stops it (so does Stop).
-    if (pressed && engine.recordNotes.load())
+    if (pressed && engine.recordNotes.load() && ! padPressed)
     {
         engine.recordNotes.store (false);
+        engine.cancelCountIn();
         return;
     }
 
@@ -246,15 +252,17 @@ void MainComponent::handleRecorder()
         const int type = engine.track (t).type.load();
         const bool playing = engine.transport.playing.load();
 
-        // What you play goes into the steps: on any track but a Sampler, and on a Drums
-        // track while the song plays (stopped, a Drums track records a sound onto its pad).
-        if (type != Track::sampler && ! (type == Track::drums && ! playing))
+        // What you play goes into the steps, on any track but a Sampler. From a stop,
+        // the metronome counts in first. (A sound onto a drum pad: the Pad menu.)
+        if (type != Track::sampler && ! padPressed)
         {
             engine.recordNotes.store (true);
             if (! playing)
-                engine.transport.playing.store (true);
+                engine.startWithCountIn();
             return;
         }
+        if (padPressed && type != Track::drums)
+            return;
         if (rec.source.load() == SampleRecorder::input && ! ensureAudioInput())
             return;
         recordingTrack = t;
@@ -526,10 +534,50 @@ void MainComponent::showView (View view)
 {
     panel.setVisible (view == View::panel);
     songView.setVisible (view == View::song);
+    patternView.setVisible (view == View::pattern);
     mixerView.setVisible (view == View::mixer);
     stemPanel.setVisible (view == View::stems);
     sessionBar.setVisible (view == View::panel || view == View::song);
     resized();
+}
+
+void MainComponent::showSetupMenu()
+{
+    juce::PopupMenu m;
+    m.addItem (1, "Audio / MIDI...");
+    m.addItem (2, "Controllers...");
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&setupButton), [this] (int result) {
+        if (result == 1) showAudioSettings();
+        if (result == 2) showControllers();
+    });
+}
+
+void MainComponent::showMetronomeMenu()
+{
+    const int mode = engine.metronomeMode.load();
+    const int bars = engine.countInBars.load();
+    const float level = engine.metronomeLevel.load();
+    juce::PopupMenu m;
+    m.addSectionHeader ("Metronome");
+    m.addItem (1, "Off", true, mode == AudioEngine::metronomeOff);
+    m.addItem (2, "On", true, mode == AudioEngine::metronomeOn);
+    m.addItem (3, "Only while recording", true, mode == AudioEngine::metronomeWhileRecording);
+    m.addSectionHeader ("Count-in before recording from a stop");
+    m.addItem (10, "None", true, bars == 0);
+    m.addItem (11, "1 bar", true, bars == 1);
+    m.addItem (12, "2 bars", true, bars == 2);
+    m.addSectionHeader ("Level");
+    m.addItem (20, "Soft", true, level < 0.35f);
+    m.addItem (21, "Medium", true, level >= 0.35f && level < 0.75f);
+    m.addItem (22, "Loud", true, level >= 0.75f);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&metronomeButton), [this] (int result) {
+        if (result >= 1 && result <= 3) engine.metronomeMode.store (result == 1 ? AudioEngine::metronomeOff
+                                                                  : (result == 2 ? AudioEngine::metronomeOn : AudioEngine::metronomeWhileRecording));
+        if (result >= 10 && result <= 12) engine.countInBars.store (result - 10);
+        if (result == 20) engine.metronomeLevel.store (0.25f);
+        if (result == 21) engine.metronomeLevel.store (0.5f);
+        if (result == 22) engine.metronomeLevel.store (1.0f);
+    });
 }
 
 void MainComponent::enableAllMidiInputs()
@@ -917,6 +965,14 @@ void MainComponent::timerCallback()
     if (panel.isVisible() && isShowing() && juce::Component::getCurrentlyFocusedComponent() == nullptr)
         panel.getKeyboard().grabKeyboardFocus();
 
+    // The metronome button says what the metronome does.
+    if (const int mode = engine.metronomeMode.load(); mode != shownMetronome)
+    {
+        shownMetronome = mode;
+        metronomeButton.setButtonText (mode == AudioEngine::metronomeOn ? "Click on"
+                                       : (mode == AudioEngine::metronomeWhileRecording ? "Click rec" : "Click off"));
+    }
+
     // The Sound menu shows the selected track's sound.
     {
         const int t = engine.selectedTrack.load();
@@ -1015,35 +1071,49 @@ void MainComponent::resized()
 
     // Top bar
     auto top = r.removeFromTop (40);
+
+    // Everything must fit from the narrowest window up: the name and the track label
+    // make way when there is no room for them.
+    constexpr int fixedWidth = 58 + 10 + 104 + 6 + 104 + 12 + 66 + 8 + 116 + 6 + 32 + 36 + 6 + 62     // left
+                             + 14 + 10 + 74 + 12 + 62 + 4 + 60 + 4 + 56 + 4 + 70 + 4 + 106;           // right
+    const bool showLabel = top.getWidth() >= fixedWidth + 62;
+    const bool showTitle = top.getWidth() >= fixedWidth + 62 + 96;
+
     fileButton.setBounds (top.removeFromLeft (58).reduced (0, 4));
     top.removeFromLeft (10);
-    title.setBounds (top.removeFromLeft (96));
-    soundLabel.setBounds (top.removeFromLeft (62));
-    soundMenu.setBounds (top.removeFromLeft (110).reduced (0, 6));
+    title.setVisible (showTitle);
+    title.setBounds (showTitle ? top.removeFromLeft (96) : juce::Rectangle<int>());
+    soundLabel.setVisible (showLabel);
+    soundLabel.setBounds (showLabel ? top.removeFromLeft (62) : juce::Rectangle<int>());
+    soundMenu.setBounds (top.removeFromLeft (104).reduced (0, 6));
     top.removeFromLeft (6);
-    soundsButton.setBounds (top.removeFromLeft (110).reduced (0, 4));
+    soundsButton.setBounds (top.removeFromLeft (104).reduced (0, 4));
     top.removeFromLeft (12);
-    playButton.setBounds (top.removeFromLeft (70).reduced (0, 4));
-    top.removeFromLeft (10);
+    playButton.setBounds (top.removeFromLeft (66).reduced (0, 4));
+    top.removeFromLeft (8);
     tempoLabel.setBounds ({});   // room for the Sounds button; the slider shows BPM
-    tempoSlider.setBounds (top.removeFromLeft (124));
+    tempoSlider.setBounds (top.removeFromLeft (116));
     top.removeFromLeft (6);
-    volumeLabel.setBounds (top.removeFromLeft (52));
-    masterVolume.setBounds (top.removeFromLeft (40));
+    volumeLabel.setBounds (top.removeFromLeft (32));
+    masterVolume.setBounds (top.removeFromLeft (36));
+    top.removeFromLeft (6);
+    metronomeButton.setBounds (top.removeFromLeft (62).reduced (0, 4));
 
     meterArea = top.removeFromRight (14).reduced (0, 4);
     top.removeFromRight (10);
-    settingsButton.setBounds (top.removeFromRight (106).reduced (0, 4));
-    top.removeFromRight (6);
-    controllersButton.setBounds (top.removeFromRight (100).reduced (0, 4));
+    settingsButton.setVisible (false);
+    controllersButton.setVisible (false);
+    setupButton.setBounds (top.removeFromRight (74).reduced (0, 4));
     top.removeFromRight (12);
-    stemViewButton.setBounds (top.removeFromRight (92).reduced (0, 4));
+    stemViewButton.setBounds (top.removeFromRight (62).reduced (0, 4));
     top.removeFromRight (4);
-    mixerViewButton.setBounds (top.removeFromRight (64).reduced (0, 4));
+    mixerViewButton.setBounds (top.removeFromRight (60).reduced (0, 4));
     top.removeFromRight (4);
-    songViewButton.setBounds (top.removeFromRight (60).reduced (0, 4));
+    songViewButton.setBounds (top.removeFromRight (56).reduced (0, 4));
     top.removeFromRight (4);
-    panelViewButton.setBounds (top.removeFromRight (118).reduced (0, 4));
+    patternViewButton.setBounds (top.removeFromRight (70).reduced (0, 4));
+    top.removeFromRight (4);
+    panelViewButton.setBounds (top.removeFromRight (106).reduced (0, 4));
 
     // Status line at the bottom.
     midiStatus.setBounds (r.removeFromBottom (20));
@@ -1059,6 +1129,7 @@ void MainComponent::resized()
     }
     panel.setBounds (r);
     songView.setBounds (r);
+    patternView.setBounds (r);
 }
 
 } // namespace bizgroove
