@@ -5,6 +5,7 @@
 #include "PolySynth.h"
 #include "WavetableSynth.h"
 #include "FmSynth.h"
+#include "ExternalMidi.h"
 #include "DrumKit.h"
 #include "Sampler.h"
 #include "Mixer.h"
@@ -17,8 +18,8 @@ namespace bizgroove
     thread; the atomics are shared with the UI and controllers. */
 struct Track
 {
-    enum Type { testSynth = 0, drums = 1, sampler = 2, poly = 3, wavetable = 4, fm = 5 };   // index into synthLibrary()
-    static constexpr int numTypes = 6;
+    enum Type { testSynth = 0, drums = 1, sampler = 2, poly = 3, wavetable = 4, fm = 5, external = 6 };   // index into synthLibrary()
+    static constexpr int numTypes = 7;
 
     static constexpr int numSynthVoices = 16;
     static constexpr int numPolyVoices = 8;
@@ -58,6 +59,18 @@ struct Track
     PolyParams polyParams;
     WaveParams waveParams;
     FmParams fmParams;
+    ExternalParams external;
+
+    /** External MIDI tracks: the MIDI output they play, by name (kept in
+        projects) and identifier (found again on this computer). Message thread. */
+    juce::String externalDeviceName, externalDeviceId;
+
+    /** True for tracks whose steps are drum lanes: a Drums track, or an External track set to drums. */
+    bool playsDrums() const
+    {
+        const int t = type.load();
+        return t == drums || (t == external && external.drums.load());
+    }
     DrumKit kit;
     Sampler samplerEngine;
     ChannelSettings mix;
