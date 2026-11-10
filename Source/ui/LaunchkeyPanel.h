@@ -122,6 +122,8 @@ public:
 
 private:
     void chooseSample();
+    void chooseRecording();
+    void showPadMenu();
     void loadSample (const juce::File& file);
     void timerCallback() override;
     void handleNoteOn (juce::MidiKeyboardState*, int, int note, float) override;
