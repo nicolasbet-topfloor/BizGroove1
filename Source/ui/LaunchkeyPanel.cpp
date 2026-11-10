@@ -272,6 +272,12 @@ LaunchkeyPanel::LaunchkeyPanel (AudioEngine& e, const ControlTargets& t)
     styleHardwareButton (recSourceButton, "What Record captures: the sound card's input (a microphone or line in), "
                                           "or BizGroove's own sound (resampling). Click to switch.", true);
     recSourceButton.onClick = [this] {
+        if (engine.selected().type.load() == Track::external)
+        {
+            auto& ext = engine.selected().ext;
+            ext.monitor.store (! ext.monitor.load());   // hear the gear through this track, or not
+            return;
+        }
         if (! engine.recorder.isRecording())
             engine.recorder.source.store (engine.recorder.source.load() == SampleRecorder::input ? (int) SampleRecorder::output
                                                                                                 : (int) SampleRecorder::input);
@@ -361,10 +367,12 @@ void LaunchkeyPanel::showTrack()
         loadSynth (library[(size_t) type]);
 
         // A Sampler track loads and edits its recording; a Drums track puts recordings on the selected pad.
-        const bool sampler = type == Track::sampler, kit = type == Track::drums;
-        loadSampleButton.setVisible (sampler || kit);
-        editSampleButton.setVisible (sampler || kit);
-        recSourceButton.setVisible (sampler || kit);
+        const bool sampler = type == Track::sampler, kit = type == Track::drums, ext = type == Track::external;
+        loadSampleButton.setVisible (sampler || kit || ext);
+        editSampleButton.setVisible (sampler || kit || ext);
+        recSourceButton.setVisible (sampler || kit || ext);
+        recSourceButton.setTooltip (ext ? "Hear the gear's sound through this track: connect its audio output to your sound card's input. Turn it off if you hear feedback."
+                                        : "What Record captures: the sound card's input (a microphone or line in), or BizGroove's own sound (resampling). Click to switch.");
         recordButton.setEnabled (sampler || kit);
         loadSampleButton.setButtonText (kit ? "Load pad" : "Load...");
         editSampleButton.setButtonText (kit ? "Clear pad" : "Edit...");
@@ -391,6 +399,16 @@ void LaunchkeyPanel::showTrack()
         }
     }
 
+    // An External MIDI track: the output and channel it plays.
+    if (type == Track::external)
+    {
+        loadSampleButton.setButtonText (tr.externalDeviceName.isNotEmpty() ? "Out: " + tr.externalDeviceName : juce::String ("Choose MIDI out..."));
+        editSampleButton.setButtonText ("Channel " + juce::String (tr.ext.channel.load()));
+        loadSampleButton.setTooltip ("The MIDI output this track plays: the FM-1, an app on an iPhone or iPad (over USB or network MIDI), or another synth.");
+        editSampleButton.setTooltip ("The MIDI channel the gear listens on. With SLOOP on the FM-1, each of its tracks has its own channel (GLO > MIDI).");
+        shownExternal = externalState();
+    }
+
     shownTrack = t;
     shownType = type;
     shownDrum = drum;
@@ -414,12 +432,24 @@ void LaunchkeyPanel::showTrack()
             text << dot << (sample.isNotEmpty() ? sample : juce::String ("no recording loaded"));
         shownSample = sample;
     }
+    if (type == Track::external)
+    {
+        text << dot << (tr.externalDeviceName.isNotEmpty() ? tr.externalDeviceName + ", channel " + juce::String (tr.ext.channel.load())
+                                                           : juce::String ("no MIDI out chosen"));
+        if (tr.ext.monitor.load())
+            text << dot << "hearing the input";
+    }
     if (trackInfo.getText() != text)
         trackInfo.setText (text, juce::dontSendNotification);
 }
 
 void LaunchkeyPanel::chooseSample()
 {
+    if (engine.selected().type.load() == Track::external)
+    {
+        showMidiOutMenu();   // on an External track this button picks the MIDI output
+        return;
+    }
     chooser = std::make_unique<juce::FileChooser> ("Load a recording into track " + juce::String (engine.selectedTrack.load() + 1),
                                                    juce::File::getSpecialLocation (juce::File::userMusicDirectory),
                                                    formats.getWildcardForAllFormats());
@@ -446,6 +476,12 @@ void LaunchkeyPanel::loadSample (const juce::File& file)
 
 void LaunchkeyPanel::openSampleEditor()
 {
+    if (engine.selected().type.load() == Track::external)
+    {
+        showChannelMenu();   // on an External track this button picks the MIDI channel
+        return;
+    }
+
     // On a Drums track this button clears the selected pad.
     if (engine.selected().type.load() == Track::drums)
     {
@@ -503,13 +539,74 @@ void LaunchkeyPanel::shiftOctave (int octaves)
     resized();
 }
 
+juce::String LaunchkeyPanel::externalState() const
+{
+    auto& tr = engine.selected();
+    return tr.externalDeviceName + "/" + juce::String (tr.ext.channel.load()) + "/" + (tr.ext.monitor.load() ? "on" : "off");
+}
+
+void LaunchkeyPanel::showMidiOutMenu()
+{
+    const auto devices = juce::MidiOutput::getAvailableDevices();
+    const int t = engine.selectedTrack.load();
+    auto& tr = engine.track (t);
+
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Play this track on");
+    menu.addItem (1, "None", true, tr.externalDeviceName.isEmpty());
+    for (int i = 0; i < devices.size(); ++i)
+        menu.addItem (i + 2, devices[i].name, true, devices[i].name == tr.externalDeviceName);
+    if (devices.isEmpty())
+        menu.addItem (-1, "No MIDI outputs found: connect the gear by USB, or turn on network MIDI", false, false);
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&loadSampleButton),
+                        [this, t, devices] (int result) {
+                            if (result <= 0)
+                                return;
+                            auto& track = engine.track (t);
+                            track.ext.panic.store (true);   // the old device stops its notes
+                            if (result == 1)
+                            {
+                                track.externalDeviceName = {};
+                                track.externalDeviceId = {};
+                            }
+                            else if (juce::isPositiveAndBelow (result - 2, devices.size()))
+                            {
+                                track.externalDeviceName = devices[result - 2].name;
+                                track.externalDeviceId = devices[result - 2].identifier;
+                            }
+                            showTrack();
+                        });
+}
+
+void LaunchkeyPanel::showChannelMenu()
+{
+    const int t = engine.selectedTrack.load();
+    const int current = engine.track (t).ext.channel.load();
+
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("MIDI channel");
+    for (int c = 1; c <= 16; ++c)
+        menu.addItem (c, "Channel " + juce::String (c) + (c == 10 ? "  (drums on most gear)" : ""), true, c == current);
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&editSampleButton),
+                        [this, t] (int result) {
+                            if (result >= 1 && result <= 16)
+                            {
+                                engine.track (t).ext.channel.store (result);
+                                showTrack();
+                            }
+                        });
+}
+
 void LaunchkeyPanel::timerCallback()
 {
     {
         auto& tr = engine.selected();
         if (engine.selectedTrack.load() != shownTrack || tr.type.load() != shownType || tr.selectedDrum.load() != shownDrum
             || (tr.type.load() == Track::sampler && tr.samplerEngine.getSampleName() != shownSample)
-            || (tr.type.load() == Track::drums && tr.kit.getPadSampleName (tr.selectedDrum.load()) != shownSample))
+            || (tr.type.load() == Track::drums && tr.kit.getPadSampleName (tr.selectedDrum.load()) != shownSample)
+            || (tr.type.load() == Track::external && externalState() != shownExternal))
             showTrack();
     }
 
@@ -523,8 +620,10 @@ void LaunchkeyPanel::timerCallback()
     const auto padsText = engine.padsPlay.load() ? juce::String ("Pads: play") : juce::String ("Pads: steps");
     if (padsModeButton.getButtonText() != padsText)
         padsModeButton.setButtonText (padsText);
-    const auto sourceText = engine.recorder.source.load() == SampleRecorder::input ? juce::String ("Rec: mic / line in")
-                                                                                   : juce::String ("Rec: BizGroove");
+    const auto sourceText = engine.selected().type.load() == Track::external
+                                ? juce::String (engine.selected().ext.monitor.load() ? "Hear input: on" : "Hear input: off")
+                                : (engine.recorder.source.load() == SampleRecorder::input ? juce::String ("Rec: mic / line in")
+                                                                                          : juce::String ("Rec: BizGroove"));
     if (recSourceButton.getButtonText() != sourceText)
         recSourceButton.setButtonText (sourceText);
 
