@@ -52,6 +52,9 @@ private:
     void enableAllMidiInputs();
     void saveDeviceState();
     void updateClockOutputs();
+    void updateExternalOutputs();
+    int externalTicks = 0;
+    bool externalInputAsked = false;
 
     // Recording into the Sampler
     void handleRecorder();
