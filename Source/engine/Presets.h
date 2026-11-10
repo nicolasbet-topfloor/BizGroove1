@@ -56,6 +56,14 @@ namespace Presets
     bool load (AudioEngine& engine, int trackIndex, const juce::File& file,
                juce::AudioFormatManager& formats, juce::String& error);
 
+    /** Puts one drum of another kit on the same drum of a Drums track (the
+        snare of one kit on your kit's snare, say): its settings, and its pad
+        recording if it has one; otherwise the pad plays its synthesised drum.
+        copyDrum takes a factory kit's sound; copyDrumFromFile a saved kit. */
+    void copyDrum (AudioEngine& engine, int trackIndex, int drum, const juce::var& kitSound);
+    bool copyDrumFromFile (AudioEngine& engine, int trackIndex, int drum, const juce::File& file,
+                           juce::AudioFormatManager& formats, juce::String& error);
+
     /** The file for a sound called `name` in the instrument's folder. Unless
         `allowExisting`, adds " 2", " 3"... when the name is taken. */
     juce::File fileForName (int type, const juce::String& name, bool allowExisting);
