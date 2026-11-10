@@ -271,8 +271,9 @@ LaunchkeyPanel::LaunchkeyPanel (AudioEngine& e, const ControlTargets& t)
     addAndMakeVisible (playButton);
 
     recordButton.setWantsKeyboardFocus (false);
-    recordButton.setTooltip ("Record into the Sampler of the selected track: press to start, press again to stop. "
-                             "The Launchkey's Record button does the same.");
+    recordButton.setTooltip ("Record. On a synth or Drums track while playing: what you play on the keys or pads goes into the steps, "
+                             "quantised to the nearest 1/16 (press again, or Stop, to finish). On a Sampler, or a stopped Drums track: "
+                             "records a sound. The Launchkey's Record button does the same.");
     recordButton.onClick = [this] { engine.recorder.toggleRequested.store (true); };
     addAndMakeVisible (recordButton);
 
@@ -380,7 +381,7 @@ void LaunchkeyPanel::showTrack()
         recSourceButton.setVisible (sampler || kit || ext);
         recSourceButton.setTooltip (ext ? "Hear the gear's sound through this track: connect its audio output to your sound card's input. Turn it off if you hear feedback."
                                         : "What Record captures: the sound card's input (a microphone or line in), or BizGroove's own sound (resampling). Click to switch.");
-        recordButton.setEnabled (sampler || kit);
+        recordButton.setEnabled (true);
         loadSampleButton.setButtonText (kit ? "Load pad" : "Load...");
         editSampleButton.setButtonText (kit ? "Clear pad" : "Edit...");
         loadSampleButton.setTooltip (kit ? "Put a recording on the selected pad (WAV, AIFF, FLAC or OGG). You can also drop a file onto the panel."
@@ -439,6 +440,8 @@ void LaunchkeyPanel::showTrack()
             text << dot << (sample.isNotEmpty() ? sample : juce::String ("no recording loaded"));
         shownSample = sample;
     }
+    if (engine.recordNotes.load())
+        text << dot << "RECORDING NOTES (onto the nearest 1/16)";
     if (type == Track::external)
     {
         text << dot << (tr.externalDeviceName.isNotEmpty() ? tr.externalDeviceName + ", channel " + juce::String (tr.ext.channel.load())
@@ -618,7 +621,7 @@ void LaunchkeyPanel::timerCallback()
     }
 
     // Recording: the time runs in the track line. And the pads and record-source buttons.
-    const bool recording = engine.recorder.isRecording();
+    const bool recording = engine.recorder.isRecording() || engine.recordNotes.load();
     if (recording || recording != shownRecording)
     {
         shownRecording = recording;
