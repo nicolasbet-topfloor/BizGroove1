@@ -7,6 +7,7 @@
 #include "engine/MidiRouter.h"
 #include "engine/Project.h"
 #include "engine/Presets.h"
+#include "engine/SynthLibrary.h"
 #include "engine/SampleTools.h"
 #include <iostream>
 #include <vector>
@@ -1437,6 +1438,33 @@ static void testPerform()
     check (back > 0.5f * playing, "perform: letting go brings the music back");
 }
 
+// While the More window is open, the controller's panel knobs turn its row instead of the main knobs.
+static void testKnobPage()
+{
+    std::cout << "More window knobs\n";
+    AudioEngine e;
+    e.prepareToPlay (256, 48000.0);
+    ControlTargets targets (e);
+    e.selectedTrack.store (0);
+    e.track (0).type.store (Track::poly);
+    const auto& def = synthLibrary()[(size_t) Track::poly];
+    check (! def.more.empty(), "knob page: the poly synth has More settings");
+    if (def.more.empty())
+        return;
+
+    const auto mainId = def.knobs[0].target, moreId = def.more[0].target;
+    targets.applyValue ("panel.knob.1", 0.7f);
+    const float moreBefore = targets.getValue (moreId);
+    check (std::abs (targets.getValue (mainId) - 0.7f) < 0.03f, "knob page: knob 1 turns the first main knob");
+
+    e.knobPage.store (1);
+    const float target = moreBefore > 0.5f ? 0.2f : 0.8f;
+    targets.applyValue ("panel.knob.1", target);
+    check (std::abs (targets.getValue (moreId) - target) < 0.03f && std::abs (targets.getValue (mainId) - 0.7f) < 0.03f,
+           "knob page: with More open, knob 1 turns the first More setting and leaves the main knob");
+    e.knobPage.store (0);
+}
+
 // Levels: how loud each factory sound plays the same notes, to even them out. Information only.
 static void testLevels()
 {
@@ -1622,6 +1650,7 @@ int main (int argc, char* argv[])
     testPerform();
     testLiveRecord();
     testCopyDrum();
+    testKnobPage();
     testLevels();
     testRender (argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]) : juce::File());
 
