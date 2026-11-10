@@ -158,6 +158,61 @@ ControlTargets::ControlTargets (AudioEngine& e)
     add ("poly.noise", "Poly noise", "Poly", TargetKind::continuous,
          [pp] (float v) { pp().noise.store (v); }, [pp] { return pp().noise.load(); }, offOrPercent);
 
+    // ---- Wavetable track: the selected track's Wavetable settings
+    auto wp = [&e]() -> WaveParams& { return e.selected().waveParams; };
+    add ("wave.table", "Wavetable wave set", "Wavetable", TargetKind::continuous,
+         [wp] (float v) { wp().table.store (juce::jlimit (0, Wavetables::numTables - 1, (int) (v * (Wavetables::numTables - 0.001f)))); },
+         [wp] { return (float) wp().table.load() / (float) (Wavetables::numTables - 1); },
+         [] (float v) { return Wavetables::tableName (juce::jlimit (0, Wavetables::numTables - 1, (int) (v * (Wavetables::numTables - 0.001f)))); });
+    add ("wave.position", "Wavetable position", "Wavetable", TargetKind::continuous,
+         [wp] (float v) { wp().position.store (v); }, [wp] { return wp().position.load(); }, percent);
+    add ("wave.sweep", "Wavetable sweep", "Wavetable", TargetKind::continuous,
+         [wp] (float v) { wp().sweep.store (v); }, [wp] { return wp().sweep.load(); }, offOrPercent);
+    add ("wave.cutoff", "Wavetable brightness", "Wavetable", TargetKind::continuous,
+         [wp] (float v) { wp().cutoffHz.store (expMap (v, 40.0f, 18000.0f)); },
+         [wp] { return expInv (wp().cutoffHz.load(), 40.0f, 18000.0f); }, percent);
+    add ("wave.resonance", "Wavetable edge", "Wavetable", TargetKind::continuous,
+         [wp] (float v) { wp().resonance.store (v); }, [wp] { return wp().resonance.load(); }, percent);
+    add ("wave.envamount", "Wavetable wah", "Wavetable", TargetKind::continuous,
+         [wp] (float v) { wp().envAmount.store (v); }, [wp] { return wp().envAmount.load(); }, offOrPercent);
+    add ("wave.detune", "Wavetable thickness", "Wavetable", TargetKind::continuous,
+         [wp] (float v) { wp().detuneCents.store (linMap (v, 0.0f, 40.0f)); },
+         [wp] { return linInv (wp().detuneCents.load(), 0.0f, 40.0f); }, offOrPercent);
+    add ("wave.attack", "Wavetable fade in", "Wavetable", TargetKind::continuous,
+         [wp] (float v) { wp().attack.store (expMap (v, 0.001f, 4.0f)); },
+         [wp] { return expInv (wp().attack.load(), 0.001f, 4.0f); },
+         [] (float v) { return seconds (expMap (v, 0.001f, 4.0f)); });
+    add ("wave.decay", "Wavetable punch", "Wavetable", TargetKind::continuous,
+         [wp] (float v) { wp().decay.store (expMap (v, 0.01f, 6.0f)); },
+         [wp] { return expInv (wp().decay.load(), 0.01f, 6.0f); },
+         [] (float v) { return seconds (expMap (v, 0.01f, 6.0f)); });
+    add ("wave.sustain", "Wavetable hold level", "Wavetable", TargetKind::continuous,
+         [wp] (float v) { wp().sustain.store (v); }, [wp] { return wp().sustain.load(); }, percent);
+    add ("wave.release", "Wavetable fade out", "Wavetable", TargetKind::continuous,
+         [wp] (float v) { wp().release.store (expMap (v, 0.01f, 8.0f)); },
+         [wp] { return expInv (wp().release.load(), 0.01f, 8.0f); },
+         [] (float v) { return seconds (expMap (v, 0.01f, 8.0f)); });
+    add ("wave.unison", "Wavetable stack", "Wavetable", TargetKind::continuous,
+         [wp] (float v) { wp().unison.store (1 + juce::jlimit (0, 3, (int) (v * 3.999f))); },
+         [wp] { return (wp().unison.load() - 1) / 3.0f; },
+         [] (float v) { const int n = 1 + juce::jlimit (0, 3, (int) (v * 3.999f)); return n == 1 ? juce::String ("Off") : juce::String (n) + " stacked"; });
+    add ("wave.sub", "Wavetable sub", "Wavetable", TargetKind::continuous,
+         [wp] (float v) { wp().sub.store (v); }, [wp] { return wp().sub.load(); }, offOrPercent);
+    add ("wave.glide", "Wavetable glide", "Wavetable", TargetKind::continuous,
+         [wp] (float v) { wp().glide.store (v < 0.01f ? 0.0f : expMap (v, 0.005f, 2.0f)); },
+         [wp] { return wp().glide.load() <= 0.001f ? 0.0f : expInv (wp().glide.load(), 0.005f, 2.0f); },
+         [] (float v) { return v < 0.01f ? juce::String ("Off") : seconds (expMap (v, 0.005f, 2.0f)); });
+    add ("wave.lforate", "Wavetable wobble speed", "Wavetable", TargetKind::continuous,
+         [wp] (float v) { wp().lfoRate.store (expMap (v, 0.05f, 20.0f)); },
+         [wp] { return expInv (wp().lfoRate.load(), 0.05f, 20.0f); },
+         [] (float v) { return juce::String (expMap (v, 0.05f, 20.0f), 2) + " per second"; });
+    add ("wave.lfoposition", "Wavetable wobble on position", "Wavetable", TargetKind::continuous,
+         [wp] (float v) { wp().lfoPosition.store (v); }, [wp] { return wp().lfoPosition.load(); }, offOrPercent);
+    add ("wave.lfofilter", "Wavetable wobble on brightness", "Wavetable", TargetKind::continuous,
+         [wp] (float v) { wp().lfoFilter.store (v); }, [wp] { return wp().lfoFilter.load(); }, offOrPercent);
+    add ("wave.noise", "Wavetable noise", "Wavetable", TargetKind::continuous,
+         [wp] (float v) { wp().noise.store (v); }, [wp] { return wp().noise.load(); }, offOrPercent);
+
     // ---- Tracks
     add ("track.volume", "Track volume (selected track)", "Tracks", TargetKind::continuous,
          [&e] (float v) { e.selected().volume.store (v); },
