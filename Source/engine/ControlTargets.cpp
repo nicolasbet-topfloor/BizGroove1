@@ -310,6 +310,27 @@ ControlTargets::ControlTargets (AudioEngine& e)
          [xp] { return ((float) xp().inputPair.load() + 0.5f) / 4.0f; },
          [] (float v) { const int p = juce::jlimit (0, 3, (int) (v * 3.999f)); return "Inputs " + juce::String (2 * p + 1) + "-" + juce::String (2 * p + 2); });
 
+    // ---- Insert effects: the selected track's two slots
+    for (int slot = 0; slot < 2; ++slot)
+    {
+        const auto n = juce::String (slot + 1);
+        const auto sl = (size_t) slot;
+        auto ins = [&e, sl]() -> InsertSettings& { return e.selected().inserts[sl]; };
+        auto typeOf = [] (float v) { return juce::jlimit (0, InsertEffects::numTypes - 1, (int) (v * ((float) InsertEffects::numTypes - 0.001f))); };
+        add ("fx" + n + ".type", "Effect " + n, "Effects", TargetKind::continuous,
+             [ins, typeOf] (float v) { ins().choose (typeOf (v)); },
+             [ins] { return ((float) ins().type.load() + 0.5f) / (float) InsertEffects::numTypes; },
+             [typeOf] (float v) { return InsertEffects::name (typeOf (v)); });
+        for (int knob = 0; knob < 4; ++knob)
+        {
+            const auto kk = (size_t) knob;
+            add ("fx" + n + ".k" + juce::String (knob + 1), "Effect " + n + " knob " + juce::String (knob + 1), "Effects", TargetKind::continuous,
+                 [ins, kk] (float v) { ins().knob[kk].store (v); },
+                 [ins, kk] { return ins().knob[kk].load(); },
+                 [ins, knob] (float v) { return InsertEffects::describe (ins().type.load(), knob, v); });
+        }
+    }
+
     // ---- Tracks
     add ("track.volume", "Track volume (selected track)", "Tracks", TargetKind::continuous,
          [&e] (float v) { e.selected().volume.store (v); },
