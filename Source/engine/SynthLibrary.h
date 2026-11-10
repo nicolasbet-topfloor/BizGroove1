@@ -179,6 +179,37 @@ inline const std::vector<SynthDefinition>& synthLibrary()
                 { "Wobble on brightness",    "fm.lfobrightness","How much the wobble moves the brightness." },
                 { "Volume",                  "track.volume",    "How loud this track is." }
             }
+        },
+        {
+            "external",
+            "External MIDI",
+            "Plays gear outside BizGroove over MIDI: the M-VAVE FM-1, an app on an iPhone or iPad, or another synth. The steps and keys play it, the knobs send its standard sound controls, and its sound can come back through your sound card's input into the mixer.",
+            { {
+                { "Brightness", "ext.cc1", "Sends CC 74, the filter or brightness on most gear (and on the FM-1 with SLOOP)." },
+                { "Edge",       "ext.cc2", "Sends CC 71, the filter's resonance." },
+                { "Fade in",    "ext.cc3", "Sends CC 73, the attack." },
+                { "Punch",      "ext.cc4", "Sends CC 75, the decay." },
+                { "Fade out",   "ext.cc5", "Sends CC 72, the release." },
+                { "Glide",      "ext.cc6", "Sends CC 5, the glide (portamento) time." },
+                { "Reverb",     "ext.cc7", "Sends CC 91, the reverb send." },
+                { "Delay",      "ext.cc8", "Sends CC 94, the delay send (on the FM-1 with SLOOP; CC 94 is a general effect send elsewhere)." }
+            } },
+            {
+                { "Program",                "ext.program",   "Sends a program change: picks a sound on the gear." },
+                { "Channel",                "ext.channel",   "The MIDI channel the gear listens on." },
+                { "Drum steps",             "ext.drums",     "On: the steps and pads play drum notes (C1 to D#2), as on a Drums track. For the FM-1's drum track or a drum machine." },
+                { "Hear input",             "ext.monitor",   "Plays your sound card's input through this track, so the gear's sound goes through the mixer. Turn off if you hear feedback." },
+                { "Inputs",                 "ext.inputpair", "Which pair of sound card inputs the gear is connected to." },
+                { "Knob 1 CC",           "ext.ccnum1",     "Which CC number knob 1 sends, if your gear uses a different one." },
+                { "Knob 2 CC",           "ext.ccnum2",     "Which CC number knob 2 sends, if your gear uses a different one." },
+                { "Knob 3 CC",           "ext.ccnum3",     "Which CC number knob 3 sends, if your gear uses a different one." },
+                { "Knob 4 CC",           "ext.ccnum4",     "Which CC number knob 4 sends, if your gear uses a different one." },
+                { "Knob 5 CC",           "ext.ccnum5",     "Which CC number knob 5 sends, if your gear uses a different one." },
+                { "Knob 6 CC",           "ext.ccnum6",     "Which CC number knob 6 sends, if your gear uses a different one." },
+                { "Knob 7 CC",           "ext.ccnum7",     "Which CC number knob 7 sends, if your gear uses a different one." },
+                { "Knob 8 CC",           "ext.ccnum8",     "Which CC number knob 8 sends, if your gear uses a different one." },
+                { "Volume",                 "track.volume",  "How loud the gear's sound is in the mix (when Hear input is on)." }
+            }
         }
     };
     return library;
