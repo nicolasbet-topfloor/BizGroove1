@@ -3,6 +3,7 @@
 #include "engine/Project.h"
 #include "engine/Presets.h"
 #include "EffectsPanel.h"
+#include "ArpPanel.h"
 
 namespace bizgroove
 {
@@ -261,7 +262,11 @@ LaunchkeyPanel::LaunchkeyPanel (AudioEngine& e, const ControlTargets& t)
     addAndMakeVisible (launchButton);
     addAndMakeVisible (stopSoloMuteButton);
 
-    styleHardwareButton (arpButton, "On the Launchkey, Arp plays held notes one after another. " + onDevice, false);
+    styleHardwareButton (arpButton, "BizGroove's arpeggiator: plays the notes you hold one after another, in time with the song. "
+                                    "Click to switch it on and choose how it plays. (The Launchkey has its own arp too.)", true);
+    arpButton.onClick = [this] {
+        juce::CallOutBox::launchAsynchronously (std::make_unique<ArpPanel> (engine, targets), arpButton.getBounds(), this);
+    };
     styleHardwareButton (fixedChordButton, "On the Launchkey, Fixed Chord plays a stored chord from one key. " + onDevice, false);
     addAndMakeVisible (arpButton);
     addAndMakeVisible (fixedChordButton);
@@ -766,6 +771,12 @@ void LaunchkeyPanel::timerCallback()
     const auto padsText = engine.padsPlay.load() ? juce::String ("Pads: play") : juce::String ("Pads: steps");
     if (padsModeButton.getButtonText() != padsText)
         padsModeButton.setButtonText (padsText);
+    if (arpButton.getToggleState() != engine.arp.on.load())
+    {
+        arpButton.setToggleState (engine.arp.on.load(), juce::dontSendNotification);
+        arpButton.setColour (juce::TextButton::buttonColourId, engine.arp.on.load() ? Colours::accent : buttonOff);
+        arpButton.setColour (juce::TextButton::textColourOffId, engine.arp.on.load() ? juce::Colours::black : Colours::text);
+    }
     if (holdButton.getToggleState() != engine.hold.load())
     {
         holdButton.setToggleState (engine.hold.load(), juce::dontSendNotification);
