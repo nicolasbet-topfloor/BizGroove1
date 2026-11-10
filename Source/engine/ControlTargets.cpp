@@ -43,6 +43,8 @@ ControlTargets::ControlTargets (AudioEngine& e)
          [&e] (float) { e.transport.bpm.store (juce::jmin (240.0, std::round (e.transport.bpm.load()) + 1.0)); });
     add ("transport.tempodown", "Tempo -1 BPM", "Transport", TargetKind::trigger,
          [&e] (float) { e.transport.bpm.store (juce::jmax (40.0, std::round (e.transport.bpm.load()) - 1.0)); });
+    add ("perform.hold", "Hold notes on / off", "Performance", TargetKind::toggle,
+         [&e] (float) { toggle (e.hold); });
     add ("transport.metronome", "Metronome on / off", "Transport", TargetKind::toggle,
          [&e] (float) { e.metronomeMode.store (e.metronomeMode.load() == AudioEngine::metronomeOn ? AudioEngine::metronomeOff
                                                                                                   : AudioEngine::metronomeOn); });
@@ -513,6 +515,72 @@ ControlTargets::ControlTargets (AudioEngine& e)
          });
     add ("drum.colour", "Drum colour (FM / metal character)", "Drums", TargetKind::continuous,
          [dp] (float v) { dp().colour.store (v); }, [dp] { return dp().colour.load(); }, percent);
+
+    // ---- Noise
+    auto np = [&e]() -> NoiseParams& { return e.selected().noiseParams; };
+    auto colourName = [] (float v) {
+        static const char* names[] = { "Brown", "Brown-pink", "Pink", "Pink-white", "White", "White-blue", "Blue", "Blue-violet", "Violet" };
+        return juce::String (names[juce::jlimit (0, 8, juce::roundToInt (v * 8.0f))]);
+    };
+    add ("noise.colour", "Noise colour", "Noise", TargetKind::continuous,
+         [np] (float v) { np().colour.store (v); }, [np] { return np().colour.load(); }, colourName);
+    add ("noise.source", "Noise source", "Noise", TargetKind::continuous,
+         [np] (float v) { np().source.store (juce::jlimit (0, NoiseParams::numSources - 1, (int) (v * ((float) NoiseParams::numSources - 0.001f)))); },
+         [np] { return ((float) np().source.load() + 0.5f) / (float) NoiseParams::numSources; },
+         [] (float v) { return NoiseParams::sourceName (juce::jlimit (0, NoiseParams::numSources - 1, (int) (v * ((float) NoiseParams::numSources - 0.001f)))); });
+    add ("noise.mod", "Noise modifier", "Noise", TargetKind::continuous,
+         [np] (float v) { np().mod.store (v); }, [np] { return np().mod.load(); }, percent);
+    add ("noise.grain", "Noise grain", "Noise", TargetKind::continuous,
+         [np] (float v) { np().grain.store (v); }, [np] { return np().grain.load(); },
+         [] (float v) { return v < 0.01f ? juce::String ("Smooth") : percent (v); });
+    add ("noise.tone", "Noise pitch (resonator)", "Noise", TargetKind::continuous,
+         [np] (float v) { np().tone.store (v); }, [np] { return np().tone.load(); }, percent);
+    add ("noise.filtermode", "Noise filter type", "Noise", TargetKind::continuous,
+         [np] (float v) { np().filterMode.store (juce::jlimit (0, NoiseParams::numFilterModes - 1, (int) (v * ((float) NoiseParams::numFilterModes - 0.001f)))); },
+         [np] { return ((float) np().filterMode.load() + 0.5f) / (float) NoiseParams::numFilterModes; },
+         [] (float v) { return NoiseParams::filterName (juce::jlimit (0, NoiseParams::numFilterModes - 1, (int) (v * ((float) NoiseParams::numFilterModes - 0.001f)))); });
+    add ("noise.cutoff", "Noise filter", "Noise", TargetKind::continuous,
+         [np] (float v) { np().cutoffHz.store (expMap (v, 40.0f, 18000.0f)); },
+         [np] { return expInv (np().cutoffHz.load(), 40.0f, 18000.0f); },
+         [] (float v) { const float hz = expMap (v, 40.0f, 18000.0f); return hz >= 1000.0f ? juce::String (hz / 1000.0f, 1) + " kHz" : juce::String (juce::roundToInt (hz)) + " Hz"; });
+    add ("noise.resonance", "Noise filter edge", "Noise", TargetKind::continuous,
+         [np] (float v) { np().resonance.store (v); }, [np] { return np().resonance.load(); }, percent);
+    add ("noise.keyfollow", "Noise filter follows the note", "Noise", TargetKind::continuous,
+         [np] (float v) { np().keyFollow.store (v); }, [np] { return np().keyFollow.load(); }, percent);
+    add ("noise.envamount", "Noise filter sweep", "Noise", TargetKind::continuous,
+         [np] (float v) { np().envAmount.store (v * 2.0f - 1.0f); }, [np] { return (np().envAmount.load() + 1.0f) * 0.5f; },
+         [] (float v) { const int p = juce::roundToInt ((v * 2.0f - 1.0f) * 100.0f); return p == 0 ? juce::String ("None") : (p > 0 ? "Opens " : "Closes ") + juce::String (std::abs (p)) + "%"; });
+    add ("noise.attack", "Noise fade in", "Noise", TargetKind::continuous,
+         [np] (float v) { np().attack.store (expMap (v, 0.001f, 4.0f)); },
+         [np] { return expInv (np().attack.load(), 0.001f, 4.0f); },
+         [] (float v) { return seconds (expMap (v, 0.001f, 4.0f)); });
+    add ("noise.decay", "Noise punch", "Noise", TargetKind::continuous,
+         [np] (float v) { np().decay.store (expMap (v, 0.005f, 4.0f)); },
+         [np] { return expInv (np().decay.load(), 0.005f, 4.0f); },
+         [] (float v) { return seconds (expMap (v, 0.005f, 4.0f)); });
+    add ("noise.sustain", "Noise hold level", "Noise", TargetKind::continuous,
+         [np] (float v) { np().sustain.store (v); }, [np] { return np().sustain.load(); }, percent);
+    add ("noise.release", "Noise fade out", "Noise", TargetKind::continuous,
+         [np] (float v) { np().release.store (expMap (v, 0.005f, 8.0f)); },
+         [np] { return expInv (np().release.load(), 0.005f, 8.0f); },
+         [] (float v) { return seconds (expMap (v, 0.005f, 8.0f)); });
+    add ("noise.width", "Noise width", "Noise", TargetKind::continuous,
+         [np] (float v) { np().width.store (v); }, [np] { return np().width.load(); },
+         [] (float v) { return v < 0.01f ? juce::String ("Mono") : percent (v); });
+    add ("noise.velocity", "Noise velocity to volume", "Noise", TargetKind::continuous,
+         [np] (float v) { np().velocity.store (v); }, [np] { return np().velocity.load(); }, percent);
+    add ("noise.lforate", "Noise wobble speed", "Noise", TargetKind::continuous,
+         [np] (float v) { np().lfoRate.store (expMap (v, 0.05f, 30.0f)); },
+         [np] { return expInv (np().lfoRate.load(), 0.05f, 30.0f); },
+         [] (float v) { return juce::String (expMap (v, 0.05f, 30.0f), 2) + " Hz"; });
+    add ("noise.lfofilter", "Noise wobble on the filter", "Noise", TargetKind::continuous,
+         [np] (float v) { np().lfoFilter.store (v); }, [np] { return np().lfoFilter.load(); }, percent);
+    add ("noise.lfocolour", "Noise wobble on the colour", "Noise", TargetKind::continuous,
+         [np] (float v) { np().lfoColour.store (v); }, [np] { return np().lfoColour.load(); }, percent);
+    add ("noise.level", "Noise level", "Noise", TargetKind::continuous,
+         [np] (float v) { np().level.store (expMap (v, 0.25f, 4.0f)); },
+         [np] { return expInv (np().level.load(), 0.25f, 4.0f); },
+         [] (float v) { const float db = juce::Decibels::gainToDecibels (expMap (v, 0.25f, 4.0f)); return (db >= 0.0f ? "+" : "") + juce::String (db, 1) + " dB"; });
 
     // ---- Panel knobs 1-8: whatever the loaded synth puts on that knob.
     for (int k = 0; k < 8; ++k)
