@@ -197,7 +197,7 @@ inline const std::vector<SynthDefinition>& synthLibrary()
             {
                 { "Program",                "ext.program",   "Sends a program change: picks a sound on the gear." },
                 { "Channel",                "ext.channel",   "The MIDI channel the gear listens on." },
-                { "Drum steps",             "ext.drums",     "On: the steps and pads play drum notes (C1 to D#2), as on a Drums track. For the FM-1's drum track or a drum machine." },
+                { "Drum steps",             "ext.drums",     "On: the steps and pads play drum notes (MIDI notes 36 to 51), as on a Drums track. For the FM-1's drum track or a drum machine." },
                 { "Hear input",             "ext.monitor",   "Plays your sound card's input through this track, so the gear's sound goes through the mixer. Turn off if you hear feedback." },
                 { "Inputs",                 "ext.inputpair", "Which pair of sound card inputs the gear is connected to." },
                 { "Knob 1 CC",           "ext.ccnum1",     "Which CC number knob 1 sends, if your gear uses a different one." },
