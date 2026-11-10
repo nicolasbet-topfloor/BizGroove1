@@ -517,6 +517,12 @@ ControlTargets::ControlTargets (AudioEngine& e)
         auto knobTarget = [this, &e, k]() -> const Target* {
             const auto& library = synthLibrary();
             const auto& def = library[(size_t) juce::jlimit (0, (int) library.size() - 1, e.selected().type.load())];
+            // While the More window is open, the knobs turn its highlighted row instead.
+            if (const int page = e.knobPage.load(); page > 0)
+            {
+                const auto i = (size_t) ((page - 1) * 8 + k);
+                return i < def.more.size() ? find (def.more[i].target) : nullptr;
+            }
             return find (def.knobs[(size_t) k].target);
         };
         add ("panel.knob." + juce::String (k + 1), "Knob " + juce::String (k + 1) + " (loaded synth)", "Panel",
