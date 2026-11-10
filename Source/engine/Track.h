@@ -4,6 +4,7 @@
 #include "TestSynth.h"
 #include "PolySynth.h"
 #include "WavetableSynth.h"
+#include "FmSynth.h"
 #include "DrumKit.h"
 #include "Sampler.h"
 #include "Mixer.h"
@@ -16,12 +17,13 @@ namespace bizgroove
     thread; the atomics are shared with the UI and controllers. */
 struct Track
 {
-    enum Type { testSynth = 0, drums = 1, sampler = 2, poly = 3, wavetable = 4 };   // index into synthLibrary()
-    static constexpr int numTypes = 5;
+    enum Type { testSynth = 0, drums = 1, sampler = 2, poly = 3, wavetable = 4, fm = 5 };   // index into synthLibrary()
+    static constexpr int numTypes = 6;
 
     static constexpr int numSynthVoices = 16;
     static constexpr int numPolyVoices = 8;
     static constexpr int numWaveVoices = 8;
+    static constexpr int numFmVoices = 8;
 
     Track (const Performance& perf)
     {
@@ -39,6 +41,11 @@ struct Track
             waveSynth.addVoice (new WaveVoice (waveParams, perf));
         waveSynth.addSound (new WaveSound());
         waveSynth.setNoteStealingEnabled (true);
+
+        for (int i = 0; i < numFmVoices; ++i)
+            fmSynth.addVoice (new FmVoice (fmParams, perf));
+        fmSynth.addSound (new FmSound());
+        fmSynth.setNoteStealingEnabled (true);
     }
 
     std::atomic<int> type { testSynth };
@@ -50,6 +57,7 @@ struct Track
     TestSynthParams synthParams;
     PolyParams polyParams;
     WaveParams waveParams;
+    FmParams fmParams;
     DrumKit kit;
     Sampler samplerEngine;
     ChannelSettings mix;
@@ -66,6 +74,7 @@ struct Track
     juce::Synthesiser synth;
     juce::Synthesiser polySynth;
     juce::Synthesiser waveSynth;
+    juce::Synthesiser fmSynth;
     juce::SmoothedValue<float> gain;
     ChannelStrip strip;
 };
