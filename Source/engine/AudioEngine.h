@@ -7,6 +7,7 @@
 #include "StemDeck.h"
 #include "Mixer.h"
 #include "SampleRecorder.h"
+#include "PerformFx.h"
 #include <functional>
 
 namespace bizgroove
@@ -42,6 +43,7 @@ public:
     Performance performance;
     StemDeck stems;
     MasterEffects effects;
+    PerformSettings perform;   // repeat, stutter and tape stop on the whole mix
 
     /** Offline rendering for export. While exporting, the live audio device
         must be detached. `onlyTrack` >= 0 renders that track alone (no stem
@@ -110,6 +112,7 @@ private:
     juce::AudioBuffer<float> liveInput;
     int liveInputSamples = 0;   // samples of liveInput valid for this block (0: none)
     double currentRate = 44100.0;
+    PerformProcessor performFx;
     juce::int64 freeSamples = 0;   // always running, for effects that move with the beat while stopped
 
     juce::SmoothedValue<float> smoothedGain;
