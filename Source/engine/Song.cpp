@@ -156,6 +156,7 @@ void Song::reset()
     playheadStep.store (-1);
     for (auto& p : pending) p.active = false;
     for (auto& d : delayed) d.active = false;
+    for (auto& row : skipOnce) row.fill (0);
 }
 
 bool Song::startBar()
@@ -229,17 +230,19 @@ void Song::emit (std::array<juce::MidiBuffer, numTracks>& out, int track, int sc
         return;   // this track is silent in this bar
     auto& pattern = scenes[(size_t) sceneIndex]->tracks[(size_t) track];
     auto& buffer = out[(size_t) track];
+    const std::uint16_t skip = skipOnce[(size_t) track][(size_t) stepIndex];   // played live just now
+    skipOnce[(size_t) track][(size_t) stepIndex] = 0;
 
     if (isDrum)
     {
         for (int d = 0; d < numDrums; ++d)
-            if ((pattern.drumLanes[(size_t) d].load() >> stepIndex) & 1u)
+            if (((pattern.drumLanes[(size_t) d].load() >> stepIndex) & 1u) && ((skip >> d) & 1u) == 0)
                 buffer.addEvent (juce::MidiMessage::noteOn (1, drumBaseNote + d, (juce::uint8) 100), position);
         return;
     }
 
     const auto& st = pattern.steps[(size_t) stepIndex];
-    if (! st.on.load())
+    if (! st.on.load() || (skip & 1u) != 0)
         return;
 
     auto& p = pending[(size_t) track];
@@ -335,6 +338,40 @@ bool Song::process (std::array<juce::MidiBuffer, numTracks>& out, int numSamples
 
     samplesUntilNextStep -= numSamples;
     return true;
+}
+
+void Song::recordNote (int track, bool isDrum, int note, int drum, int position, int numSamples, double bpm)
+{
+    if (step < 0 || ! juce::isPositiveAndBelow (track, numTracks) || (isDrum && ! juce::isPositiveAndBelow (drum, numDrums)))
+        return;
+
+    // Where the note falls between the steps: process() has just run, so the last step
+    // started at (numSamples + samplesUntilNextStep - samplesPerStep) in this block.
+    const double samplesPerStep = sampleRate * 60.0 / juce::jlimit (20.0, 300.0, bpm) / 4.0;
+    const double lastStepStart = (double) numSamples + samplesUntilNextStep - samplesPerStep;
+    const double offset = ((double) position - lastStepStart) / samplesPerStep;   // in steps from the last step
+    const int whole = (int) std::floor (offset);
+    const int nearest = whole + ((offset - whole) >= 0.5 ? 1 : 0);              // quantise to the nearest 1/16
+    const int target = ((step + nearest) % numSteps + numSteps) % numSteps;
+    const bool ahead = nearest > 0;   // the playhead hasn't reached it yet
+
+    const int sc = trackScene[(size_t) track] >= 0 ? trackScene[(size_t) track] : playingScene;
+    auto& pattern = scenes[(size_t) juce::jlimit (0, numScenes - 1, sc)]->tracks[(size_t) track];
+    if (isDrum)
+    {
+        auto& lane = pattern.drumLanes[(size_t) drum];
+        lane.store ((std::uint16_t) (lane.load() | (1u << target)));
+        if (ahead)
+            skipOnce[(size_t) track][(size_t) target] = (std::uint16_t) (skipOnce[(size_t) track][(size_t) target] | (1u << drum));
+    }
+    else
+    {
+        auto& st = pattern.steps[(size_t) target];
+        st.note.store (juce::jlimit (0, 127, note));
+        st.on.store (true);
+        if (ahead)
+            skipOnce[(size_t) track][(size_t) target] = (std::uint16_t) (skipOnce[(size_t) track][(size_t) target] | 1u);
+    }
 }
 
 } // namespace bizgroove
