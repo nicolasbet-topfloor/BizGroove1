@@ -217,15 +217,26 @@ void MainComponent::handleRecorder()
 
     const int t = engine.selectedTrack.load();
 
+    // Recording notes: Record again stops it (so does Stop).
+    if (pressed && engine.recordNotes.load())
+    {
+        engine.recordNotes.store (false);
+        return;
+    }
+
     // Start.
     if (! rec.isRecording() && ! full)
     {
         const int type = engine.track (t).type.load();
-        if (type != Track::sampler && type != Track::drums)
+        const bool playing = engine.transport.playing.load();
+
+        // What you play goes into the steps: on any track but a Sampler, and on a Drums
+        // track while the song plays (stopped, a Drums track records a sound onto its pad).
+        if (type != Track::sampler && ! (type == Track::drums && ! playing))
         {
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Record",
-                                                    "Recordings go into a Sampler, or onto the selected pad of a Drums track. "
-                                                    "Choose one in the Sound menu for this track, then press Record.");
+            engine.recordNotes.store (true);
+            if (! playing)
+                engine.transport.playing.store (true);
             return;
         }
         if (rec.source.load() == SampleRecorder::input && ! ensureAudioInput())
