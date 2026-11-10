@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include <algorithm>
 
 namespace bizgroove
 {
@@ -17,6 +18,7 @@ AudioEngine::AudioEngine()
 void AudioEngine::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
 {
     const int maxBlock = juce::jmax (512, samplesPerBlockExpected);
+    currentRate = sampleRate;
 
     for (auto& t : tracks)
     {
@@ -39,6 +41,8 @@ void AudioEngine::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
         t->kit.prepare (sampleRate);
         t->samplerEngine.prepare (sampleRate, maxBlock);
         t->strip.prepare (sampleRate);
+        for (auto& fx : t->insertFx)
+            fx.prepare (sampleRate);
         t->gain.reset (sampleRate, 0.02);
         t->gain.setCurrentAndTargetValue (t->volume.load());
     }
@@ -167,7 +171,24 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         trackMidi[(size_t) dest].addEvent (m, meta.samplePosition);
     }
 
-    // 5. Render and mix the tracks: sound, volume, EQ, pan, sends.
+    // What the effects need: the tempo, the song position, and where the kick drums hit.
+    EffectContext fxContext;
+    fxContext.bpm = bpm;
+    fxContext.beatAtStart = (double) (playing ? transportSamples : freeSamples) / currentRate * juce::jlimit (20.0, 300.0, bpm) / 60.0;
+    for (int t = 0; t < numTracks; ++t)
+    {
+        if (! isDrum[(size_t) t])
+            continue;
+        for (const auto meta : trackMidi[(size_t) t])
+        {
+            const auto m = meta.getMessage();
+            if (m.isNoteOn() && DrumKit::drumForNote (m.getNoteNumber()) == 0 && fxContext.numKicks < (int) fxContext.kicks.size())
+                fxContext.kicks[(size_t) fxContext.numKicks++] = meta.samplePosition;
+        }
+    }
+    std::sort (fxContext.kicks.begin(), fxContext.kicks.begin() + fxContext.numKicks);
+
+    // 5. Render and mix the tracks: sound, effects, volume, EQ, pan, sends.
     bool anySolo = false;
     for (auto& t : tracks)
         anySolo = anySolo || t->mix.solo.load();
@@ -208,6 +229,9 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
                 tr.synth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
         }
 
+        for (size_t slot = 0; slot < tr.insertFx.size(); ++slot)
+            tr.insertFx[slot].process (trackBuffer, numSamples, tr.inserts[slot], fxContext);
+
         bool audible = ! tr.mute.load() && (! anySolo || tr.mix.solo.load());
         if (only != -1)
             audible = (t == only);
@@ -235,6 +259,7 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         stems.process (*info.buffer, info.startSample, numSamples, transportSamples, playing, bpm);
     if (playing)
         transportSamples += numSamples;
+    freeSamples += numSamples;
 
     smoothedGain.setTargetValue (masterGain.load());
     const int numChannels = info.buffer->getNumChannels();
