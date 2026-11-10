@@ -129,6 +129,10 @@ private:
     void showMore();
     void shiftOctave (int octaves);
     void openSampleEditor();
+    void showMidiOutMenu();
+    void showChannelMenu();
+    juce::String externalState() const;
+    juce::String shownExternal;
 
     AudioEngine& engine;
     const ControlTargets& targets;
