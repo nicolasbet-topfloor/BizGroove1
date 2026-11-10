@@ -32,6 +32,10 @@ void AudioEngine::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
         for (int i = 0; i < t->waveSynth.getNumVoices(); ++i)
             if (auto* v = dynamic_cast<WaveVoice*> (t->waveSynth.getVoice (i)))
                 v->prepare (sampleRate);
+        t->fmSynth.setCurrentPlaybackSampleRate (sampleRate);
+        for (int i = 0; i < t->fmSynth.getNumVoices(); ++i)
+            if (auto* v = dynamic_cast<FmVoice*> (t->fmSynth.getVoice (i)))
+                v->prepare (sampleRate);
         t->kit.prepare (sampleRate);
         t->samplerEngine.prepare (sampleRate, maxBlock);
         t->strip.prepare (sampleRate);
@@ -92,6 +96,7 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         tracks[(size_t) lastSelected]->synth.allNotesOff (0, true);
         tracks[(size_t) lastSelected]->polySynth.allNotesOff (0, true);
         tracks[(size_t) lastSelected]->waveSynth.allNotesOff (0, true);
+        tracks[(size_t) lastSelected]->fmSynth.allNotesOff (0, true);
         lastSelected = sel;
     }
 
@@ -111,6 +116,7 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
             tracks[(size_t) t]->synth.allNotesOff (0, false);   // the sound was changed
             tracks[(size_t) t]->polySynth.allNotesOff (0, false);
             tracks[(size_t) t]->waveSynth.allNotesOff (0, false);
+            tracks[(size_t) t]->fmSynth.allNotesOff (0, false);
             lastType[(size_t) t] = type;
         }
         isDrum[(size_t) t] = type == Track::drums;
@@ -166,7 +172,9 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
             tr.samplerEngine.render (trackBuffer, 0, numSamples, trackMidi[(size_t) t]);
         else
         {
-            if (type == Track::wavetable)
+            if (type == Track::fm)
+                tr.fmSynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
+            else if (type == Track::wavetable)
                 tr.waveSynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
             else if (type == Track::poly)
                 tr.polySynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
