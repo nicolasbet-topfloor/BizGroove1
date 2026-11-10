@@ -13,7 +13,7 @@ namespace
     int   getI (const juce::var& v, const char* key, int fallback)   { return v.hasProperty (key) ? (int) v[key] : fallback; }
     bool  getB (const juce::var& v, const char* key, bool fallback)  { return v.hasProperty (key) ? (bool) v[key] : fallback; }
 
-    int clampType (int type) { return juce::jlimit ((int) Track::testSynth, (int) Track::poly, type); }
+    int clampType (int type) { return juce::jlimit (0, Track::numTypes - 1, type); }
 
     // ------------------------------------------------------------ to JSON
     juce::var synthToVar (const TestSynthParams& sp)
@@ -146,6 +146,14 @@ namespace
         PolyParams p;   // starts from the Poly's own settings
         tweak (p);
         return { name, soundOf (Track::poly, "poly", polyToVar (p)) };
+    }
+
+    template <typename Tweak>
+    Presets::FactorySound wavePreset (const char* name, Tweak&& tweak)
+    {
+        WaveParams p;   // starts from the Wavetable's own settings
+        tweak (p);
+        return { name, soundOf (Track::wavetable, "wave", waveParamsToVar (p)) };
     }
 
 }
@@ -292,8 +300,43 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
         })
     };
 
+    static const std::vector<FactorySound> waves {
+        wavePreset ("Init", [] (WaveParams&) {}),
+        wavePreset ("Glass keys", [] (WaveParams& p) {
+            p.table.store (1); p.position.store (0.3f); p.sweep.store (0.4f); p.cutoffHz.store (9000.0f);
+            p.decay.store (1.2f); p.sustain.store (0.3f); p.release.store (0.8f);
+        }),
+        wavePreset ("Vowel pad", [] (WaveParams& p) {
+            p.table.store (2); p.position.store (0.0f); p.sweep.store (0.0f);
+            p.lfoPosition.store (0.6f); p.lfoRate.store (0.15f); p.unison.store (3); p.detuneCents.store (12.0f);
+            p.attack.store (0.8f); p.decay.store (2.0f); p.sustain.store (0.9f); p.release.store (2.0f);
+        }),
+        wavePreset ("Digital lead", [] (WaveParams& p) {
+            p.table.store (3); p.position.store (0.3f); p.sweep.store (0.5f); p.unison.store (2); p.detuneCents.store (8.0f);
+            p.glide.store (0.05f); p.cutoffHz.store (6000.0f); p.resonance.store (0.3f);
+        }),
+        wavePreset ("Morph bass", [] (WaveParams& p) {
+            p.table.store (0); p.position.store (0.45f); p.sweep.store (0.4f); p.cutoffHz.store (900.0f); p.envAmount.store (0.5f);
+            p.decay.store (0.3f); p.sustain.store (0.5f); p.release.store (0.15f); p.sub.store (0.6f);
+        }),
+        wavePreset ("Evolving", [] (WaveParams& p) {
+            p.table.store (1); p.position.store (0.5f); p.sweep.store (0.0f); p.lfoPosition.store (0.8f); p.lfoRate.store (0.08f);
+            p.lfoFilter.store (0.2f); p.unison.store (4); p.detuneCents.store (18.0f); p.cutoffHz.store (4000.0f);
+            p.attack.store (1.5f); p.decay.store (2.0f); p.sustain.store (0.9f); p.release.store (3.0f);
+        }),
+        wavePreset ("Talking bass", [] (WaveParams& p) {
+            p.table.store (2); p.position.store (0.0f); p.sweep.store (0.9f); p.cutoffHz.store (3000.0f); p.resonance.store (0.4f);
+            p.decay.store (0.35f); p.sustain.store (0.2f); p.release.store (0.2f); p.sub.store (0.4f);
+        }),
+        wavePreset ("Sync stab", [] (WaveParams& p) {
+            p.table.store (3); p.position.store (0.1f); p.sweep.store (0.8f); p.unison.store (2);
+            p.decay.store (0.25f); p.sustain.store (0.0f); p.release.store (0.2f);
+        })
+    };
+
     switch (clampType (type))
     {
+        case Track::wavetable: return waves;
         case Track::poly:    return polys;
         case Track::drums:   return kits;
         case Track::sampler: return sampler;
@@ -312,6 +355,8 @@ juce::var Presets::soundToVar (const Track& tr)
         return soundOf (type, "sampler", samplerToVar (tr.samplerEngine.params, tr.sampleFileName));
     if (type == Track::poly)
         return soundOf (type, "poly", polyToVar (tr.polyParams));
+    if (type == Track::wavetable)
+        return soundOf (type, "wave", waveParamsToVar (tr.waveParams));
     return soundOf (type, "synth", synthToVar (tr.synthParams));
 }
 
@@ -352,6 +397,10 @@ void Presets::applySoundVar (Track& tr, const juce::var& v)
     else if (type == Track::poly)
     {
         applyPoly (tr.polyParams, v["poly"]);
+    }
+    else if (type == Track::wavetable)
+    {
+        applyWaveParams (tr.waveParams, v["wave"]);
     }
     else
     {
