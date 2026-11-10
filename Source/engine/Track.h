@@ -22,6 +22,21 @@ struct Track
     enum Type { testSynth = 0, drums = 1, sampler = 2, poly = 3, wavetable = 4, fm = 5, external = 6 };   // index into synthLibrary()
     static constexpr int numTypes = 7;
 
+    /** Each instrument comes out at its own natural level; this evens them out, so
+        switching sounds doesn't jump in volume. Measured on the factory sounds
+        (a held note, against the test synth): the Poly was about 6 dB quieter,
+        the Wavetable 2 dB quieter and the FM synth 2.5 dB louder. */
+    static float levelTrim (int instrument)
+    {
+        switch (instrument)
+        {
+            case poly:      return 2.0f;    // +6 dB
+            case wavetable: return 1.26f;   // +2 dB
+            case fm:        return 0.75f;   // -2.5 dB
+            default:        return 1.0f;
+        }
+    }
+
     static constexpr int numSynthVoices = 16;
     static constexpr int numPolyVoices = 8;
     static constexpr int numWaveVoices = 8;
