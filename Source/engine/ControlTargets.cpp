@@ -331,6 +331,22 @@ ControlTargets::ControlTargets (AudioEngine& e)
         }
     }
 
+    // ---- Performance effects on the whole mix: press to start, press again to stop
+    add ("perform.repeat", "Repeat on/off (whole mix)", "Performance", TargetKind::toggle,
+         [&e] (float) { toggle (e.perform.repeat); });
+    add ("perform.stutter", "Stutter on/off (whole mix)", "Performance", TargetKind::toggle,
+         [&e] (float) { toggle (e.perform.stutter); });
+    add ("perform.tapestop", "Tape stop on/off (whole mix)", "Performance", TargetKind::toggle,
+         [&e] (float) { toggle (e.perform.tapeStop); });
+    add ("perform.division", "Repeat length", "Performance", TargetKind::continuous,
+         [&e] (float v) { e.perform.repeatDivision.store (juce::jlimit (0, PerformSettings::numDivisions - 1, (int) (v * ((float) PerformSettings::numDivisions - 0.001f)))); },
+         [&e] { return ((float) e.perform.repeatDivision.load() + 0.5f) / (float) PerformSettings::numDivisions; },
+         [] (float v) { return PerformSettings::divisionName (juce::jlimit (0, PerformSettings::numDivisions - 1, (int) (v * ((float) PerformSettings::numDivisions - 0.001f)))); });
+    add ("perform.stoptime", "Tape stop time", "Performance", TargetKind::continuous,
+         [&e] (float v) { e.perform.stopTime.store (v); },
+         [&e] { return e.perform.stopTime.load(); },
+         [] (float v) { return seconds (PerformSettings::stopSeconds (v)); });
+
     // ---- Tracks
     add ("track.volume", "Track volume (selected track)", "Tracks", TargetKind::continuous,
          [&e] (float v) { e.selected().volume.store (v); },
