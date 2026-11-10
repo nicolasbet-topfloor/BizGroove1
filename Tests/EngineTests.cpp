@@ -1040,6 +1040,76 @@ static void testDrumModels()
     check (Presets::factorySounds (Track::drums).size() >= 6, "drum models: FM and Metal kits are in the factory sounds");
 }
 
+// The Wavetable synth: every wave set plays cleanly, notes fade out, and its settings survive saving.
+static void testWavetable()
+{
+    std::cout << "Wavetable\n";
+    AudioEngine e;
+    e.prepareToPlay (256, 48000.0);
+    e.selectedTrack.store (0);
+    e.track (0).type.store (Track::wavetable);
+    auto& wp = e.track (0).waveParams;
+    wp.unison.store (4);
+    wp.resonance.store (0.9f);
+    wp.sub.store (0.5f);
+    wp.lfoPosition.store (0.5f);
+
+    juce::AudioBuffer<float> buf (2, 256);
+    bool allSound = true, allFinite = true, allSane = true, allFade = true;
+    for (int table = 0; table < Wavetables::numTables; ++table)
+    {
+        wp.table.store (table);
+        e.keyboardState.noteOn (1, 48, 1.0f);
+        e.keyboardState.noteOn (1, 64, 1.0f);
+        e.keyboardState.noteOn (1, 100, 1.0f);
+        float peak = 0.0f;
+        for (int i = 0; i < 100; ++i)
+        {
+            buf.clear();
+            e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 256));
+            peak = juce::jmax (peak, buf.getMagnitude (0, 0, 256), buf.getMagnitude (1, 0, 256));
+            for (int ch = 0; ch < 2; ++ch)
+                for (int s = 0; s < 256; ++s)
+                    allFinite = allFinite && std::isfinite (buf.getSample (ch, s));
+        }
+        std::cout << "  info  " << Wavetables::tableName (table) << " peak " << peak << "\n";
+        allSound = allSound && peak > 0.01f;
+        allSane = allSane && peak < 1.5f;
+
+        e.keyboardState.noteOff (1, 48, 0.0f);
+        e.keyboardState.noteOff (1, 64, 0.0f);
+        e.keyboardState.noteOff (1, 100, 0.0f);
+        for (int i = 0; i < 1200; ++i)
+        {
+            buf.clear();
+            e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 256));
+        }
+        allFade = allFade && e.track (0).level.load() < 1.0e-4f;
+    }
+    check (allSound && allFinite, "wavetable: every wave set makes sound, with no NaN");
+    check (allSane, "wavetable: a resonant stacked chord stays at a sane level");
+    check (allFade, "wavetable: notes fade out after release");
+
+    wp.table.store (2);
+    wp.position.store (0.65f);
+    const auto v = Presets::soundToVar (e.track (0));
+    e.track (2).type.store (Track::sampler);
+    Presets::applySoundVar (e.track (2), v);
+    check (e.track (2).type.load() == Track::wavetable && e.track (2).waveParams.table.load() == 2
+           && std::abs (e.track (2).waveParams.position.load() - 0.65f) < 0.001f && e.track (2).waveParams.unison.load() == 4,
+           "wavetable: its sound carries over to another track");
+
+    juce::String err;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    juce::TemporaryFile project (Project::fileExtension);
+    AudioEngine e2;
+    check (Project::save (e, project.getFile(), err) && Project::open (e2, project.getFile(), formats, err)
+           && e2.track (0).type.load() == Track::wavetable && e2.track (0).waveParams.table.load() == 2,
+           "wavetable: a project keeps the Wavetable track and its settings");
+    check (Presets::factorySounds (Track::wavetable).size() >= 8, "wavetable: has factory sounds");
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI init; // needed by some JUCE singletons
@@ -1063,6 +1133,7 @@ int main (int argc, char* argv[])
     testPoly();
     testDrumPads();
     testDrumModels();
+    testWavetable();
     testRender (argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]) : juce::File());
 
     std::cout << (failures == 0 ? "All tests passed\n" : juce::String (failures) + " test(s) failed\n");
