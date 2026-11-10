@@ -1270,6 +1270,70 @@ static void testExternal()
     check (Presets::factorySounds (Track::external).size() >= 4, "external: has starting sounds");
 }
 
+// Insert effects: each one keeps the sound clean and at a sane level, the duck follows the kick, and they save.
+static void testInserts()
+{
+    std::cout << "Insert effects\n";
+    juce::AudioBuffer<float> buf (2, 256);
+    bool allSound = true, allFinite = true, allSane = true;
+    for (int type = 1; type < InsertEffects::numTypes; ++type)
+    {
+        AudioEngine e;
+        e.prepareToPlay (256, 48000.0);
+        e.selectedTrack.store (0);
+        e.track (0).type.store (Track::poly);
+        e.track (0).inserts[0].choose (type);
+        e.track (0).inserts[1].choose (type == InsertEffects::drive ? InsertEffects::compressor : InsertEffects::off);
+        e.keyboardState.noteOn (1, 48, 1.0f);
+        e.keyboardState.noteOn (1, 60, 1.0f);
+        float peak = 0.0f;
+        for (int i = 0; i < 150; ++i)
+        {
+            buf.clear();
+            e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 256));
+            peak = juce::jmax (peak, buf.getMagnitude (0, 0, 256), buf.getMagnitude (1, 0, 256));
+            for (int ch = 0; ch < 2; ++ch)
+                for (int s = 0; s < 256; ++s)
+                    allFinite = allFinite && std::isfinite (buf.getSample (ch, s));
+        }
+        std::cout << "  info  " << InsertEffects::name (type) << " peak " << peak << "\n";
+        allSound = allSound && peak > 0.01f;
+        allSane = allSane && peak < 2.0f;
+    }
+    check (allSound && allFinite, "inserts: every effect lets the sound through, with no NaN");
+    check (allSane, "inserts: no effect blows up the level");
+
+    // The duck dips right after a kick and comes back up.
+    InsertProcessor duck;
+    duck.prepare (48000.0);
+    InsertSettings s;
+    s.choose (InsertEffects::duck);
+    s.knob[0].store (1.0f);
+    EffectContext ctx;
+    ctx.kicks[0] = 0;
+    ctx.numKicks = 1;
+    juce::AudioBuffer<float> ones (2, 4800);
+    for (int ch = 0; ch < 2; ++ch)
+        juce::FloatVectorOperations::fill (ones.getWritePointer (ch), 1.0f, 4800);
+    duck.process (ones, 4800, s, ctx);
+    check (ones.getSample (0, 960) < 0.3f && ones.getSample (0, 4799) > ones.getSample (0, 960),
+           "inserts: the duck dips on the kick, then swells back");
+
+    AudioEngine e;
+    e.track (3).inserts[0].choose (InsertEffects::phaser);
+    e.track (3).inserts[1].choose (InsertEffects::lofi);
+    e.track (3).inserts[1].knob[1].store (0.8f);
+    juce::String err;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    juce::TemporaryFile project (Project::fileExtension);
+    AudioEngine e2;
+    check (Project::save (e, project.getFile(), err) && Project::open (e2, project.getFile(), formats, err)
+           && e2.track (3).inserts[0].type.load() == InsertEffects::phaser && e2.track (3).inserts[1].type.load() == InsertEffects::lofi
+           && std::abs (e2.track (3).inserts[1].knob[1].load() - 0.8f) < 0.001f,
+           "inserts: a project keeps each track's effects");
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI init; // needed by some JUCE singletons
@@ -1296,6 +1360,7 @@ int main (int argc, char* argv[])
     testWavetable();
     testFm();
     testExternal();
+    testInserts();
     testRender (argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]) : juce::File());
 
     std::cout << (failures == 0 ? "All tests passed\n" : juce::String (failures) + " test(s) failed\n");
