@@ -256,10 +256,12 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
             if (d == 0) { p.pitch.store (p.pitch.load() - 3.0f); p.length.store (0.8f); }
             else        { p.length.store (p.length.load() + 0.15f); }
             p.tone.store (p.tone.load() - 0.1f);
+            p.volume.store (p.volume.load() * 0.8f);   // the longer drums made it about 2 dB louder
         }),
         kitPreset ("Dirty", [] (int, DrumKit::DrumParams& p) {
             p.drive.store (0.55f);
             p.tone.store (p.tone.load() + 0.1f);
+            p.volume.store (p.volume.load() * 0.6f);   // the drive made it about 4 dB louder
         }),
         kitPreset ("FM kit", [] (int d, DrumKit::DrumParams& p) {
             const bool metal = d == 6 || d == 8 || d == 10 || d == 13 || d == 15;
@@ -268,7 +270,7 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
             p.colour.store (d == 0 ? 0.15f : (metal ? 0.9f : 0.45f));
         }),
         kitPreset ("Metal kit", [] (int d, DrumKit::DrumParams& p) {
-            if (d != 0) { p.model.store (2); p.colour.store (0.6f); }
+            if (d != 0) { p.model.store (2); p.colour.store (0.6f); p.volume.store (p.volume.load() * 0.8f); }
         })
     };
 
