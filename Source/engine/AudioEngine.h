@@ -89,6 +89,10 @@ public:
         1, 2... = that row of eight in the More window, while it is open. */
     std::atomic<int> knobPage { 0 };
 
+    /** Hold: notes keep sounding after you let go of the keys, for long, evolving sounds.
+        Playing again once every key is up starts a new held chord; switching it off lets them go. */
+    std::atomic<bool> hold { false };
+
     /** The metronome: a click on every beat, a higher one on the first beat of the bar.
         Only heard through the sound card: never in exports or in resampling. */
     enum MetronomeMode { metronomeOff = 0, metronomeOn = 1, metronomeWhileRecording = 2 };
@@ -153,6 +157,12 @@ private:
     double clickPhase = 0.0, clickFreq = 1000.0;
     float clickAmp = 0.0f;
     void addClick (int position, bool accent);
+
+    // Hold (audio thread).
+    std::array<bool, 128> latched {}, keyDown {};
+    int keysDown = 0;
+    bool wasHold = false;
+    void releaseLatched (juce::MidiBuffer& midi, int position);
     juce::int64 transportSamples = 0;   // samples since play was pressed
     bool wasPlaying = false;
     int lastSelected = 0;
