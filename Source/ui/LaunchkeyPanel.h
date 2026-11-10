@@ -147,6 +147,7 @@ private:
     // Knobs and pads
     juce::OwnedArray<PanelKnob> knobs;
     juce::TextButton moreButton { "More" };
+    juce::TextButton fxButton { "Effects" };
     juce::TextButton loadSampleButton { "Load sample..." };
     juce::TextButton editSampleButton { "Edit..." }, recSourceButton { "Rec: mic / line in" }, padsModeButton { "Pads: play" };
     bool shownRecording = false;
