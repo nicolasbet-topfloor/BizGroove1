@@ -147,6 +147,38 @@ inline const std::vector<SynthDefinition>& synthLibrary()
                 { "Noise",                 "wave.noise",       "Adds a breath of noise, for wind and percussive sounds." },
                 { "Volume",                "track.volume",     "How loud this track is." }
             }
+        },
+        {
+            "fm",
+            "FM",
+            "An FM synth: four pure tones that bend each other's pitch very fast, in one of eight layouts. From electric pianos and bells to glassy pads, punchy basses and metallic hits.",
+            { {
+                { "Brightness", "fm.brightness",  "How hard the tones bend each other: left is pure and soft, right is bright and complex." },
+                { "Bite",       "fm.bitedecay",   "How long the bright attack of each note lasts before it mellows." },
+                { "Layout",     "fm.algorithm",   "How the four tones are wired: which bend which, and which you hear." },
+                { "Pitch 2",    "fm.ratio2",      "The pitch of tone 2, as a multiple of the note. Whole numbers sound musical, others like bells or metal." },
+                { "Feedback",   "fm.feedback",    "Tone 4 bends itself: from pure to buzzy and noisy." },
+                { "Fade in",    "fm.attack",      "How long a note takes to reach full volume after you press a key." },
+                { "Fade out",   "fm.release",     "How long a note keeps sounding after you let go of the key." },
+                { "Hold level", "fm.sustain",     "How loud a note stays while you keep holding the key." }
+            } },
+            {
+                { "Pitch 1",                 "fm.ratio1",       "The pitch of tone 1, as a multiple of the note." },
+                { "Pitch 3",                 "fm.ratio3",       "The pitch of tone 3, as a multiple of the note." },
+                { "Pitch 4",                 "fm.ratio4",       "The pitch of tone 4, as a multiple of the note." },
+                { "Level 1",                 "fm.level1",       "How loud tone 1 is, or how hard it bends, depending on the layout." },
+                { "Level 2",                 "fm.level2",       "How loud tone 2 is, or how hard it bends, depending on the layout." },
+                { "Level 3",                 "fm.level3",       "How loud tone 3 is, or how hard it bends, depending on the layout." },
+                { "Level 4",                 "fm.level4",       "How loud tone 4 is, or how hard it bends, depending on the layout." },
+                { "Brightness held",         "fm.bitesustain",  "How much of the brightness stays while you hold the key." },
+                { "Punch",                   "fm.decay",        "How long the first hit of each note lasts before it settles." },
+                { "Thickness",               "fm.detune",       "Puts the tones slightly out of tune with each other, for a chorused, beating sound." },
+                { "Velocity to brightness",  "fm.velocity",     "How much harder hits sound brighter." },
+                { "Wobble speed",            "fm.lforate",      "How fast the wobble moves." },
+                { "Wobble on pitch",         "fm.lfopitch",     "Vibrato: how much the wobble moves the pitch." },
+                { "Wobble on brightness",    "fm.lfobrightness","How much the wobble moves the brightness." },
+                { "Volume",                  "track.volume",    "How loud this track is." }
+            }
         }
     };
     return library;
