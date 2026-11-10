@@ -38,6 +38,14 @@ juce::var Project::toVar (AudioEngine& e)
     fx->setProperty ("reverbSize", e.effects.reverbSize.load());
     fx->setProperty ("delayDivision", e.effects.delayDivision.load());
     fx->setProperty ("delayFeedback", e.effects.delayFeedback.load());
+    fx->setProperty ("reverbType", e.effects.reverbType.load());
+    fx->setProperty ("reverbTone", e.effects.reverbTone.load());
+    fx->setProperty ("springDrip", e.effects.springDrip.load());
+    fx->setProperty ("delayType", e.effects.delayType.load());
+    fx->setProperty ("tapeHeads", e.effects.tapeHeads.load());
+    fx->setProperty ("tapeWow", e.effects.tapeWow.load());
+    fx->setProperty ("tapeTone", e.effects.tapeTone.load());
+    fx->setProperty ("tapeWear", e.effects.tapeWear.load());
     root->setProperty ("effects", juce::var (fx));
 
     // ---- tracks
@@ -196,6 +204,14 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
     e.effects.reverbSize.store (getF (fx, "reverbSize", 0.5f));
     e.effects.delayDivision.store (getI (fx, "delayDivision", MasterEffects::dottedEighth));
     e.effects.delayFeedback.store (getF (fx, "delayFeedback", 0.35f));
+    e.effects.reverbType.store (juce::jlimit (0, MasterEffects::numReverbTypes - 1, getI (fx, "reverbType", 0)));
+    e.effects.reverbTone.store (getF (fx, "reverbTone", 0.5f));
+    e.effects.springDrip.store (getF (fx, "springDrip", 0.5f));
+    e.effects.delayType.store (juce::jlimit (0, MasterEffects::numDelayTypes - 1, getI (fx, "delayType", 0)));
+    e.effects.tapeHeads.store (juce::jlimit (0, TapeEcho::numModes - 1, getI (fx, "tapeHeads", 6)));
+    e.effects.tapeWow.store (getF (fx, "tapeWow", 0.4f));
+    e.effects.tapeTone.store (getF (fx, "tapeTone", 0.5f));
+    e.effects.tapeWear.store (getF (fx, "tapeWear", 0.3f));
 
     if (const auto* tracks = v["tracks"].getArray())
     {
