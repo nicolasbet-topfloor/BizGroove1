@@ -1811,6 +1811,175 @@ static void testNoise()
     check (Presets::factorySounds (Track::noise).size() >= 10, "noise: has factory sounds");
 }
 
+// Glide: an even slide in pitch, taking the glide time (or the time per octave, by distance).
+static void testGlide()
+{
+    std::cout << "Glide\n";
+    Glide g;
+    g.start (220.0, 440.0, 0.1f, Glide::fixedTime, 48000.0);
+    const double half = g.advance (2400);
+    const double end = g.advance (2400);
+    check (std::abs (half - 311.13) < 2.0 && std::abs (end - 440.0) < 0.01, "glide: fixed time slides evenly and arrives on time");
+    g.start (110.0, 440.0, 0.1f, Glide::byDistance, 48000.0);   // two octaves: 0.2 s
+    const double after1 = g.advance (4800);
+    const double after2 = g.advance (4800);
+    check (std::abs (after1 - 220.0) < 1.0 && std::abs (after2 - 440.0) < 0.01, "glide: by distance takes the time per octave");
+    g.start (0.0, 440.0, 0.5f, Glide::fixedTime, 48000.0);
+    check (std::abs (g.hz() - 440.0) < 0.01, "glide: the first note doesn't slide");
+
+    bool allFinite = true;
+    for (int type : { (int) Track::testSynth, (int) Track::poly, (int) Track::wavetable, (int) Track::fm, (int) Track::noise })
+    {
+        AudioEngine e;
+        e.prepareToPlay (256, 48000.0);
+        e.selectedTrack.store (0);
+        e.track (0).type.store (type);
+        e.track (0).synthParams.glide.store (0.3f);
+        e.track (0).polyParams.glide.store (0.3f);
+        e.track (0).waveParams.glide.store (0.3f);
+        e.track (0).fmParams.glide.store (0.3f);
+        e.track (0).noiseParams.glide.store (0.3f);
+        juce::AudioBuffer<float> buf (2, 256);
+        for (int note : { 48, 72, 36 })
+        {
+            e.keyboardState.noteOn (1, note, 0.8f);
+            for (int b = 0; b < 30; ++b)
+            {
+                buf.clear();
+                e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 256));
+                for (int i = 0; i < 256; ++i)
+                    allFinite = allFinite && std::isfinite (buf.getSample (0, i));
+            }
+            e.keyboardState.noteOff (1, note, 0.0f);
+        }
+    }
+    check (allFinite, "glide: every synth glides, with no NaN");
+}
+
+// The arpeggiator: the notes held, one per step, in each mode, in time.
+static void testArpeggiator()
+{
+    std::cout << "Arpeggiator\n";
+    constexpr double rate = 48000.0, bpm = 120.0;
+    constexpr int block = 512;
+    auto run = [&] (std::vector<int> notes, int mode, int octaves, int steps, bool synced, juce::int64 songStart) {
+        ArpSettings s;
+        s.mode.store (mode);
+        s.octaves.store (octaves);
+        s.rate.store (3);   // 1/16: 6000 samples at 120 BPM
+        Arpeggiator arp;
+        std::vector<std::pair<juce::int64, int>> ons;
+        juce::MidiBuffer in, out;
+        for (int n : notes)
+            in.addEvent (juce::MidiMessage::noteOn (1, n, (juce::uint8) 100), 0);
+        for (juce::int64 pos = 0; pos < (juce::int64) steps * 6000; pos += block)
+        {
+            out.clear();
+            arp.process (in, out, block, rate, bpm, synced, songStart + pos, s);
+            in.clear();
+            for (const auto meta : out)
+                if (meta.getMessage().isNoteOn() && pos + meta.samplePosition < (juce::int64) steps * 6000)
+                    ons.emplace_back (pos + meta.samplePosition, meta.getMessage().getNoteNumber());
+        }
+        return ons;
+    };
+    auto notesOf = [] (const std::vector<std::pair<juce::int64, int>>& ons) {
+        std::vector<int> n;
+        for (const auto& o : ons) n.push_back (o.second);
+        return n;
+    };
+
+    const auto up = run ({ 64, 60, 67 }, ArpSettings::up, 1, 4, false, 0);
+    check (notesOf (up) == std::vector<int> ({ 60, 64, 67, 60 }), "arp: up plays the notes low to high, round again");
+    bool timed = up.size() == 4;
+    for (size_t i = 0; i < up.size() && timed; ++i)
+        timed = std::abs ((double) up[i].first - 6000.0 * (double) i) <= 1.0;
+    check (timed, "arp: one note every 1/16");
+    check (notesOf (run ({ 60, 64, 67 }, ArpSettings::down, 1, 3, false, 0)) == std::vector<int> ({ 67, 64, 60 }), "arp: down");
+    check (notesOf (run ({ 60, 64, 67 }, ArpSettings::upDown, 1, 5, false, 0)) == std::vector<int> ({ 60, 64, 67, 64, 60 }), "arp: up and down");
+    check (notesOf (run ({ 60, 64, 67 }, ArpSettings::played, 1, 3, false, 0)) == std::vector<int> ({ 60, 64, 67 }), "arp: as played");
+    check (notesOf (run ({ 67, 60, 64 }, ArpSettings::played, 1, 3, false, 0)) == std::vector<int> ({ 67, 60, 64 }), "arp: as played keeps the order");
+    check (notesOf (run ({ 60, 64, 67 }, ArpSettings::up, 2, 6, false, 0)) == std::vector<int> ({ 60, 64, 67, 72, 76, 79 }), "arp: two octaves");
+    check (notesOf (run ({ 60, 64, 67, 71 }, ArpSettings::converge, 1, 4, false, 0)) == std::vector<int> ({ 60, 71, 64, 67 }), "arp: converge");
+    check (run ({ 60, 64, 67 }, ArpSettings::chord, 1, 2, false, 0).size() == 6, "arp: chord plays them all on each step");
+    const auto rnd = notesOf (run ({ 60, 64, 67 }, ArpSettings::random, 1, 12, false, 0));
+    bool inSet = rnd.size() == 12, noRepeat = true;
+    for (size_t i = 0; i < rnd.size(); ++i)
+    {
+        inSet = inSet && (rnd[i] == 60 || rnd[i] == 64 || rnd[i] == 67);
+        noRepeat = noRepeat && (i == 0 || rnd[i] != rnd[i - 1]);
+    }
+    check (inSet && noRepeat, "arp: random picks the held notes, never the same twice running");
+    const auto synced = run ({ 60, 64 }, ArpSettings::up, 1, 2, true, 3000);   // the song is a half step in
+    check (! synced.empty() && std::abs ((double) synced[0].first - 3000.0) <= 1.0, "arp: with the song playing it starts on the next 1/16");
+
+    // In the engine, on a synth, with Hold, and saved in projects.
+    AudioEngine e;
+    e.prepareToPlay (block, rate);
+    e.selectedTrack.store (0);
+    e.track (0).type.store (Track::poly);
+    e.arp.on.store (true);
+    e.arp.mode.store (ArpSettings::upDown);
+    e.hold.store (true);
+    juce::AudioBuffer<float> buf (2, block);
+    e.keyboardState.noteOn (1, 60, 0.8f);
+    e.keyboardState.noteOn (1, 67, 0.8f);
+    for (int b = 0; b < 4; ++b) { buf.clear(); e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, block)); }
+    e.keyboardState.noteOff (1, 60, 0.0f);
+    e.keyboardState.noteOff (1, 67, 0.0f);
+    float peak = 0.0f;
+    for (int b = 0; b < 100; ++b)
+    {
+        buf.clear();
+        e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, block));
+        peak = juce::jmax (peak, buf.getMagnitude (0, 0, block));
+    }
+    check (peak > 1.0e-3f, "arp: with Hold it keeps playing after the keys are let go");
+    const auto saved = Project::toVar (e);
+    e.arp.mode.store (ArpSettings::up);
+    e.arp.on.store (false);
+    Project::applyVar (e, saved);
+    check (e.arp.on.load() && e.arp.mode.load() == ArpSettings::upDown, "arp: a project keeps its settings");
+}
+
+// Tremolo: the volume beats; the vintage one beats lows and highs in turn, never going quiet.
+static void testTremolo()
+{
+    std::cout << "Tremolo\n";
+    auto windows = [] (int type, float shape) {
+        InsertProcessor fx;
+        fx.prepare (48000.0);
+        InsertSettings s;
+        s.choose (type);
+        s.knob[0].store (1.0f);    // full depth
+        s.knob[1].store (0.25f);   // 2 Hz, free
+        s.knob[2].store (shape);
+        EffectContext ctx;
+        ctx.bpm = 120.0;
+        juce::AudioBuffer<float> buf (2, 480);
+        juce::Random r (7);
+        float lowest = 1.0e9f, highest = 0.0f;
+        for (int b = 0; b < 200; ++b)   // two seconds, in 10 ms windows
+        {
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < 480; ++i)
+                    buf.setSample (ch, i, r.nextFloat() * 2.0f - 1.0f);
+            fx.process (buf, 480, s, ctx);
+            if (b < 20) continue;
+            const float rms = buf.getRMSLevel (0, 0, 480);
+            lowest = juce::jmin (lowest, rms);
+            highest = juce::jmax (highest, rms);
+        }
+        return std::make_pair (lowest, highest);
+    };
+    const auto plain = windows (InsertEffects::tremolo, 0.0f);
+    const auto harmonic = windows (InsertEffects::harmonicTremolo, 0.45f);
+    std::cout << "  info  tremolo rms " << plain.first << " .. " << plain.second << ", harmonic " << harmonic.first << " .. " << harmonic.second << "\n";
+    check (plain.first < 0.05f && plain.second > 0.45f, "tremolo: at full depth the volume beats from silence to full");
+    check (harmonic.first > 0.15f && harmonic.first > 20.0f * plain.first, "tremolo: the harmonic tremolo pulses without going quiet");
+    check (InsertEffects::describe (InsertEffects::tremolo, 1, 0.75f).contains ("in time"), "tremolo: the right half of Speed follows the tempo");
+}
+
 // Hold: notes keep sounding after the keys are let go, until Hold is switched off.
 static void testHold()
 {
@@ -1971,6 +2140,9 @@ int main (int argc, char* argv[])
     testCopyDrum();
     testNoise();
     testHold();
+    testGlide();
+    testArpeggiator();
+    testTremolo();
     testKnobPage();
     testChordSteps();
     testRecordChord();
