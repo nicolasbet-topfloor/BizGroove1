@@ -14,6 +14,8 @@
 namespace bizgroove
 {
 
+class ControlTargets;
+
 /** Transport state shared between UI and audio thread. */
 struct Transport
 {
@@ -68,7 +70,13 @@ public:
     bool trackHasContent (int track);
 
     Track& track (int index)            { return *tracks[(size_t) juce::jlimit (0, numTracks - 1, index)]; }
-    Track& selected()                   { return track (selectedTrack.load()); }
+    Track& selected()                   { return track (trackOverride >= 0 ? trackOverride : selectedTrack.load()); }
+
+    /** While the LFOs move a track's knobs, "the selected track" means that track, on that thread only. */
+    static inline thread_local int trackOverride = -1;
+
+    /** The knobs the LFOs can move: set once by the app (and the tests). */
+    std::atomic<const ControlTargets*> lfoTargets { nullptr };
 
     /** The track the keys, knobs and pads play and edit. */
     std::atomic<int> selectedTrack { 0 };
@@ -92,7 +100,7 @@ public:
 
     /** Which open window the eight knobs follow (with knobPage as its page), and how many
         pages it has: while one is open, the controller's track arrows turn its pages. */
-    enum KnobOverlay { overlayNone = 0, overlayMore, overlayOsc, overlayFx };
+    enum KnobOverlay { overlayNone = 0, overlayMore, overlayOsc, overlayFx, overlayArp, overlayLfo };
     std::atomic<int> knobOverlay { overlayNone };
     std::atomic<int> knobPages { 0 };
 
@@ -164,6 +172,7 @@ private:
     juce::AudioBuffer<float> tapNow, tapPrev, modulatorBuffer;
     int tapPrevSamples = 0;
     const float* buildModulator (const VocoderSettings& s, int numSamples);
+    void runLfos (int numSamples, bool playing, double bpm);
     double currentRate = 44100.0;
     PerformProcessor performFx;
     juce::int64 freeSamples = 0;   // always running, for effects that move with the beat while stopped
