@@ -146,6 +146,22 @@ namespace
         pp.lfoPulse.store (getF (p, "lfoPulse", 0.0f));   pp.noise.store (getF (p, "noise", 0.0f));
     }
 
+    /** A test synth sound from its own settings and its Oscillators section. */
+    template <typename Tweak>
+    Presets::FactorySound synthTweakPreset (const char* name, Tweak&& tweak)
+    {
+        TestSynthParams p;
+        tweak (p);
+        return { name, soundOf (Track::testSynth, "synth", synthToVar (p)) };
+    }
+
+    /** Sets one of a synth's two oscillators. */
+    void layer (OscSettings& s, int n, int wave, int octave, int semi, float level, float fine = 0.0f)
+    {
+        auto& o = s.osc[(size_t) n];
+        o.wave.store (wave); o.octave.store (octave); o.semi.store (semi); o.level.store (level); o.fine.store (fine);
+    }
+
     template <typename Tweak>
     Presets::FactorySound polyPreset (const char* name, Tweak&& tweak)
     {
@@ -275,7 +291,27 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
         synthPreset ("Soft pad",       900.0f, 0.15f, 0.2f, 18.0f, 0.80f,   1.50f, 0.8f, 1.8f),
         synthPreset ("Pluck",          600.0f, 0.40f, 0.8f, 6.0f,  0.001f,  0.20f, 0.0f, 0.30f),
         synthPreset ("Brass stab",     700.0f, 0.25f, 0.7f, 10.0f, 0.06f,   0.50f, 0.7f, 0.30f),
-        synthPreset ("Slow sweep",     200.0f, 0.60f, 1.0f, 15.0f, 0.50f,   2.00f, 0.5f, 2.0f)
+        synthPreset ("Slow sweep",     200.0f, 0.60f, 1.0f, 15.0f, 0.50f,   2.00f, 0.5f, 2.0f),
+        synthTweakPreset ("Pad: Warm analog", [] (TestSynthParams& p) {
+            p.cutoffHz.store (750.0f); p.resonance.store (0.15f); p.envAmount.store (0.2f); p.detuneCents.store (20.0f);
+            p.attack.store (1.0f); p.decay.store (2.0f); p.sustain.store (0.85f); p.release.store (2.5f);
+            layer (p.osc, 0, OscSettings::saw, -1, 0, 0.35f, 6.0f);
+        }),
+        synthTweakPreset ("Pad: Airy", [] (TestSynthParams& p) {
+            p.cutoffHz.store (3200.0f); p.resonance.store (0.1f); p.envAmount.store (0.1f); p.detuneCents.store (14.0f);
+            p.attack.store (1.6f); p.decay.store (2.0f); p.sustain.store (0.9f); p.release.store (3.0f);
+            layer (p.osc, 1, OscSettings::sine, 1, 0, 0.35f);
+        }),
+        synthTweakPreset ("Pad: Dark drone", [] (TestSynthParams& p) {
+            p.cutoffHz.store (320.0f); p.resonance.store (0.5f); p.envAmount.store (0.15f); p.detuneCents.store (25.0f);
+            p.attack.store (2.0f); p.decay.store (3.0f); p.sustain.store (1.0f); p.release.store (4.0f);
+            layer (p.osc, 0, OscSettings::square, -1, 0, 0.4f);
+        }),
+        synthTweakPreset ("Pad: Fifths", [] (TestSynthParams& p) {
+            p.cutoffHz.store (1500.0f); p.resonance.store (0.2f); p.envAmount.store (0.15f); p.detuneCents.store (12.0f);
+            p.attack.store (0.8f); p.decay.store (2.0f); p.sustain.store (0.85f); p.release.store (2.0f);
+            layer (p.osc, 0, OscSettings::saw, 0, 7, 0.45f, -4.0f);
+        })
     };
 
     static const std::vector<FactorySound> kits {
@@ -356,6 +392,31 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
             p.cutoffHz.store (200.0f); p.shape.store (1.0f); p.envAmount.store (0.9f);
             p.attack.store (0.5f); p.decay.store (3.0f); p.sustain.store (0.3f); p.release.store (2.0f);
             p.lfoRate.store (0.2f); p.lfoFilter.store (0.3f);
+        }),
+        polyPreset ("Pad: Juno strings", [] (PolyParams& p) {
+            p.cutoffHz.store (2200.0f); p.resonance.store (0.1f); p.envAmount.store (0.1f); p.mix.store (0.5f); p.pulseWidth.store (0.3f);
+            p.attack.store (0.7f); p.decay.store (1.5f); p.sustain.store (0.9f); p.release.store (2.0f);
+            p.detuneCents.store (16.0f); p.unison.store (3); p.lfoRate.store (0.5f); p.lfoPulse.store (0.4f);
+        }),
+        polyPreset ("Pad: Dreamy", [] (PolyParams& p) {
+            p.cutoffHz.store (1400.0f); p.resonance.store (0.25f); p.envAmount.store (0.15f);
+            p.attack.store (2.0f); p.decay.store (3.0f); p.sustain.store (0.9f); p.release.store (3.5f);
+            p.detuneCents.store (20.0f); p.unison.store (4); p.lfoRate.store (0.2f); p.lfoFilter.store (0.3f); p.noise.store (0.05f);
+        }),
+        polyPreset ("Pad: Hollow choir", [] (PolyParams& p) {
+            p.cutoffHz.store (1000.0f); p.resonance.store (0.4f); p.shape.store (0.5f); p.envAmount.store (0.1f);
+            p.attack.store (1.0f); p.decay.store (2.0f); p.sustain.store (0.9f); p.release.store (2.5f);
+            p.detuneCents.store (12.0f); p.unison.store (2); p.mix.store (0.3f); p.lfoRate.store (0.3f); p.lfoPulse.store (0.3f);
+        }),
+        polyPreset ("Pad: Brass swell", [] (PolyParams& p) {
+            p.cutoffHz.store (500.0f); p.resonance.store (0.15f); p.envAmount.store (0.5f);
+            p.attack.store (1.5f); p.decay.store (2.5f); p.sustain.store (0.8f); p.release.store (1.5f);
+            p.detuneCents.store (10.0f); p.unison.store (2); p.mix.store (0.2f);
+        }),
+        polyPreset ("Pad: Octaves", [] (PolyParams& p) {
+            p.cutoffHz.store (1800.0f); p.resonance.store (0.15f); p.envAmount.store (0.1f); p.octave.store (1); p.mix.store (0.5f);
+            p.attack.store (1.2f); p.decay.store (2.0f); p.sustain.store (0.9f); p.release.store (2.5f);
+            p.detuneCents.store (9.0f); p.unison.store (2); p.lfoRate.store (0.25f); p.lfoFilter.store (0.1f);
         })
     };
 
@@ -390,6 +451,26 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
         wavePreset ("Sync stab", [] (WaveParams& p) {
             p.table.store (3); p.position.store (0.1f); p.sweep.store (0.8f); p.unison.store (2);
             p.decay.store (0.25f); p.sustain.store (0.0f); p.release.store (0.2f);
+        }),
+        wavePreset ("Pad: Shimmer", [] (WaveParams& p) {
+            p.table.store (1); p.position.store (0.7f); p.sweep.store (0.0f); p.cutoffHz.store (9000.0f);
+            p.unison.store (4); p.detuneCents.store (20.0f); p.lfoPosition.store (0.5f); p.lfoRate.store (0.1f);
+            p.attack.store (1.5f); p.decay.store (2.0f); p.sustain.store (0.9f); p.release.store (3.0f);
+        }),
+        wavePreset ("Pad: Vox choir", [] (WaveParams& p) {
+            p.table.store (2); p.position.store (0.3f); p.sweep.store (0.0f); p.cutoffHz.store (5000.0f);
+            p.unison.store (3); p.detuneCents.store (14.0f); p.lfoPosition.store (0.4f); p.lfoRate.store (0.2f); p.sub.store (0.2f);
+            p.attack.store (1.0f); p.decay.store (2.0f); p.sustain.store (0.9f); p.release.store (2.5f);
+        }),
+        wavePreset ("Pad: Digital ice", [] (WaveParams& p) {
+            p.table.store (3); p.position.store (0.6f); p.sweep.store (0.1f); p.cutoffHz.store (7000.0f); p.resonance.store (0.2f);
+            p.unison.store (2); p.detuneCents.store (10.0f); p.lfoFilter.store (0.3f); p.lfoRate.store (0.15f);
+            p.attack.store (0.8f); p.decay.store (2.0f); p.sustain.store (0.85f); p.release.store (2.0f);
+        }),
+        wavePreset ("Pad: Deep space", [] (WaveParams& p) {
+            p.table.store (0); p.position.store (0.2f); p.sweep.store (0.0f); p.cutoffHz.store (1500.0f); p.sub.store (0.35f);
+            p.unison.store (3); p.detuneCents.store (16.0f); p.lfoPosition.store (0.2f); p.lfoRate.store (0.07f); p.noise.store (0.04f);
+            p.attack.store (2.0f); p.decay.store (3.0f); p.sustain.store (1.0f); p.release.store (4.0f);
         })
     };
 
@@ -434,6 +515,29 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
             p.algorithm.store (1); setOperators (p, { 1.0f, 3.0f, 1.0f, 5.0f }, { 1.0f, 0.6f, 0.4f, 0.3f });
             p.brightness.store (0.7f); p.biteDecay.store (0.08f); p.biteSustain.store (0.0f);
             p.decay.store (0.5f); p.sustain.store (0.0f); p.release.store (0.3f);
+        }),
+        fmPreset ("Pad: Crystal", [] (FmParams& p) {
+            p.algorithm.store (4); setOperators (p, { 1.0f, 3.0f, 5.0f, 7.0f }, { 1.0f, 0.35f, 0.25f, 0.2f });
+            p.brightness.store (0.3f); p.biteDecay.store (2.0f); p.biteSustain.store (0.5f); p.detuneCents.store (10.0f);
+            p.attack.store (1.2f); p.decay.store (2.0f); p.sustain.store (0.9f); p.release.store (3.0f);
+            p.lfoRate.store (0.3f); p.lfoBrightness.store (0.2f);
+        }),
+        fmPreset ("Pad: Warm FM", [] (FmParams& p) {
+            p.algorithm.store (6); setOperators (p, { 1.0f, 1.0f, 2.0f, 0.5f }, { 1.0f, 0.5f, 0.3f, 0.2f });
+            p.brightness.store (0.25f); p.biteDecay.store (1.5f); p.biteSustain.store (0.6f); p.detuneCents.store (6.0f);
+            p.attack.store (1.0f); p.decay.store (2.0f); p.sustain.store (0.9f); p.release.store (2.5f);
+            p.lfoRate.store (4.0f); p.lfoPitch.store (0.05f);
+        }),
+        fmPreset ("Pad: Bell pad", [] (FmParams& p) {
+            p.algorithm.store (2); setOperators (p, { 1.0f, 3.5f, 1.0f, 2.0f }, { 1.0f, 0.4f, 0.5f, 0.3f });
+            p.brightness.store (0.4f); p.biteDecay.store (1.0f); p.biteSustain.store (0.3f); p.detuneCents.store (8.0f);
+            p.attack.store (0.6f); p.decay.store (2.5f); p.sustain.store (0.8f); p.release.store (3.0f);
+        }),
+        fmPreset ("Pad: Breathing", [] (FmParams& p) {
+            p.algorithm.store (5); setOperators (p, { 1.0f, 2.0f, 1.0f, 3.0f }, { 1.0f, 0.5f, 0.6f, 0.3f });
+            p.brightness.store (0.35f); p.biteSustain.store (0.7f); p.detuneCents.store (7.0f);
+            p.attack.store (1.5f); p.decay.store (2.0f); p.sustain.store (0.9f); p.release.store (3.0f);
+            p.lfoRate.store (0.15f); p.lfoBrightness.store (0.5f);
         })
     };
 
@@ -491,6 +595,21 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
         noisePreset ("Riser", [] (NoiseParams& p) {
             p.cutoffHz.store (300.0f); p.keyFollow.store (0.0f); p.envAmount.store (0.9f); p.resonance.store (0.5f);
             p.attack.store (4.0f); p.sustain.store (1.0f); p.release.store (1.0f); p.width.store (1.0f);
+        }),
+        noisePreset ("Pad: Wind choir", [] (NoiseParams& p) {
+            p.colour.store (0.4f); p.tone.store (0.75f); p.cutoffHz.store (5000.0f); p.width.store (1.0f);
+            p.lfoRate.store (0.2f); p.lfoFilter.store (0.3f); p.lfoColour.store (0.2f);
+            p.attack.store (2.0f); p.sustain.store (1.0f); p.release.store (3.0f);
+        }),
+        noisePreset ("Pad: Ring shimmer", [] (NoiseParams& p) {
+            p.source.store (NoiseParams::ring); p.mod.store (0.9f); p.tone.store (0.5f); p.width.store (0.9f);
+            p.filterMode.store (NoiseParams::bandPass); p.cutoffHz.store (1500.0f); p.keyFollow.store (1.0f); p.resonance.store (0.3f); p.level.store (2.5f);
+            p.attack.store (1.5f); p.sustain.store (1.0f); p.release.store (2.5f);
+        }),
+        noisePreset ("Pad: Tuned breath", [] (NoiseParams& p) {
+            p.source.store (NoiseParams::fmNoise); p.colour.store (0.6f); p.mod.store (0.15f); p.cutoffHz.store (4000.0f); p.level.store (0.7f);
+            p.width.store (0.8f); p.attack.store (1.2f); p.sustain.store (1.0f); p.release.store (2.5f);
+            layer (p.osc, 0, OscSettings::sine, 0, 0, 0.3f);
         })
     };
 
@@ -523,6 +642,20 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
         }),
         voicePreset ("Numbers station", "cero siete tres nueve", speech::spanish, [] (VoiceParams& p) {
             p.lofi.store (0.85f); p.speed.store (0.75f); p.intonation.store (0.1f);
+        }),
+        voicePreset ("Pad: Choir aah", "a", speech::spanish, [] (VoiceParams& p) {
+            p.mode.store (VoiceParams::singWords); p.intonation.store (0.0f); p.buzz.store (0.1f);
+            p.attack.store (0.6f); p.release.store (1.5f); p.velocity.store (0.2f);
+            layer (p.osc, 0, OscSettings::saw, 0, 0, 0.15f, 7.0f);
+        }),
+        voicePreset ("Pad: Choir ooh", "u", speech::spanish, [] (VoiceParams& p) {
+            p.mode.store (VoiceParams::singWords); p.intonation.store (0.0f); p.buzz.store (0.05f); p.size.store (0.6f);
+            p.attack.store (0.8f); p.release.store (1.8f); p.velocity.store (0.2f); p.level.store (1.5f);
+            layer (p.osc, 0, OscSettings::triangle, 0, 0, 0.2f, -6.0f);
+        }),
+        voicePreset ("Pad: Robot choir", "e", speech::spanish, [] (VoiceParams& p) {
+            p.mode.store (VoiceParams::singWords); p.intonation.store (0.0f); p.buzz.store (0.9f); p.lofi.store (0.25f);
+            p.attack.store (0.5f); p.release.store (1.2f);
         })
     };
 
@@ -549,6 +682,15 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
         vocoderPreset ("Tiny voice (formants up)", [] (VocoderParams& p) { p.vocoder.shift.store (0.72f); }),
         vocoderPreset ("Whisper vocoder", [] (VocoderParams& p) {
             p.noise.store (1.0f); p.osc.main.store (0.0f); p.vocoder.sibilance.store (0.5f); p.level.store (2.0f);
+        }),
+        vocoderPreset ("Pad: Vocoder choir", [] (VocoderParams& p) {
+            p.wave.store (VocoderParams::threeSaws); p.detune.store (0.7f); p.attack.store (1.0f); p.release.store (2.5f);
+            p.vocoder.bands.store (4); p.vocoder.response.store (0.65f); p.vocoder.sibilance.store (0.15f);
+        }),
+        vocoderPreset ("Pad: Hold and speak", [] (VocoderParams& p) {
+            p.wave.store (VocoderParams::saw); p.detune.store (0.5f); p.attack.store (0.6f); p.release.store (3.0f);
+            p.vocoder.response.store (0.5f); p.noise.store (0.15f);
+            layer (p.osc, 0, OscSettings::saw, -1, 0, 0.3f);
         })
     };
 

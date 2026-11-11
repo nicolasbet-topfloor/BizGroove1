@@ -2483,6 +2483,59 @@ static void testVocoder()
     }
 }
 
+// Pad sounds: every synth has some, and they swell in slowly and keep sounding while held.
+static void testPads()
+{
+    std::cout << "Pad sounds\n";
+    constexpr int block = 512;
+    bool allSwell = true, allSustain = true, enough = true, finite = true;
+    for (int type : { (int) Track::testSynth, (int) Track::poly, (int) Track::wavetable, (int) Track::fm,
+                      (int) Track::noise, (int) Track::voice, (int) Track::vocoder })
+    {
+        int pads = 0;
+        for (const auto& fs : Presets::factorySounds (type))
+        {
+            if (! fs.name.startsWith ("Pad:"))
+                continue;
+            ++pads;
+            if (type == Track::vocoder)
+                continue;   // a vocoder needs something to listen to: tested with the vocoder
+            AudioEngine e;
+            e.prepareToPlay (block, 48000.0);
+            e.selectedTrack.store (0);
+            Presets::applySoundVar (e.track (0), fs.sound);
+            e.track (0).type.store (type);
+            e.keyboardState.noteOn (1, 60, 0.8f);
+            e.keyboardState.noteOn (1, 64, 0.8f);
+            e.keyboardState.noteOn (1, 67, 0.8f);
+            juce::AudioBuffer<float> buf (2, block);
+            std::vector<float> levels;   // the peak of every block, for 4 seconds
+            for (int b = 0; b < 375; ++b)
+            {
+                buf.clear();
+                e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, block));
+                levels.push_back (buf.getMagnitude (0, 0, block));
+                finite = finite && std::isfinite (buf.getSample (0, 0)) && std::isfinite (buf.getSample (1, block - 1));
+            }
+            const float start = levels[4];                           // after 40 ms
+            const float full = *std::max_element (levels.begin(), levels.end());
+            const float late = levels.back();                        // after 4 seconds, still held
+            const bool swell = start < 0.5f * full;
+            const bool sustain = late > 0.3f * full && full > 0.02f;
+            if (! swell || ! sustain)
+                std::cout << "    " << fs.name << ": start " << start << ", full " << full << ", after 4 s " << late << "\n";
+            allSwell = allSwell && swell;
+            allSustain = allSustain && sustain;
+        }
+        enough = enough && pads >= 2;
+        if (pads < 2) std::cout << "    only " << pads << " pads for " << Presets::instrumentName (type) << "\n";
+    }
+    check (enough, "pads: every synth has pad sounds");
+    check (allSwell, "pads: they swell in slowly");
+    check (allSustain, "pads: they keep sounding while held");
+    check (finite, "pads: with no NaN");
+}
+
 // Hold: notes keep sounding after the keys are let go, until Hold is switched off.
 static void testHold()
 {
@@ -2649,6 +2702,7 @@ int main (int argc, char* argv[])
     testOscillators();
     testVoice();
     testVocoder();
+    testPads();
     testKnobPage();
     testChordSteps();
     testRecordChord();
