@@ -643,6 +643,22 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
         voicePreset ("Numbers station", "cero siete tres nueve", speech::spanish, [] (VoiceParams& p) {
             p.lofi.store (0.85f); p.speed.store (0.75f); p.intonation.store (0.1f);
         }),
+        voicePreset ("Ultratumba (from beyond the grave)", "estoy... detras de ti.", speech::spanish, [] (VoiceParams& p) {
+            p.size.store (1.0f); p.speed.store (0.55f); p.intonation.store (0.35f); p.buzz.store (0.55f);
+            p.whisper.store (0.35f); p.lofi.store (0.15f); p.release.store (1.2f); p.level.store (1.6f); p.glide.store (0.08f);
+            layer (p.osc, 0, OscSettings::saw, -1, 0, 0.25f, -10.0f);   // a growl an octave below
+        }),
+        voicePreset ("Alien from outer space", "we come in peace. take me to your leader.", speech::english, [] (VoiceParams& p) {
+            p.size.store (0.05f); p.speed.store (1.3f); p.intonation.store (0.9f); p.buzz.store (0.8f); p.lofi.store (0.4f);
+            p.glide.store (0.05f); p.osc.main.store (0.6f); p.osc.ring.store (true);
+            layer (p.osc, 0, OscSettings::sine, 1, 0, 0.0f);
+            layer (p.osc, 1, OscSettings::square, 0, 7, 0.5f);   // ring-modulated: a metallic, unearthly buzz
+        }),
+        voicePreset ("Bruja (witch)", "je je je... ven aqu\xc3\xad, mi peque\xc3\xb1o.", speech::spanish, [] (VoiceParams& p) {
+            p.size.store (0.2f); p.speed.store (0.85f); p.intonation.store (1.0f); p.buzz.store (0.3f);
+            p.whisper.store (0.45f); p.release.store (0.5f); p.level.store (1.3f);
+            layer (p.osc, 0, OscSettings::triangle, 1, 0, 0.1f, 15.0f);   // a thin, cracked edge
+        }),
         voicePreset ("Pad: Choir aah", "a", speech::spanish, [] (VoiceParams& p) {
             p.mode.store (VoiceParams::singWords); p.intonation.store (0.0f); p.buzz.store (0.1f);
             p.attack.store (0.6f); p.release.store (1.5f); p.velocity.store (0.2f);
