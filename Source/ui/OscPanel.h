@@ -2,6 +2,7 @@
 
 #include "LaunchkeyPanel.h"   // PanelKnob
 #include "LookAndFeel.h"
+#include "ScopeView.h"
 
 namespace bizgroove
 {
@@ -51,20 +52,73 @@ public:
             b->setWantsKeyboardFocus (false);
             addAndMakeVisible (b);
         }
-        setSize (labelWidth + 7 * knobWidth, 2 * rowHeight + 10);
+        addAndMakeVisible (scope);
+        for (auto& v : waveViews)
+            addAndMakeVisible (*v);
+
+        // The controller's eight knobs follow this window: page 1 is oscillator 1, page 2 oscillator 2.
+        pageLabel.setText ("Controller knobs:", juce::dontSendNotification);
+        pageLabel.setColour (juce::Label::textColourId, Colours::textDim);
+        addAndMakeVisible (pageLabel);
+        for (int pg = 0; pg < 2; ++pg)
+        {
+            auto& b = pageButtons[(size_t) pg];
+            b.setButtonText ("Oscillator " + juce::String (pg + 1));
+            b.setWantsKeyboardFocus (false);
+            b.setTooltip ("The controller's eight knobs turn this oscillator's row. The controller's track arrows switch rows too.");
+            b.onClick = [this, pg] { engine.knobPage.store (pg + 1); };
+            addAndMakeVisible (b);
+        }
+        pageHint.setText ("or the track arrows on the controller", juce::dontSendNotification);
+        pageHint.setColour (juce::Label::textColourId, Colours::textDim);
+        addAndMakeVisible (pageHint);
+        engine.knobOverlay.store (AudioEngine::overlayOsc);
+        engine.knobPages.store (2);
+        engine.knobPage.store (1);
+
+        setSize (labelWidth + 7 * knobWidth, scopeHeight + 2 * rowHeight + 10 + footerHeight);
         startTimerHz (15);
         refreshButtons();
+        refreshPage();
+    }
+
+    ~OscPanel() override
+    {
+        if (engine.knobOverlay.load() == AudioEngine::overlayOsc)
+        {
+            engine.knobOverlay.store (AudioEngine::overlayNone);
+            engine.knobPage.store (0);
+        }
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        // The row the controller's knobs turn.
+        const int page = juce::jlimit (1, 2, engine.knobPage.load());
+        g.setColour (Colours::accent.withAlpha (0.09f));
+        g.fillRoundedRectangle (juce::Rectangle<int> (0, scopeHeight + (page - 1) * (rowHeight + 10), getWidth(), rowHeight).reduced (2).toFloat(), 6.0f);
     }
 
     void resized() override
     {
         auto r = getLocalBounds();
+        scope.setBounds (r.removeFromTop (scopeHeight).reduced (6, 6));
+        auto footer = r.removeFromBottom (footerHeight).reduced (8, 6);
+        pageLabel.setBounds (footer.removeFromLeft (120));
+        for (auto& b : pageButtons)
+        {
+            b.setBounds (footer.removeFromLeft (110));
+            footer.removeFromLeft (6);
+        }
+        pageHint.setBounds (footer.withTrimmedLeft (10));
         for (int n = 0; n < 2; ++n)
         {
             auto line = r.removeFromTop (rowHeight);
             auto left = line.removeFromLeft (labelWidth).reduced (6, 8);
             auto& row = rows[(size_t) n];
             row.title.setBounds (left.removeFromTop (22));
+            left.removeFromTop (4);
+            waveViews[(size_t) n]->setBounds (left.removeFromTop (64));
             for (auto& k : row.knobs)
                 k->setBounds (line.removeFromLeft (knobWidth));
             // The last column: the synth's own sound on the first row, sync and ring on the second.
@@ -82,7 +136,19 @@ public:
     }
 
 private:
-    static constexpr int labelWidth = 120, knobWidth = 100, rowHeight = 124;
+    static constexpr int labelWidth = 120, knobWidth = 100, rowHeight = 124, scopeHeight = 140, footerHeight = 40;
+
+    void refreshPage()
+    {
+        shownPage = engine.knobPage.load();
+        for (int pg = 0; pg < 2; ++pg)
+        {
+            const bool on = pg + 1 == shownPage;
+            pageButtons[(size_t) pg].setColour (juce::TextButton::buttonColourId, on ? Colours::accent : Colours::panelEdge);
+            pageButtons[(size_t) pg].setColour (juce::TextButton::textColourOffId, on ? juce::Colours::black : Colours::text);
+        }
+        repaint();
+    }
 
     OscSettings* settings()
     {
@@ -123,6 +189,10 @@ private:
         }
         if (s->sync.load() != shownSync || s->ring.load() != shownRing)
             refreshButtons();
+        if (engine.knobPage.load() != shownPage)
+            refreshPage();
+        for (auto& v : waveViews)
+            v->setSettings (s);   // redrawn as the knobs turn
         mainKnob->refresh();
         for (auto& row : rows)
             for (auto& k : row.knobs)
@@ -141,6 +211,11 @@ private:
     std::array<Row, 2> rows;
     juce::TextButton syncButton { "Sync 2 to 1" }, ringButton { "Ring 1 x 2" };
     bool shownSync = false, shownRing = false;
+    int shownPage = -1;
+    ScopeView scope { engine };
+    std::array<std::unique_ptr<OscWaveView>, 2> waveViews { { std::make_unique<OscWaveView> (0), std::make_unique<OscWaveView> (1) } };
+    juce::Label pageLabel, pageHint;
+    std::array<juce::TextButton, 2> pageButtons;
 };
 
 } // namespace bizgroove
