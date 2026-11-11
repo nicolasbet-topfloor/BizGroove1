@@ -6,6 +6,7 @@
 #include "ArpPanel.h"
 #include "OscPanel.h"
 #include "VoicePanel.h"
+#include "LfoPanel.h"
 
 namespace bizgroove
 {
@@ -252,6 +253,12 @@ LaunchkeyPanel::LaunchkeyPanel (AudioEngine& e, const ControlTargets& t)
     };
     addChildComponent (voiceTextButton);
 
+    styleHardwareButton (lfoButton, "This track's two LFOs: slow waves that move any of its knobs up and down, free or in time with the song.", true);
+    lfoButton.onClick = [this] {
+        juce::CallOutBox::launchAsynchronously (std::make_unique<LfoPanel> (engine, targets), lfoButton.getBounds(), this);
+    };
+    addAndMakeVisible (lfoButton);
+
     pads.setTwoRows (true);
     addAndMakeVisible (pads);
 
@@ -280,6 +287,7 @@ LaunchkeyPanel::LaunchkeyPanel (AudioEngine& e, const ControlTargets& t)
     styleHardwareButton (arpButton, "BizGroove's arpeggiator: plays the notes you hold one after another, in time with the song. "
                                     "Click to switch it on and choose how it plays. (The Launchkey has its own arp too.)", true);
     arpButton.onClick = [this] {
+        engine.arp.on.store (true);   // the button switches the arpeggiator on; it is switched off in its window
         juce::CallOutBox::launchAsynchronously (std::make_unique<ArpPanel> (engine, targets), arpButton.getBounds(), this);
     };
     styleHardwareButton (fixedChordButton, "On the Launchkey, Fixed Chord plays a stored chord from one key. " + onDevice, false);
@@ -911,7 +919,14 @@ void LaunchkeyPanel::resized()
     else
         oscButton.setBounds (right.getX() + 16, controls.getY() + 106, right.getWidth() - 16, 26);
     editSampleButton.setBounds (right.getX() + 22 + halfW, controls.getY() + 106, halfW, 26);
-    recSourceButton.setBounds (right.getX() + 16, controls.getY() + 136, right.getWidth() - 16, 24);
+    const bool recordRow = shownType == Track::sampler || shownType == Track::drums || shownType == Track::external;
+    if (recordRow)
+    {
+        recSourceButton.setBounds (right.getX() + 16, controls.getY() + 136, halfW, 24);
+        lfoButton.setBounds (right.getX() + 22 + halfW, controls.getY() + 136, halfW, 24);
+    }
+    else
+        lfoButton.setBounds (right.getX() + 16, controls.getY() + 136, right.getWidth() - 16, 24);
     trackInfo.setBounds (right.getX() - 120, controls.getY() + 34, right.getWidth() + 120, 22);
     const int bw = (right.getWidth() - 10) / 2;
     arpButton.setBounds (right.getX(), padTop, bw, rowH);
