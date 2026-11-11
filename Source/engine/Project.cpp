@@ -98,6 +98,7 @@ juce::var Project::toVar (AudioEngine& e)
         o->setProperty ("vocoder", vocoderParamsToVar (tr.vocoderParams));
         o->setProperty ("external", externalParamsToVar (tr.ext, tr.externalDeviceName));
         o->setProperty ("inserts", insertsToVar (tr.inserts));
+        o->setProperty ("lfos", lfosToVar (tr.lfos));
 
         auto* kit = new Obj();
         kit->setProperty ("choke", tr.kit.choke.load());
@@ -289,6 +290,7 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
             applyExternalParams (tr.ext, tr.externalDeviceName, o["external"]);
             tr.externalDeviceId = {};   // found again by name on this computer
             applyInserts (tr.inserts, o["inserts"]);
+            applyLfos (tr.lfos, o["lfos"]);
 
             const auto k = o["kit"];
             tr.kit.choke.store (getB (k, "choke", true));
