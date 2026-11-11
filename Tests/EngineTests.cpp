@@ -1636,6 +1636,64 @@ static void testKnobPage()
     e.knobPage.store (0);
 }
 
+// The controller's knobs follow the Oscillators and Effects windows, a page at a time; the
+// track arrows turn the pages. And the oscilloscope hears the selected track.
+static void testWindowKnobs()
+{
+    std::cout << "Window knobs and scope\n";
+    AudioEngine e;
+    ControlTargets targets (e);
+    e.selectedTrack.store (0);
+    auto& tr = e.track (0);
+    tr.type.store (Track::poly);
+
+    e.knobOverlay.store (AudioEngine::overlayOsc);
+    e.knobPages.store (2);
+    e.knobPage.store (1);
+    targets.applyValue ("panel.knob.6", 0.8f);
+    targets.applyValue ("panel.knob.7", 0.4f);
+    check (std::abs (tr.polyParams.osc.osc[0].level.load() - 0.8f) < 1.0e-4f && std::abs (tr.polyParams.osc.main.load() - 0.4f) < 1.0e-4f,
+           "window knobs: with Oscillators open, the knobs turn oscillator 1 and the synth's own sound");
+    targets.applyButton ("track.next", true);
+    check (e.knobPage.load() == 2 && e.selectedTrack.load() == 0, "window knobs: the track arrow turns the page, not the track");
+    targets.applyValue ("panel.knob.6", 0.3f);
+    targets.applyValue ("panel.knob.8", 0.9f);
+    check (std::abs (tr.polyParams.osc.osc[1].level.load() - 0.3f) < 1.0e-4f && tr.polyParams.osc.ring.load(),
+           "window knobs: page 2 turns oscillator 2, and knob 8 switches ring on");
+    targets.applyButton ("track.next", true);
+    check (e.knobPage.load() == 2, "window knobs: the pages stop at the last one");
+
+    e.knobOverlay.store (AudioEngine::overlayFx);
+    e.knobPages.store (2);
+    e.knobPage.store (1);
+    tr.inserts[1].choose (InsertEffects::delay);
+    targets.applyValue ("panel.knob.5", 0.95f);
+    check (InsertEffects::delayTime (tr.inserts[1].knob[0].load()) == InsertEffects::numDelayTimes - 1,
+           "window knobs: with Effects open, knob 5 turns effect 2's first knob");
+    targets.applyButton ("track.next", true);
+    targets.applyValue ("panel.knob.1", 0.65f);
+    check (std::abs (tr.mix.reverb.load() - 0.65f) < 1.0e-4f, "window knobs: page 2 turns the reverb send");
+
+    e.knobOverlay.store (AudioEngine::overlayNone);
+    e.knobPage.store (0);
+    targets.applyButton ("track.next", true);
+    check (e.selectedTrack.load() == 1, "window knobs: with the windows closed, the arrow changes track again");
+
+    // The scope: the selected track's sound reaches it.
+    e.prepareToPlay (512, 48000.0);
+    e.selectedTrack.store (0);
+    e.keyboardState.noteOn (1, 60, 0.9f);
+    juce::AudioBuffer<float> buf (2, 512);
+    for (int b = 0; b < 10; ++b)
+    {
+        buf.clear();
+        e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 512));
+    }
+    float peak = 0.0f;
+    for (const auto& v : e.scope) peak = juce::jmax (peak, std::abs (v.load()));
+    check (e.scopeWrite.load() == 5120 && peak > 0.01f, "scope: it holds the selected track's sound");
+}
+
 // Levels: how loud each factory sound plays the same notes, to even them out. Information only.
 static void testLevels()
 {
@@ -2771,6 +2829,7 @@ int main (int argc, char* argv[])
     testVocoder();
     testPads();
     testOwnReverbDelay();
+    testWindowKnobs();
     testKnobPage();
     testChordSteps();
     testRecordChord();
