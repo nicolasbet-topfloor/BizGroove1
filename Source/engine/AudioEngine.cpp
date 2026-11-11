@@ -421,6 +421,17 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
             for (size_t slot = 0; slot < tr.insertFx.size(); ++slot)
                 tr.insertFx[slot].process (trackBuffer, numSamples, tr.inserts[slot], fxContext);
 
+        // The oscilloscope and spectrum show the selected track as it sounds now.
+        if (t == sel)
+        {
+            const int w = scopeWrite.load (std::memory_order_relaxed);
+            const float* l = trackBuffer.getReadPointer (0);
+            const float* r = trackBuffer.getReadPointer (1);
+            for (int i = 0; i < numSamples; ++i)
+                scope[(size_t) ((w + i) & (scopeSize - 1))].store (0.5f * (l[i] + r[i]), std::memory_order_relaxed);
+            scopeWrite.store ((w + numSamples) & 0x3fffffff, std::memory_order_release);
+        }
+
         bool audible = ! tr.mute.load() && (! anySolo || tr.mix.solo.load());
         if (only != -1)
             audible = (t == only);
