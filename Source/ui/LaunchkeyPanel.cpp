@@ -386,12 +386,21 @@ void LaunchkeyPanel::showMore()
                 addAndMakeVisible (knob);
             }
             setSize (labelWidth + juce::jmax (1, juce::jmin (8, count)) * knobWidth, rows * rowHeight);
+            engine.knobOverlay.store (AudioEngine::overlayMore);
+            engine.knobPages.store (rows);
             engine.knobPage.store (1);
             showPage();
             startTimerHz (15);
         }
 
-        ~MoreWindow() override { engine.knobPage.store (0); }
+        ~MoreWindow() override
+        {
+            if (engine.knobOverlay.load() == AudioEngine::overlayMore)
+            {
+                engine.knobOverlay.store (AudioEngine::overlayNone);
+                engine.knobPage.store (0);
+            }
+        }
 
         void resized() override
         {
