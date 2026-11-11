@@ -90,6 +90,19 @@ public:
         1, 2... = that row of eight in the More window, while it is open. */
     std::atomic<int> knobPage { 0 };
 
+    /** Which open window the eight knobs follow (with knobPage as its page), and how many
+        pages it has: while one is open, the controller's track arrows turn its pages. */
+    enum KnobOverlay { overlayNone = 0, overlayMore, overlayOsc, overlayFx };
+    std::atomic<int> knobOverlay { overlayNone };
+    std::atomic<int> knobPages { 0 };
+
+    /** The selected track's sound, after its effects and before its volume, for the
+        oscilloscope and spectrum: a ring of the latest samples (audio thread writes). */
+    static constexpr int scopeSize = 8192;
+    std::array<std::atomic<float>, scopeSize> scope {};
+    std::atomic<int> scopeWrite { 0 };
+    double getSampleRate() const { return currentRate; }
+
     /** Hold: notes keep sounding after you let go of the keys, for long, evolving sounds.
         Playing again once every key is up starts a new held chord; switching it off lets them go. */
     std::atomic<bool> hold { false };
