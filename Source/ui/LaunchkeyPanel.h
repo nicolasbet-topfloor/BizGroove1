@@ -152,6 +152,7 @@ private:
     juce::TextButton fxButton { "Effects" };
     juce::TextButton oscButton { "Oscillators" };
     juce::TextButton voiceTextButton { "Text..." };
+    juce::TextButton lfoButton { "LFO" };
     juce::String shownVoiceText;
     juce::TextButton loadSampleButton { "Load sample..." };
     juce::TextButton editSampleButton { "Edit..." }, recSourceButton { "Rec: mic / line in" }, padsModeButton { "Pads: play" };
