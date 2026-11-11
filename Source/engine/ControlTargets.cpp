@@ -847,6 +847,40 @@ ControlTargets::ControlTargets (AudioEngine& e)
          [oscOf] { auto* o = oscOf(); return o != nullptr && o->ring.load() ? 0.75f : 0.25f; },
          [] (float v) { return v >= 0.5f ? juce::String ("Ring on") : juce::String ("Ring off"); });
 
+    // The arpeggiator's on / off and Hold as knobs, for the controller: the right half is on.
+    add ("arp.onknob", "Arpeggiator on / off (knob)", "Arpeggiator", TargetKind::continuous,
+         [&e] (float v) { e.arp.on.store (v >= 0.5f); }, [&e] { return e.arp.on.load() ? 0.75f : 0.25f; },
+         [] (float v) { return v >= 0.5f ? juce::String ("Arp on") : juce::String ("Arp off"); });
+    add ("perform.holdknob", "Hold on / off (knob)", "Performance", TargetKind::continuous,
+         [&e] (float v) { e.hold.store (v >= 0.5f); }, [&e] { return e.hold.load() ? 0.75f : 0.25f; },
+         [] (float v) { return v >= 0.5f ? juce::String ("Hold on") : juce::String ("Hold off"); });
+
+    // ---- The selected track's two LFOs
+    for (int n = 0; n < 2; ++n)
+    {
+        const auto id = "lfo" + juce::String (n + 1);
+        const auto name = "LFO " + juce::String (n + 1);
+        auto lfo = [&e, n]() -> LfoSettings& { return e.selected().lfos[(size_t) n]; };
+        add (id + ".shape", name + " shape", "LFO", TargetKind::continuous,
+             [lfo] (float v) { lfo().shape.store (juce::jlimit (0, LfoSettings::numShapes - 1, (int) (v * ((float) LfoSettings::numShapes - 0.001f)))); },
+             [lfo] { return ((float) lfo().shape.load() + 0.5f) / (float) LfoSettings::numShapes; },
+             [] (float v) { return LfoSettings::shapeName (juce::jlimit (0, LfoSettings::numShapes - 1, (int) (v * ((float) LfoSettings::numShapes - 0.001f)))); });
+        add (id + ".rate", name + " speed", "LFO", TargetKind::continuous,
+             [lfo] (float v) { lfo().rate.store (v); }, [lfo] { return lfo().rate.load(); },
+             [] (float v) { return LfoSettings::rateName (v); });
+        add (id + ".depth", name + " amount", "LFO", TargetKind::continuous,
+             [lfo] (float v) { lfo().depth.store (std::abs (v - 0.5f) < 0.01f ? 0.0f : v * 2.0f - 1.0f); },
+             [lfo] { return (lfo().depth.load() + 1.0f) * 0.5f; },
+             [] (float v) { const int p = juce::roundToInt ((v * 2.0f - 1.0f) * 100.0f); return std::abs (p) <= 1 ? juce::String ("Off") : (p > 0 ? "+" : "") + juce::String (p) + "%"; });
+        add (id + ".fade", name + " fade in", "LFO", TargetKind::continuous,
+             [lfo] (float v) { lfo().fade.store (v < 0.01f ? 0.0f : expMap (v, 0.05f, 8.0f)); },
+             [lfo] { return lfo().fade.load() <= 0.001f ? 0.0f : expInv (lfo().fade.load(), 0.05f, 8.0f); },
+             [] (float v) { return v < 0.01f ? juce::String ("None") : seconds (expMap (v, 0.05f, 8.0f)); });
+        add (id + ".retrigger", name + " restarts on each note (knob)", "LFO", TargetKind::continuous,
+             [lfo] (float v) { lfo().retrigger.store (v >= 0.5f); }, [lfo] { return lfo().retrigger.load() ? 0.75f : 0.25f; },
+             [] (float v) { return v >= 0.5f ? juce::String ("Restarts") : juce::String ("Free"); });
+    }
+
     // ---- Panel knobs 1-8: whatever the loaded synth puts on that knob.
     for (int k = 0; k < 8; ++k)
     {
@@ -862,6 +896,18 @@ ControlTargets::ControlTargets (AudioEngine& e)
                 if (k < 6) return find ("osc" + juce::String (n) + "." + ids[k]);
                 if (n == 1) return k == 6 ? find ("osc.main") : nullptr;
                 return find (k == 6 ? "osc.syncknob" : "osc.ringknob");
+            }
+            // The LFO window: knobs 1-4 LFO 1 (shape, speed, amount, fade in), 5-8 LFO 2.
+            if (overlay == AudioEngine::overlayLfo)
+            {
+                static const char* ids[4] = { "shape", "rate", "depth", "fade" };
+                return find ("lfo" + juce::String (k < 4 ? 1 : 2) + "." + ids[k % 4]);
+            }
+            // The arpeggiator window: its five knobs, then on / off and Hold.
+            if (overlay == AudioEngine::overlayArp)
+            {
+                static const char* ids[7] = { "arp.mode", "arp.rate", "arp.octaves", "arp.gate", "arp.swing", "arp.onknob", "perform.holdknob" };
+                return k < 7 ? find (ids[k]) : nullptr;
             }
             // The Effects window: page 1 the two effect slots, page 2 the shared reverb and delay, page 3 what the vocoder hears.
             if (overlay == AudioEngine::overlayFx)
@@ -959,6 +1005,36 @@ const ControlTargets::Target* ControlTargets::find (const juce::String& id) cons
 {
     const auto it = index.find (id);
     return it != index.end() ? &targets[it->second] : nullptr;
+}
+
+int ControlTargets::indexOf (const juce::String& id) const
+{
+    const auto it = index.find (id);
+    return it != index.end() ? (int) it->second : -1;
+}
+
+bool ControlTargets::lfoCanMove (const Target& t)
+{
+    if (t.kind != TargetKind::continuous || ! t.get || ! t.set)
+        return false;
+    for (const char* group : { "Transport", "Stems", "Steps", "Panel", "Performance", "Arpeggiator", "LFO", "Song" })
+        if (t.group == group)
+            return false;
+    for (const char* prefix : { "stem.", "panel.", "track.select", "fx1.type", "fx2.type", "osc.syncknob", "osc.ringknob", "track.glidemode" })
+        if (t.id.startsWith (prefix))
+            return false;
+    return ! t.id.endsWith ("glidemode");
+}
+
+void ControlTargets::resolveLfos (AudioEngine& e) const
+{
+    for (int t = 0; t < AudioEngine::numTracks; ++t)
+        for (auto& l : e.track (t).lfos)
+            if (l.destIndex.load() == -2)
+            {
+                const int i = indexOf (l.destId);
+                l.destIndex.store (i >= 0 && lfoCanMove (targets[(size_t) i]) ? i : -1);
+            }
 }
 
 void ControlTargets::applyValue (const juce::String& id, float value01) const
