@@ -400,6 +400,22 @@ ControlTargets::ControlTargets (AudioEngine& e)
     add ("master.delayfeedback", "Delay repeats", "Transport", TargetKind::continuous,
          [&e] (float v) { e.effects.delayFeedback.store (v * 0.9f); },
          [&e] { return e.effects.delayFeedback.load() / 0.9f; }, percent);
+    auto among = [] (float v, int count) { return juce::jlimit (0, count - 1, (int) (v * ((float) count - 0.001f))); };
+    add ("master.reverbtype", "Reverb type", "Transport", TargetKind::continuous,
+         [&e, among] (float v) { e.effects.reverbType.store (among (v, MasterEffects::numReverbTypes)); },
+         [&e] { return ((float) e.effects.reverbType.load() + 0.5f) / (float) MasterEffects::numReverbTypes; },
+         [among] (float v) { return MasterEffects::reverbTypeName (among (v, MasterEffects::numReverbTypes)); });
+    add ("master.reverbtone", "Reverb tone", "Transport", TargetKind::continuous,
+         [&e] (float v) { e.effects.reverbTone.store (v); }, [&e] { return e.effects.reverbTone.load(); },
+         [] (float v) { return v < 0.35f ? juce::String ("Dark") : v > 0.65f ? juce::String ("Bright") : juce::String ("Natural"); });
+    add ("master.delaytype", "Delay type", "Transport", TargetKind::continuous,
+         [&e, among] (float v) { e.effects.delayType.store (among (v, MasterEffects::numDelayTypes)); },
+         [&e] { return ((float) e.effects.delayType.load() + 0.5f) / (float) MasterEffects::numDelayTypes; },
+         [among] (float v) { return MasterEffects::delayTypeName (among (v, MasterEffects::numDelayTypes)); });
+    add ("master.delaytime", "Delay time (in time with the tempo)", "Transport", TargetKind::continuous,
+         [&e, among] (float v) { e.effects.delayDivision.store (among (v, 4)); },
+         [&e] { return ((float) e.effects.delayDivision.load() + 0.5f) / 4.0f; },
+         [among] (float v) { return MasterEffects::divisionName (among (v, 4)); });
 
     // ---- Sampler: the selected track's sampler
     auto sm = [&e]() -> Sampler::Params& { return e.selected().samplerEngine.params; };

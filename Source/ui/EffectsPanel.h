@@ -83,6 +83,28 @@ public:
             addChildComponent (*vocoderKnobs[i]);
         }
 
+        // The shared reverb and delay: how much this track sends, and how they sound (the same as in the Mixer).
+        sendTitle.setText ("Reverb and delay (shared by all tracks)", juce::dontSendNotification);
+        sendTitle.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+        sendTitle.setColour (juce::Label::textColourId, Colours::text);
+        addAndMakeVisible (sendTitle);
+        const std::array<SynthKnob, 8> shared { {
+            { "Reverb send", "track.reverb",         "How much of this track goes to the shared reverb." },
+            { "Delay send",  "track.delay",          "How much of this track goes to the shared delay." },
+            { "Reverb type", "master.reverbtype",    "Room / hall: a space. Plate: dense and bright. Spring: the springy boing of guitar amps and dub. For every track." },
+            { "Size",        "master.reverbsize",    "From a small room to a large hall (the spring: how long it rings). For every track." },
+            { "Tone",        "master.reverbtone",    "The reverb from dark to bright. For every track." },
+            { "Delay type",  "master.delaytype",     "Digital: clean echoes that bounce left and right. Tape echo: warm and wobbly. For every track." },
+            { "Time",        "master.delaytime",     "How far apart the echoes are, in time with the tempo. For every track." },
+            { "Repeats",     "master.delayfeedback", "How many echoes: one, a few or many (the tape echo can run away). For every track." }
+        } };
+        for (size_t i = 0; i < shared.size(); ++i)
+        {
+            sendKnobs[i] = std::make_unique<PanelKnob> (targets);
+            sendKnobs[i]->setKnob (shared[i]);
+            addAndMakeVisible (*sendKnobs[i]);
+        }
+
         relabel();
         startTimerHz (20);
     }
@@ -111,16 +133,22 @@ public:
             r.removeFromTop (10);
         }
 
+        sendTitle.setBounds (r.removeFromTop (20).reduced (6, 0));
+        auto sends = r.removeFromTop (rowHeight);
+        for (auto& knob : sendKnobs)
+            knob->setBounds (sends.removeFromLeft (sendWidth));
+        r.removeFromTop (6);
+
         perfTitle.setBounds (r.removeFromTop (20).reduced (6, 0));
-        auto line = r.removeFromTop (84);
+        auto line = r.removeFromTop (110);
         for (auto* b : { &repeatButton, &stutterButton, &stopButton })
-            b->setBounds (line.removeFromLeft (100).reduced (6, 22));
-        division.setBounds (line.removeFromLeft (110).reduced (4, 27));
+            b->setBounds (line.removeFromLeft (100).reduced (6, 35));
+        division.setBounds (line.removeFromLeft (110).reduced (4, 40));
         stopKnob->setBounds (line.removeFromLeft (knobWidth));
     }
 
 private:
-    static constexpr int knobWidth = 100, rowHeight = 124;
+    static constexpr int knobWidth = 100, rowHeight = 124, sendWidth = 92;
 
     void relabel()
     {
@@ -149,8 +177,8 @@ private:
         vocoderTitle.setVisible (vocoder);
         for (auto& knob : vocoderKnobs)
             knob->setVisible (vocoder);
-        const int width = juce::jmax (150 + 4 * knobWidth, 100 + 5 * knobWidth);
-        const int height = 2 * rowHeight + 10 + (vocoder ? rowHeight + 10 : 0) + 104;
+        const int width = juce::jmax (150 + 4 * knobWidth, 100 + 5 * knobWidth, 8 * sendWidth);
+        const int height = 2 * rowHeight + 10 + (vocoder ? rowHeight + 10 : 0) + 20 + rowHeight + 6 + 130;
         if (getWidth() != width || getHeight() != height)
             setSize (width, height);
         else
@@ -170,6 +198,8 @@ private:
         if (showVocoder)
             for (auto& knob : vocoderKnobs)
                 knob->refresh();
+        for (auto& knob : sendKnobs)
+            knob->refresh();
 
         // Light the buttons, also when a controller switched them on.
         repeatButton.setToggleState (engine.perform.repeat.load(), juce::dontSendNotification);
@@ -208,6 +238,8 @@ private:
     juce::Label vocoderTitle;
     std::array<std::unique_ptr<PanelKnob>, 5> vocoderKnobs;
     bool showVocoder = false;
+    juce::Label sendTitle;
+    std::array<std::unique_ptr<PanelKnob>, 8> sendKnobs;
     bool heldDown[3] { false, false, false };
     int shownTrack = -1;
 };

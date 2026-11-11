@@ -2536,6 +2536,73 @@ static void testPads()
     check (finite, "pads: with no NaN");
 }
 
+// Reverb and delay in the Effects window: each track's own, and the shared ones.
+static void testOwnReverbDelay()
+{
+    std::cout << "Reverb and delay effects\n";
+    constexpr double rate = 48000.0;
+    // The delay: a click comes back after the time set, in step with the tempo.
+    {
+        InsertProcessor fx;
+        fx.prepare (rate);
+        InsertSettings s;
+        s.choose (InsertEffects::delay);
+        s.knob[0].store (0.4f);   // 1/8
+        s.knob[1].store (0.0f);   // one repeat
+        s.knob[2].store (1.0f);
+        s.knob[3].store (1.0f);
+        EffectContext ctx;
+        ctx.bpm = 120.0;          // an eighth is 0.25 s
+        juce::AudioBuffer<float> buf (2, 512);
+        std::vector<float> out;
+        for (int b = 0; b < 60; ++b)
+        {
+            buf.clear();
+            if (b == 0) { buf.setSample (0, 0, 1.0f); buf.setSample (1, 0, 1.0f); }
+            fx.process (buf, 512, s, ctx);
+            for (int i = 0; i < 512; ++i) out.push_back (buf.getSample (0, i));
+        }
+        size_t loudest = 1;
+        for (size_t i = 100; i < out.size(); ++i)
+            if (std::abs (out[i]) > std::abs (out[loudest])) loudest = i;
+        check (std::abs ((double) loudest - 0.25 * rate) < 50.0, "delay: the echo comes after 1/8 at 120 BPM ("
+                                                                    + juce::String ((double) loudest / rate, 3) + " s)");
+        check (InsertEffects::delayName (0.4f) == "1/8" && InsertEffects::delayName (1.0f) == "Dotted 1/4", "delay: the times have their names");
+    }
+    // The reverb: the sound rings on after it stops.
+    {
+        InsertProcessor fx;
+        fx.prepare (rate);
+        InsertSettings s;
+        s.choose (InsertEffects::reverb);
+        s.knob[3].store (1.0f);
+        EffectContext ctx;
+        juce::AudioBuffer<float> buf (2, 512);
+        float tail = 0.0f;
+        for (int b = 0; b < 40; ++b)
+        {
+            buf.clear();
+            if (b < 4)
+                for (int i = 0; i < 512; ++i) { const float v = (float) std::sin (0.05 * (b * 512 + i)); buf.setSample (0, i, v); buf.setSample (1, i, v); }
+            fx.process (buf, 512, s, ctx);
+            if (b == 20) tail = buf.getMagnitude (0, 0, 512);
+        }
+        check (tail > 0.005f, "reverb: the track's own reverb rings on after the sound stops");
+    }
+    // The shared reverb and delay, from the Effects window's knobs.
+    {
+        AudioEngine e;
+        ControlTargets targets (e);
+        targets.applyValue ("master.reverbtype", 0.9f);
+        targets.applyValue ("master.delaytype", 0.9f);
+        targets.applyValue ("master.delaytime", 0.0f);
+        targets.applyValue ("track.reverb", 0.6f);
+        check (e.effects.reverbType.load() == MasterEffects::spring && e.effects.delayType.load() == MasterEffects::tape
+                   && e.effects.delayDivision.load() == MasterEffects::sixteenth && std::abs (e.selected().mix.reverb.load() - 0.6f) < 1.0e-6f,
+               "effects window: the shared reverb and delay are set from its knobs");
+    }
+}
+
 // Hold: notes keep sounding after the keys are let go, until Hold is switched off.
 static void testHold()
 {
@@ -2703,6 +2770,7 @@ int main (int argc, char* argv[])
     testVoice();
     testVocoder();
     testPads();
+    testOwnReverbDelay();
     testKnobPage();
     testChordSteps();
     testRecordChord();

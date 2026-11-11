@@ -14,7 +14,7 @@ namespace bizgroove
     before its volume, pan and sends. */
 struct InsertEffects
 {
-    enum Type { off = 0, chorus, flanger, phaser, ensemble, drive, lofi, autoFilter, compressor, duck, tremolo, harmonicTremolo, vocoder, numTypes };
+    enum Type { off = 0, chorus, flanger, phaser, ensemble, drive, lofi, autoFilter, compressor, duck, tremolo, harmonicTremolo, vocoder, reverb, delay, numTypes };
 
     static juce::String name (int type)
     {
@@ -32,6 +32,8 @@ struct InsertEffects
             case tremolo:    return "Tremolo";
             case harmonicTremolo: return "Harmonic tremolo (vintage)";
             case vocoder:    return "Vocoder";
+            case reverb:     return "Reverb (this track's own)";
+            case delay:      return "Delay (this track's own)";
             default:         return "Off";
         }
     }
@@ -53,6 +55,8 @@ struct InsertEffects
             case tremolo:    return { { "Depth", "Speed", "Shape", "Stereo" } };
             case harmonicTremolo: return { { "Depth", "Speed", "Crossover", "Stereo" } };
             case vocoder:    return { { "Mix", "Shift", "Response", "Sibilance" } };
+            case reverb:     return { { "Size", "Tone", "Width", "Mix" } };
+            case delay:      return { { "Time", "Repeats", "Tone", "Mix" } };
             default:         return { { "-", "-", "-", "-" } };
         }
     }
@@ -74,6 +78,8 @@ struct InsertEffects
             case tremolo:    return { { 0.6f, 0.3f, 0.0f, 0.0f } };
             case harmonicTremolo: return { { 0.6f, 0.25f, 0.45f, 0.0f } };
             case vocoder:    return { { 1.0f, 0.5f, 0.35f, 0.3f } };
+            case reverb:     return { { 0.5f, 0.5f, 1.0f, 0.3f } };
+            case delay:      return { { 0.45f, 0.35f, 0.5f, 0.3f } };
             default:         return { { 0.5f, 0.5f, 0.5f, 0.5f } };
         }
     }
@@ -129,6 +135,14 @@ struct InsertEffects
                 if (knob == 1) { const int s = juce::roundToInt (VocoderSettings::shiftSemitones (v)); return s == 0 ? juce::String ("None") : (s > 0 ? "+" : "") + juce::String (s) + " st"; }
                 if (knob == 2) return juce::String (juce::roundToInt (VocoderSettings::releaseMs (v))) + " ms";
                 break;
+            case reverb:
+                if (knob == 1) return v < 0.35f ? juce::String ("Dark") : v > 0.65f ? juce::String ("Bright") : juce::String ("Natural");
+                if (knob == 2) return v < 0.01f ? juce::String ("Mono") : pct (v);
+                break;
+            case delay:
+                if (knob == 0) return delayName (v) + " (in time)";
+                if (knob == 2) return v < 0.35f ? juce::String ("Dark") : v > 0.65f ? juce::String ("Bright") : juce::String ("Natural");
+                break;
             default:
                 return "-";
         }
@@ -165,6 +179,20 @@ struct InsertEffects
         return names[juce::jlimit (0, numTremoloShapes - 1, s)];
     }
     static float crossoverHz (float v) { return 200.0f * std::pow (10.0f, juce::jlimit (0.0f, 1.0f, v)); }      // 200 Hz .. 2 kHz
+
+    // Delay: the Time knob in note lengths that follow the tempo.
+    static constexpr int numDelayTimes = 7;
+    static int delayTime (float v) { return juce::jlimit (0, numDelayTimes - 1, (int) (juce::jlimit (0.0f, 1.0f, v) * ((float) numDelayTimes - 0.001f))); }
+    static double delayBeats (float v)
+    {
+        static constexpr double beats[numDelayTimes] = { 0.25, 1.0 / 3.0, 0.5, 0.75, 2.0 / 3.0, 1.0, 1.5 };
+        return beats[delayTime (v)];
+    }
+    static juce::String delayName (float v)
+    {
+        static const char* names[numDelayTimes] = { "1/16", "1/8 triplet", "1/8", "Dotted 1/8", "1/4 triplet", "1/4", "Dotted 1/4" };
+        return names[delayTime (v)];
+    }
 };
 
 /** One insert slot's settings, shared with the UI and controllers. */
@@ -208,6 +236,11 @@ public:
     {
         sr = sampleRate;
         vocoderCore.prepare (sampleRate);
+        ownReverb.setSampleRate (sampleRate);
+        const int echoSize = juce::nextPowerOfTwo ((int) (sampleRate * 2.0) + 4);   // 2 seconds of echo
+        for (auto& line : echo)
+            line.assign ((size_t) echoSize, 0.0f);
+        echoMask = echoSize - 1;
         const int size = juce::nextPowerOfTwo ((int) (sampleRate * 0.06) + 4);   // 60 ms
         for (auto& line : lines)
             line.assign ((size_t) size, 0.0f);
@@ -233,6 +266,12 @@ public:
         tremLowL = tremLowR = 0.0f;
         tremCycle = { { -1, -1 } };
         vocoderCore.reset();
+        ownReverb.reset();
+        for (auto& line : echo)
+            std::fill (line.begin(), line.end(), 0.0f);
+        echoWrite = 0;
+        echoSamples = -1.0;
+        echoToneL = echoToneR = 0.0f;
         lastType = -1;
     }
 
@@ -271,6 +310,8 @@ public:
             case InsertEffects::tremolo:    tremoloProcess (l, r, numSamples, k, ctx, false); break;
             case InsertEffects::harmonicTremolo: tremoloProcess (l, r, numSamples, k, ctx, true); break;
             case InsertEffects::vocoder:    vocoderProcess (l, r, numSamples, k, ctx); break;
+            case InsertEffects::reverb:     reverbProcess (l, r, numSamples, k); break;
+            case InsertEffects::delay:      delayProcess (l, r, numSamples, k, ctx); break;
             default: break;
         }
     }
@@ -529,6 +570,50 @@ private:
 
     /** Tremolo: the volume beats up and down. The vintage harmonic tremolo of 1960s amps splits the
         sound in lows and highs and beats them in turn, so it pulses without ever going quiet. */
+    /** The track's own reverb (separate from the shared one the sends feed). */
+    void reverbProcess (float* l, float* r, int n, const std::array<float, 4>& k)
+    {
+        juce::Reverb::Parameters p;
+        p.roomSize = 0.3f + 0.68f * k[0];
+        p.damping = 0.9f - 0.8f * k[1];
+        p.width = k[2];
+        p.wetLevel = 0.6f * k[3];
+        p.dryLevel = 1.0f - 0.5f * k[3];
+        p.freezeMode = 0.0f;
+        ownReverb.setParameters (p);
+        ownReverb.processStereo (l, r, n);
+    }
+
+    /** The track's own echo, in time with the tempo, each repeat a little darker (or brighter). */
+    void delayProcess (float* l, float* r, int n, const std::array<float, 4>& k, const EffectContext& ctx)
+    {
+        const double wanted = juce::jlimit (16.0, (double) echoMask - 4.0,
+                                            InsertEffects::delayBeats (k[0]) * 60.0 / juce::jlimit (20.0, 300.0, ctx.bpm) * sr);
+        if (echoSamples < 0.0)
+            echoSamples = wanted;
+        const float feedback = 0.9f * k[1];
+        const float toneCoef = 0.05f + 0.9f * k[2];   // how much of the repeat's highs survive
+        const float mix = k[3];
+        const double size = (double) (echoMask + 1);
+        for (int i = 0; i < n; ++i)
+        {
+            echoSamples += 0.0005 * (wanted - echoSamples);   // a new tempo or time glides there, without clicks
+            double pos = (double) echoWrite - echoSamples;
+            while (pos < 0.0) pos += size;
+            const int i0 = (int) pos & echoMask, i1 = (i0 + 1) & echoMask;
+            const float frac = (float) (pos - std::floor (pos));
+            const float dl = echo[0][(size_t) i0] + frac * (echo[0][(size_t) i1] - echo[0][(size_t) i0]);
+            const float dr = echo[1][(size_t) i0] + frac * (echo[1][(size_t) i1] - echo[1][(size_t) i0]);
+            echoToneL += toneCoef * (dl - echoToneL);
+            echoToneR += toneCoef * (dr - echoToneR);
+            echo[0][(size_t) echoWrite] = l[i] + feedback * echoToneL;
+            echo[1][(size_t) echoWrite] = r[i] + feedback * echoToneR;
+            echoWrite = (echoWrite + 1) & echoMask;
+            l[i] += mix * (dl - 0.3f * mix * l[i]);
+            r[i] += mix * (dr - 0.3f * mix * r[i]);
+        }
+    }
+
     /** The vocoder: the track's sound is the carrier, made to speak by what the track's vocoder listens to. */
     void vocoderProcess (float* l, float* r, int n, const std::array<float, 4>& k, const EffectContext& ctx)
     {
@@ -618,6 +703,11 @@ private:
 
     double sr = 44100.0;
     VocoderCore vocoderCore;
+    juce::Reverb ownReverb;
+    std::array<std::vector<float>, 2> echo;
+    int echoMask = 0, echoWrite = 0;
+    double echoSamples = -1.0;
+    float echoToneL = 0.0f, echoToneR = 0.0f;
     std::array<std::vector<float>, 2> lines;
     int write = 0, mask = 0;
     double lfoPhase = 0.0, slowPhase = 0.0, fastPhase = 0.0;
