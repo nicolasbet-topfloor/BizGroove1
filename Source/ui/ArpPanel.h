@@ -37,14 +37,34 @@ public:
             knobs[i]->setKnob (list[i]);
             addAndMakeVisible (*knobs[i]);
         }
-        setSize (110 + 5 * 104, 128);
+        hint.setText ("Controller: knobs 1-5 as shown, knob 6 Arp on / off, knob 7 Hold", juce::dontSendNotification);
+        hint.setColour (juce::Label::textColourId, Colours::textDim);
+        hint.setFont (juce::FontOptions (12.0f));
+        addAndMakeVisible (hint);
+
+        // While this window is open the controller's knobs turn the arpeggiator.
+        engine.knobOverlay.store (AudioEngine::overlayArp);
+        engine.knobPages.store (1);
+        engine.knobPage.store (1);
+
+        setSize (110 + 5 * 104, 128 + 26);
         refreshButtons();
         startTimerHz (15);
+    }
+
+    ~ArpPanel() override
+    {
+        if (engine.knobOverlay.load() == AudioEngine::overlayArp)
+        {
+            engine.knobOverlay.store (AudioEngine::overlayNone);
+            engine.knobPage.store (0);
+        }
     }
 
     void resized() override
     {
         auto r = getLocalBounds();
+        hint.setBounds (r.removeFromBottom (26).reduced (10, 2));
         auto left = r.removeFromLeft (110).reduced (8, 18);
         onButton.setBounds (left.removeFromTop (40));
         left.removeFromTop (10);
@@ -76,6 +96,7 @@ private:
 
     AudioEngine& engine;
     juce::TextButton onButton { "Arp off" }, holdButton { "Hold" };
+    juce::Label hint;
     std::array<std::unique_ptr<PanelKnob>, 5> knobs;
     bool shownOn = false, shownHold = false;
 };
