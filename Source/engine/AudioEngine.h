@@ -145,6 +145,12 @@ private:
     std::array<juce::MidiBuffer, numTracks> externalMidi;
     juce::AudioBuffer<float> liveInput;
     int liveInputSamples = 0;   // samples of liveInput valid for this block (0: none)
+
+    // What the vocoders listen to: each track's own sound (before its effects and volume) and
+    // every Voice track mixed, kept from the last block, so any track can feed any other.
+    juce::AudioBuffer<float> tapNow, tapPrev, modulatorBuffer;
+    int tapPrevSamples = 0;
+    const float* buildModulator (const VocoderSettings& s, int numSamples);
     double currentRate = 44100.0;
     PerformProcessor performFx;
     juce::int64 freeSamples = 0;   // always running, for effects that move with the beat while stopped

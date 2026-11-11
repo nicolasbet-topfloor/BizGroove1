@@ -582,6 +582,104 @@ ControlTargets::ControlTargets (AudioEngine& e)
          [np] { return expInv (np().level.load(), 0.25f, 4.0f); },
          [] (float v) { const float db = juce::Decibels::gainToDecibels (expMap (v, 0.25f, 4.0f)); return (db >= 0.0f ? "+" : "") + juce::String (db, 1) + " dB"; });
 
+    // ---- Voice
+    auto vp = [&e]() -> VoiceParams& { return e.selected().voiceParams; };
+    auto choose = [] (float v, int count) { return juce::jlimit (0, count - 1, (int) (v * ((float) count - 0.001f))); };
+    add ("voice.mode", "Voice mode", "Voice", TargetKind::continuous,
+         [vp, choose] (float v) { vp().mode.store (choose (v, VoiceParams::numModes)); },
+         [vp] { return ((float) vp().mode.load() + 0.5f) / (float) VoiceParams::numModes; },
+         [choose] (float v) { return VoiceParams::modeName (choose (v, VoiceParams::numModes)); });
+    add ("voice.language", "Voice language", "Voice", TargetKind::continuous,
+         [vp, choose] (float v) { vp().language.store (choose (v, speech::numLanguages)); },
+         [vp] { return ((float) vp().language.load() + 0.5f) / (float) speech::numLanguages; },
+         [choose] (float v) { return speech::languageName (choose (v, speech::numLanguages)); });
+    add ("voice.speed", "Voice speed", "Voice", TargetKind::continuous,
+         [vp] (float v) { vp().speed.store (expMap (v, 0.4f, 2.5f)); },
+         [vp] { return expInv (vp().speed.load(), 0.4f, 2.5f); },
+         [] (float v) { return juce::String (expMap (v, 0.4f, 2.5f), 2) + "x"; });
+    add ("voice.intonation", "Voice intonation", "Voice", TargetKind::continuous,
+         [vp] (float v) { vp().intonation.store (v); }, [vp] { return vp().intonation.load(); },
+         [] (float v) { return v < 0.01f ? juce::String ("Robot") : percent (v); });
+    add ("voice.size", "Voice size", "Voice", TargetKind::continuous,
+         [vp] (float v) { vp().size.store (v); }, [vp] { return vp().size.load(); },
+         [] (float v) { return v < 0.2f ? juce::String ("Tiny") : v < 0.4f ? juce::String ("Small") : v <= 0.6f ? juce::String ("Normal")
+                                       : v <= 0.8f ? juce::String ("Big") : juce::String ("Giant"); });
+    add ("voice.buzz", "Voice buzz", "Voice", TargetKind::continuous,
+         [vp] (float v) { vp().buzz.store (v); }, [vp] { return vp().buzz.load(); }, percent);
+    add ("voice.whisper", "Voice whisper", "Voice", TargetKind::continuous,
+         [vp] (float v) { vp().whisper.store (v); }, [vp] { return vp().whisper.load(); },
+         [] (float v) { return v < 0.01f ? juce::String ("Off") : percent (v); });
+    add ("voice.lofi", "Voice lo-fi", "Voice", TargetKind::continuous,
+         [vp] (float v) { vp().lofi.store (v); }, [vp] { return vp().lofi.load(); },
+         [] (float v) { return v < 0.01f ? juce::String ("Clean") : percent (v); });
+    add ("voice.attack", "Voice fade in", "Voice", TargetKind::continuous,
+         [vp] (float v) { vp().attack.store (expMap (v, 0.001f, 2.0f)); },
+         [vp] { return expInv (vp().attack.load(), 0.001f, 2.0f); },
+         [] (float v) { return seconds (expMap (v, 0.001f, 2.0f)); });
+    add ("voice.release", "Voice fade out", "Voice", TargetKind::continuous,
+         [vp] (float v) { vp().release.store (expMap (v, 0.005f, 4.0f)); },
+         [vp] { return expInv (vp().release.load(), 0.005f, 4.0f); },
+         [] (float v) { return seconds (expMap (v, 0.005f, 4.0f)); });
+    add ("voice.level", "Voice level", "Voice", TargetKind::continuous,
+         [vp] (float v) { vp().level.store (expMap (v, 0.25f, 4.0f)); },
+         [vp] { return expInv (vp().level.load(), 0.25f, 4.0f); },
+         [] (float v) { const float db = juce::Decibels::gainToDecibels (expMap (v, 0.25f, 4.0f)); return (db >= 0.0f ? "+" : "") + juce::String (db, 1) + " dB"; });
+    add ("voice.velocity", "Voice velocity to volume", "Voice", TargetKind::continuous,
+         [vp] (float v) { vp().velocity.store (v); }, [vp] { return vp().velocity.load(); }, percent);
+
+    // ---- Vocoder: the instrument, and what any track's vocoder (instrument or effect) listens to
+    auto vc = [&e]() -> VocoderParams& { return e.selected().vocoderParams; };
+    auto vs = [&e]() -> VocoderSettings& { return e.selected().vocoderParams.vocoder; };
+    add ("vocoder.voice", "Vocoder listens to the Voice tracks", "Vocoder", TargetKind::continuous,
+         [vs] (float v) { vs().voiceLevel.store (v); }, [vs] { return vs().voiceLevel.load(); },
+         [] (float v) { return v < 0.01f ? juce::String ("Off") : percent (v); });
+    add ("vocoder.mic", "Vocoder listens to the microphone", "Vocoder", TargetKind::continuous,
+         [vs] (float v) { vs().micLevel.store (v); }, [vs] { return vs().micLevel.load(); },
+         [] (float v) { return v < 0.01f ? juce::String ("Off") : percent (v); });
+    add ("vocoder.track", "Vocoder listens to a track", "Vocoder", TargetKind::continuous,
+         [vs] (float v) { vs().trackLevel.store (v); }, [vs] { return vs().trackLevel.load(); },
+         [] (float v) { return v < 0.01f ? juce::String ("Off") : percent (v); });
+    add ("vocoder.source", "Vocoder: which track it listens to", "Vocoder", TargetKind::continuous,
+         [vs, choose] (float v) { vs().sourceTrack.store (choose (v, AudioEngine::numTracks)); },
+         [vs] { return ((float) vs().sourceTrack.load() + 0.5f) / (float) AudioEngine::numTracks; },
+         [choose] (float v) { return "Track " + juce::String (choose (v, AudioEngine::numTracks) + 1); });
+    add ("vocoder.bands", "Vocoder bands", "Vocoder", TargetKind::continuous,
+         [vs, choose] (float v) { vs().bands.store (choose (v, VocoderSettings::numBandChoices)); },
+         [vs] { return ((float) vs().bands.load() + 0.5f) / (float) VocoderSettings::numBandChoices; },
+         [choose] (float v) { return juce::String (VocoderSettings::bandCount (choose (v, VocoderSettings::numBandChoices))) + " bands"; });
+    add ("vocoder.shift", "Vocoder formant shift", "Vocoder", TargetKind::continuous,
+         [vs] (float v) { vs().shift.store (v); }, [vs] { return vs().shift.load(); },
+         [] (float v) { const int st = juce::roundToInt (VocoderSettings::shiftSemitones (v)); return st == 0 ? juce::String ("None") : (st > 0 ? "+" : "") + juce::String (st) + " st"; });
+    add ("vocoder.response", "Vocoder response", "Vocoder", TargetKind::continuous,
+         [vs] (float v) { vs().response.store (v); }, [vs] { return vs().response.load(); },
+         [] (float v) { return juce::String (juce::roundToInt (VocoderSettings::releaseMs (v))) + " ms"; });
+    add ("vocoder.sibilance", "Vocoder sibilance", "Vocoder", TargetKind::continuous,
+         [vs] (float v) { vs().sibilance.store (v); }, [vs] { return vs().sibilance.load(); },
+         [] (float v) { return v < 0.01f ? juce::String ("Off") : percent (v); });
+    add ("vocoder.wave", "Vocoder carrier", "Vocoder", TargetKind::continuous,
+         [vc, choose] (float v) { vc().wave.store (choose (v, VocoderParams::numWaves)); },
+         [vc] { return ((float) vc().wave.load() + 0.5f) / (float) VocoderParams::numWaves; },
+         [choose] (float v) { return VocoderParams::waveName (choose (v, VocoderParams::numWaves)); });
+    add ("vocoder.detune", "Vocoder detune", "Vocoder", TargetKind::continuous,
+         [vc] (float v) { vc().detune.store (v); }, [vc] { return vc().detune.load(); }, percent);
+    add ("vocoder.noise", "Vocoder breath", "Vocoder", TargetKind::continuous,
+         [vc] (float v) { vc().noise.store (v); }, [vc] { return vc().noise.load(); },
+         [] (float v) { return v < 0.01f ? juce::String ("Off") : percent (v); });
+    add ("vocoder.attack", "Vocoder fade in", "Vocoder", TargetKind::continuous,
+         [vc] (float v) { vc().attack.store (expMap (v, 0.001f, 4.0f)); },
+         [vc] { return expInv (vc().attack.load(), 0.001f, 4.0f); },
+         [] (float v) { return seconds (expMap (v, 0.001f, 4.0f)); });
+    add ("vocoder.release", "Vocoder fade out", "Vocoder", TargetKind::continuous,
+         [vc] (float v) { vc().release.store (expMap (v, 0.005f, 8.0f)); },
+         [vc] { return expInv (vc().release.load(), 0.005f, 8.0f); },
+         [] (float v) { return seconds (expMap (v, 0.005f, 8.0f)); });
+    add ("vocoder.level", "Vocoder level", "Vocoder", TargetKind::continuous,
+         [vc] (float v) { vc().level.store (expMap (v, 0.25f, 4.0f)); },
+         [vc] { return expInv (vc().level.load(), 0.25f, 4.0f); },
+         [] (float v) { const float db = juce::Decibels::gainToDecibels (expMap (v, 0.25f, 4.0f)); return (db >= 0.0f ? "+" : "") + juce::String (db, 1) + " dB"; });
+    add ("vocoder.velocity", "Vocoder velocity to volume", "Vocoder", TargetKind::continuous,
+         [vc] (float v) { vc().velocity.store (v); }, [vc] { return vc().velocity.load(); }, percent);
+
     // ---- Arpeggiator
     auto pick = [] (float v, int count) { return juce::jlimit (0, count - 1, (int) (v * ((float) count - 0.001f))); };
     add ("arp.on", "Arpeggiator on / off", "Arpeggiator", TargetKind::toggle,
@@ -620,6 +718,12 @@ ControlTargets::ControlTargets (AudioEngine& e)
     add ("noise.glide", "Noise glide", "Noise", TargetKind::continuous,
          [&e, glideSet] (float v) { glideSet (e.selected().noiseParams.glide, v); },
          [&e, glideGet] { return glideGet (e.selected().noiseParams.glide); }, glideShow);
+    add ("vocoder.glide", "Vocoder glide", "Vocoder", TargetKind::continuous,
+         [&e, glideSet] (float v) { glideSet (e.selected().vocoderParams.glide, v); },
+         [&e, glideGet] { return glideGet (e.selected().vocoderParams.glide); }, glideShow);
+    add ("voice.glide", "Voice glide", "Voice", TargetKind::continuous,
+         [&e, glideSet] (float v) { glideSet (e.selected().voiceParams.glide, v); },
+         [&e, glideGet] { return glideGet (e.selected().voiceParams.glide); }, glideShow);
     auto glideOf = [&e]() -> std::atomic<float>* {
         auto& tr = e.selected();
         switch (tr.type.load())
@@ -629,6 +733,8 @@ ControlTargets::ControlTargets (AudioEngine& e)
             case Track::wavetable: return &tr.waveParams.glide;
             case Track::fm:        return &tr.fmParams.glide;
             case Track::noise:     return &tr.noiseParams.glide;
+            case Track::voice:     return &tr.voiceParams.glide;
+            case Track::vocoder:   return &tr.vocoderParams.glide;
             default:               return nullptr;
         }
     };
@@ -641,13 +747,15 @@ ControlTargets::ControlTargets (AudioEngine& e)
             case Track::wavetable: return &tr.waveParams.glideMode;
             case Track::fm:        return &tr.fmParams.glideMode;
             case Track::noise:     return &tr.noiseParams.glideMode;
+            case Track::voice:     return &tr.voiceParams.glideMode;
+            case Track::vocoder:   return &tr.vocoderParams.glideMode;
             default:               return nullptr;
         }
     };
     add ("track.glide", "Glide time (selected track's synth)", "Tracks", TargetKind::continuous,
          [glideOf, glideSet] (float v) { if (auto* g = glideOf()) glideSet (*g, v); },
          [glideOf, glideGet] { auto* g = glideOf(); return g != nullptr ? glideGet (*g) : 0.0f; }, glideShow);
-    for (const char* id : { "synth.glidemode", "poly.glidemode", "wave.glidemode", "fm.glidemode", "noise.glidemode", "track.glidemode" })
+    for (const char* id : { "synth.glidemode", "poly.glidemode", "wave.glidemode", "fm.glidemode", "noise.glidemode", "voice.glidemode", "vocoder.glidemode", "track.glidemode" })
         add (id, "Glide: fixed time or by distance", "Tracks", TargetKind::continuous,
              [glideModeOf, modeSet] (float v) { if (auto* m = glideModeOf()) modeSet (*m, v); },
              [glideModeOf] { auto* m = glideModeOf(); return m != nullptr && m->load() == Glide::byDistance ? 0.75f : 0.25f; }, modeShow);
@@ -662,6 +770,8 @@ ControlTargets::ControlTargets (AudioEngine& e)
             case Track::wavetable: return &tr.waveParams.osc;
             case Track::fm:        return &tr.fmParams.osc;
             case Track::noise:     return &tr.noiseParams.osc;
+            case Track::voice:     return &tr.voiceParams.osc;
+            case Track::vocoder:   return &tr.vocoderParams.osc;
             default:               return nullptr;
         }
     };

@@ -6,6 +6,8 @@
 #include "WavetableSynth.h"
 #include "FmSynth.h"
 #include "NoiseSynth.h"
+#include "VoiceSynth.h"
+#include "VocoderSynth.h"
 #include "ExternalMidi.h"
 #include "Effects.h"
 #include "DrumKit.h"
@@ -20,8 +22,8 @@ namespace bizgroove
     thread; the atomics are shared with the UI and controllers. */
 struct Track
 {
-    enum Type { testSynth = 0, drums = 1, sampler = 2, poly = 3, wavetable = 4, fm = 5, external = 6, noise = 7 };   // index into synthLibrary()
-    static constexpr int numTypes = 8;
+    enum Type { testSynth = 0, drums = 1, sampler = 2, poly = 3, wavetable = 4, fm = 5, external = 6, noise = 7, voice = 8, vocoder = 9 };   // index into synthLibrary()
+    static constexpr int numTypes = 10;
 
     /** Each instrument comes out at its own natural level; this evens them out, so
         switching sounds doesn't jump in volume. Measured on the factory sounds
@@ -43,6 +45,8 @@ struct Track
     static constexpr int numWaveVoices = 8;
     static constexpr int numFmVoices = 8;
     static constexpr int numNoiseVoices = 8;
+    static constexpr int numSpeechVoices = 4;
+    static constexpr int numVocoderVoices = 8;
 
     Track (const Performance& perf)
     {
@@ -70,6 +74,16 @@ struct Track
             noiseSynth.addVoice (new NoiseVoice (noiseParams, perf, (std::uint32_t) (i + 1) * 7919u));
         noiseSynth.addSound (new NoiseSound());
         noiseSynth.setNoteStealingEnabled (true);
+
+        for (int i = 0; i < numSpeechVoices; ++i)
+            voiceSynth.addVoice (new SpeechVoice (voiceParams, perf, (std::uint32_t) (i + 1) * 104729u));
+        voiceSynth.addSound (new VoiceSound());
+        voiceSynth.setNoteStealingEnabled (true);
+
+        for (int i = 0; i < numVocoderVoices; ++i)
+            vocoderSynth.addVoice (new VocoderVoice (vocoderParams, perf, (std::uint32_t) (i + 1) * 15485863u));
+        vocoderSynth.addSound (new VocoderSound());
+        vocoderSynth.setNoteStealingEnabled (true);
     }
 
     std::atomic<int> type { testSynth };
@@ -83,6 +97,8 @@ struct Track
     WaveParams waveParams;
     FmParams fmParams;
     NoiseParams noiseParams;
+    VoiceParams voiceParams;
+    VocoderParams vocoderParams;   // the Vocoder instrument; its listening settings also serve the Vocoder effect
     ExternalParams ext;   // External MIDI tracks
 
     /** External MIDI tracks: the MIDI output they play, by name (kept in
@@ -114,6 +130,9 @@ struct Track
     juce::Synthesiser waveSynth;
     juce::Synthesiser fmSynth;
     juce::Synthesiser noiseSynth;
+    juce::Synthesiser voiceSynth;
+    juce::Synthesiser vocoderSynth;
+    VocoderCore vocoderCore;
     juce::SmoothedValue<float> gain;
     ChannelStrip strip;
     std::array<InsertProcessor, 2> insertFx;

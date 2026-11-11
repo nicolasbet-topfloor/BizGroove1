@@ -94,6 +94,8 @@ private:
             case Track::wavetable: return &tr.waveParams.osc;
             case Track::fm:        return &tr.fmParams.osc;
             case Track::noise:     return &tr.noiseParams.osc;
+            case Track::voice:     return &tr.voiceParams.osc;
+            case Track::vocoder:   return &tr.vocoderParams.osc;
             default:               return nullptr;
         }
     }

@@ -42,6 +42,15 @@ void AudioEngine::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
         for (int i = 0; i < t->noiseSynth.getNumVoices(); ++i)
             if (auto* v = dynamic_cast<NoiseVoice*> (t->noiseSynth.getVoice (i)))
                 v->prepare (sampleRate);
+        t->vocoderSynth.setCurrentPlaybackSampleRate (sampleRate);
+        for (int i = 0; i < t->vocoderSynth.getNumVoices(); ++i)
+            if (auto* v = dynamic_cast<VocoderVoice*> (t->vocoderSynth.getVoice (i)))
+                v->prepare (sampleRate);
+        t->vocoderCore.prepare (sampleRate);
+        t->voiceSynth.setCurrentPlaybackSampleRate (sampleRate);
+        for (int i = 0; i < t->voiceSynth.getNumVoices(); ++i)
+            if (auto* v = dynamic_cast<SpeechVoice*> (t->voiceSynth.getVoice (i)))
+                v->prepare (sampleRate);
         t->kit.prepare (sampleRate);
         t->samplerEngine.prepare (sampleRate, maxBlock);
         t->strip.prepare (sampleRate);
@@ -63,6 +72,12 @@ void AudioEngine::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
     liveInput.clear();
     liveInputSamples = 0;
     trackBuffer.setSize (2, maxBlock);
+    tapNow.setSize (numTracks + 1, maxBlock);
+    tapPrev.setSize (numTracks + 1, maxBlock);
+    modulatorBuffer.setSize (1, maxBlock);
+    tapNow.clear();
+    tapPrev.clear();
+    tapPrevSamples = 0;
     reverbBus.setSize (2, maxBlock);
     delayBus.setSize (2, maxBlock);
     effects.prepare (sampleRate, maxBlock);
@@ -86,6 +101,9 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     if (trackBuffer.getNumSamples() < numSamples)
     {
         trackBuffer.setSize (2, numSamples, false, false, true);
+        tapNow.setSize (numTracks + 1, numSamples, true, true, true);
+        tapPrev.setSize (numTracks + 1, numSamples, true, true, true);
+        modulatorBuffer.setSize (1, numSamples, false, false, true);
         reverbBus.setSize (2, numSamples, false, false, true);
         delayBus.setSize (2, numSamples, false, false, true);
     }
@@ -115,6 +133,8 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         tracks[(size_t) lastSelected]->waveSynth.allNotesOff (0, true);
         tracks[(size_t) lastSelected]->fmSynth.allNotesOff (0, true);
         tracks[(size_t) lastSelected]->noiseSynth.allNotesOff (0, true);
+        tracks[(size_t) lastSelected]->voiceSynth.allNotesOff (0, true);
+        tracks[(size_t) lastSelected]->vocoderSynth.allNotesOff (0, true);
         latched.fill (false);   // Hold: the old track's held notes went with it
         arpScratch.clear();
         arpeggiator.reset (arpScratch, 0);   // and the arpeggiator's (all notes off above)
@@ -169,7 +189,11 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     }
     countInBeatsLeft.store (countInRemaining > 0.0 ? (int) std::ceil (countInRemaining / (currentRate * 60.0 / juce::jlimit (20.0, 300.0, bpm)) - 1.0e-6) : 0);
     if (playing && ! wasPlaying)
+    {
         transportSamples = 0;
+        for (auto& tr : tracks)
+            tr->voiceParams.nextWord.store (0);   // a Voice track sings its words from the first, every time the song starts
+    }
     if (! playing && wasPlaying)
         for (auto& tr : tracks)
             if (tr->type.load() == Track::external)
@@ -189,6 +213,8 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
             tracks[(size_t) t]->waveSynth.allNotesOff (0, false);
             tracks[(size_t) t]->fmSynth.allNotesOff (0, false);
             tracks[(size_t) t]->noiseSynth.allNotesOff (0, false);
+            tracks[(size_t) t]->voiceSynth.allNotesOff (0, false);
+            tracks[(size_t) t]->vocoderSynth.allNotesOff (0, false);
             if (lastType[(size_t) t] == Track::external)
                 tracks[(size_t) t]->ext.panic.store (true);
             lastType[(size_t) t] = type;
@@ -317,6 +343,7 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         anySolo = anySolo || t->mix.solo.load();
     const int only = renderOnlyTrack.load();
 
+    tapNow.clear (numTracks, 0, numSamples);   // the Voice tracks, mixed: added up below
     for (int t = 0; t < numTracks; ++t)
     {
         auto& tr = *tracks[(size_t) t];
@@ -346,6 +373,20 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
                 tr.fmSynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
             else if (type == Track::noise)
                 tr.noiseSynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
+            else if (type == Track::voice)
+            {
+                tr.voiceSynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
+                ++tr.voiceParams.blockCount;
+            }
+            else if (type == Track::vocoder)
+            {
+                // The carrier, made to speak by what this track's vocoder listens to.
+                tr.vocoderSynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
+                const auto& vs = tr.vocoderParams.vocoder;
+                tr.vocoderCore.process (buildModulator (vs, numSamples), trackBuffer.getWritePointer (0), trackBuffer.getWritePointer (1), numSamples,
+                                        VocoderSettings::bandCount (vs.bands.load()), VocoderSettings::shiftSemitones (vs.shift.load()),
+                                        VocoderSettings::releaseMs (vs.response.load()), vs.sibilance.load());
+            }
             else if (type == Track::wavetable)
                 tr.waveSynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
             else if (type == Track::poly)
@@ -358,8 +399,27 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
                 trackBuffer.applyGain (0, numSamples, trim);
         }
 
-        for (size_t slot = 0; slot < tr.insertFx.size(); ++slot)
-            tr.insertFx[slot].process (trackBuffer, numSamples, tr.inserts[slot], fxContext);
+        // What the vocoders hear from this track: its own sound, before effects and volume
+        // (so a muted track can still make another speak). Voice tracks are also mixed together.
+        tapNow.copyFromWithRamp (t, 0, trackBuffer.getReadPointer (0), numSamples, 0.5f, 0.5f);
+        tapNow.addFrom (t, 0, trackBuffer, 1, 0, numSamples, 0.5f);
+        if (type == Track::voice)
+            tapNow.addFrom (numTracks, 0, tapNow, t, 0, numSamples);
+
+        bool vocoderInsert = false;
+        for (const auto& ins : tr.inserts)
+            vocoderInsert = vocoderInsert || ins.type.load() == InsertEffects::vocoder;
+        if (vocoderInsert)
+        {
+            EffectContext ctx = fxContext;
+            ctx.modulator = buildModulator (tr.vocoderParams.vocoder, numSamples);
+            ctx.vocoderBands = VocoderSettings::bandCount (tr.vocoderParams.vocoder.bands.load());
+            for (size_t slot = 0; slot < tr.insertFx.size(); ++slot)
+                tr.insertFx[slot].process (trackBuffer, numSamples, tr.inserts[slot], ctx);
+        }
+        else
+            for (size_t slot = 0; slot < tr.insertFx.size(); ++slot)
+                tr.insertFx[slot].process (trackBuffer, numSamples, tr.inserts[slot], fxContext);
 
         bool audible = ! tr.mute.load() && (! anySolo || tr.mix.solo.load());
         if (only != -1)
@@ -379,6 +439,10 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         }
         tr.level.store (peak);
     }
+
+    // This block's track sounds are what the vocoders hear next block.
+    std::swap (tapNow, tapPrev);
+    tapPrevSamples = numSamples;
 
     // Master effects: reverb and delay returns.
     effects.process (reverbBus, delayBus, *info.buffer, info.startSample, numSamples, bpm);
@@ -583,6 +647,29 @@ bool AudioEngine::renderOffline (const RenderJob& job, juce::AudioBuffer<float>&
     song.currentScene.store (sceneBefore);
     song.reset();
     return completed;
+}
+
+} // namespace bizgroove
+
+namespace bizgroove
+{
+
+const float* AudioEngine::buildModulator (const VocoderSettings& s, int numSamples)
+{
+    float* out = modulatorBuffer.getWritePointer (0);
+    juce::FloatVectorOperations::clear (out, numSamples);
+    const int fromLast = juce::jmin (numSamples, tapPrevSamples);
+    const float mic = s.micLevel.load(), voice = s.voiceLevel.load(), other = s.trackLevel.load();
+    if (mic > 0.0005f && liveInputSamples == numSamples && liveInput.getNumChannels() >= 2)
+    {
+        juce::FloatVectorOperations::addWithMultiply (out, liveInput.getReadPointer (0), mic, numSamples);   // both sides: a microphone is quieter than a synth
+        juce::FloatVectorOperations::addWithMultiply (out, liveInput.getReadPointer (1), mic, numSamples);
+    }
+    if (voice > 0.0005f && fromLast > 0)
+        juce::FloatVectorOperations::addWithMultiply (out, tapPrev.getReadPointer (numTracks), voice, fromLast);
+    if (other > 0.0005f && fromLast > 0)
+        juce::FloatVectorOperations::addWithMultiply (out, tapPrev.getReadPointer (juce::jlimit (0, numTracks - 1, s.sourceTrack.load())), other, fromLast);
+    return out;
 }
 
 } // namespace bizgroove

@@ -1285,6 +1285,11 @@ static void testInserts()
         e.track (0).type.store (Track::poly);
         e.track (0).inserts[0].choose (type);
         e.track (0).inserts[1].choose (type == InsertEffects::drive ? InsertEffects::compressor : InsertEffects::off);
+        if (type == InsertEffects::vocoder)
+        {
+            e.track (0).vocoderParams.vocoder.trackLevel.store (1.0f);   // the vocoder listens to the track itself
+            e.track (0).vocoderParams.vocoder.sourceTrack.store (0);
+        }
         e.keyboardState.noteOn (1, 48, 1.0f);
         e.keyboardState.noteOn (1, 60, 1.0f);
         float peak = 0.0f;
@@ -2096,6 +2101,388 @@ static void testOscillators()
            "osc: a sound keeps its oscillators");
 }
 
+// The Voice: text to speech sounds in Spanish and English, spoken at the note's pitch.
+static void testVoice()
+{
+    std::cout << "Voice\n";
+    using namespace speech;
+    auto say = [] (const char* text, int language) {
+        Script s;
+        compile (juce::String::fromUTF8 (text), language, s);
+        return describe (s);
+    };
+    const std::vector<std::pair<const char*, const char*>> spanishWords {
+        { "hola", "o' l a" }, { "casa", "k a' s a" }, { "perro", "p e' rr o" }, { "ciudad", "s y u d a' d" },
+        { "guitarra", "g i t a' rr a" }, { "llama", "yy a' m a" }, { "canci\xc3\xb3n", "k a n s y o' n" },
+        { "ni\xc3\xb1o", "n i' ny o" }, { "queso", "k e' s o" }, { "gente", "x e' n t e" }, { "rosa", "rr o' s a" }
+    };
+    bool spanishOk = true;
+    for (const auto& [word, want] : spanishWords)
+    {
+        const auto got = say (word, spanish);
+        if (got != want)
+        {
+            spanishOk = false;
+            std::cout << "    " << word << ": " << got << " (want " << want << ")\n";
+        }
+    }
+    check (spanishOk, "voice: Spanish words become the right sounds, stressed where they should be");
+
+    const std::vector<std::pair<const char*, const char*>> englishWords {
+        { "hello", "h ax l o' uh" }, { "make", "m e' ih k h" }, { "cat", "k h ae' t h" }, { "ship", "sh ih' p h" },
+        { "green", "g R i' n" }, { "night", "n a' ih t h" }
+    };
+    bool englishOk = true;
+    for (const auto& [word, want] : englishWords)
+    {
+        const auto got = say (word, english);
+        if (got != want)
+        {
+            englishOk = false;
+            std::cout << "    " << word << ": " << got << " (want " << want << ")\n";
+        }
+    }
+    check (englishOk, "voice: English words (dictionary and rules) become the right sounds");
+
+    {
+        Script s;
+        compile ("uno, dos tres. 47?", spanish, s);
+        check (s.numWords == 5, "voice: words and numbers are counted (" + juce::String (s.numWords) + ")");
+        compile ("", spanish, s);
+        check (s.numWords == 0 && s.numSegs == 0, "voice: no text, nothing to say");
+        juce::String longText;
+        for (int i = 0; i < 400; ++i) longText << "palabra ";
+        compile (longText, spanish, s);
+        check (s.numSegs <= Script::maxSegs && s.numWords <= Script::maxWords, "voice: a very long text is cut, safely");
+    }
+
+    constexpr double rate = 48000.0;
+    constexpr int block = 512;
+    auto render = [] (AudioEngine& e, int blocks, std::vector<float>* keep = nullptr) {
+        juce::AudioBuffer<float> buf (2, block);
+        float peak = 0.0f;
+        bool finite = true;
+        for (int b = 0; b < blocks; ++b)
+        {
+            buf.clear();
+            e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, block));
+            for (int i = 0; i < block; ++i)
+            {
+                const float v = buf.getSample (0, i);
+                finite = finite && std::isfinite (v);
+                peak = juce::jmax (peak, std::abs (v));
+                if (keep != nullptr) keep->push_back (v);
+            }
+        }
+        return finite ? peak : -1.0f;
+    };
+
+    // The whole text: it speaks, then stops by itself even while the key is held.
+    {
+        AudioEngine e;
+        e.prepareToPlay (block, rate);
+        e.selectedTrack.store (0);
+        e.track (0).type.store (Track::voice);
+        e.keyboardState.noteOn (1, 57, 0.9f);
+        const float speaking = render (e, 60);
+        render (e, 200);
+        const float after = render (e, 20);
+        check (speaking > 0.05f && speaking < 1.0f, "voice: it speaks, at a sensible level (peak " + juce::String (speaking, 3) + ")");
+        check (after >= 0.0f && after < 1.0e-4f, "voice: once the text is said it falls silent, even with the key held");
+    }
+
+    // A sung vowel: holds while the key is down, at the note's pitch; "a" and "i" have their own formants.
+    auto sing = [&render] (const char* text, int note, std::vector<float>& x) {
+        AudioEngine e;
+        e.prepareToPlay (block, rate);
+        e.selectedTrack.store (0);
+        auto& vp = e.track (0).voiceParams;
+        e.track (0).type.store (Track::voice);
+        vp.mode.store (VoiceParams::singWords);
+        vp.intonation.store (0.0f);
+        vp.setText (text);
+        e.keyboardState.noteOn (1, note, 0.9f);
+        render (e, 100);
+        return render (e, 40, &x);
+    };
+    auto band = [] (const std::vector<float>& x, double hz) {
+        // Goertzel: the energy near one frequency
+        const double w = juce::MathConstants<double>::twoPi * hz / rate;
+        double s1 = 0.0, s2 = 0.0;
+        for (float v : x) { const double s0 = v + 2.0 * std::cos (w) * s1 - s2; s2 = s1; s1 = s0; }
+        return s1 * s1 + s2 * s2 - 2.0 * std::cos (w) * s1 * s2;
+    };
+    {
+        std::vector<float> a, i;
+        const float held = sing ("a", 45, a);   // 110 Hz
+        sing ("i", 45, i);
+        check (held > 0.02f, "voice: a sung word holds its vowel while the key is down");
+        // The first lag at which the sound repeats itself (the period, not a multiple of it).
+        std::vector<double> corr (1000, 0.0);
+        double best = 0.0;
+        for (int lag = 200; lag < 1000; ++lag)
+        {
+            double ab = 0.0, aa = 0.0;
+            for (size_t k = (size_t) lag; k < a.size(); ++k) { ab += (double) a[k] * a[k - (size_t) lag]; aa += (double) a[k] * a[k]; }
+            corr[(size_t) lag] = ab / juce::jmax (1.0e-12, aa);
+            best = juce::jmax (best, corr[(size_t) lag]);
+        }
+        int bestLag = 200;
+        while (bestLag < 999 && ! (corr[(size_t) bestLag] > 0.9 * best && corr[(size_t) bestLag] >= corr[(size_t) bestLag + 1]))
+            ++bestLag;
+        const double hz = rate / juce::jmax (1, bestLag);
+        check (std::abs (hz - 110.0) < 3.0, "voice: it sings at the note's pitch (" + juce::String (hz, 1) + " Hz)");
+        const double aLowHigh = band (a, 770.0) / band (a, 2310.0), iLowHigh = band (i, 770.0) / band (i, 2310.0);
+        check (aLowHigh > 4.0 * iLowHigh, "voice: an a is open (strong low formant), an i is closed (strong high one)");
+    }
+
+    // Word by word: each note says the next word; a chord says one word.
+    {
+        AudioEngine e;
+        e.prepareToPlay (block, rate);
+        e.selectedTrack.store (0);
+        auto& vp = e.track (0).voiceParams;
+        e.track (0).type.store (Track::voice);
+        vp.mode.store (VoiceParams::wordByWord);
+        vp.setText ("uno dos tres");
+        for (int n = 0; n < 2; ++n)
+        {
+            e.keyboardState.noteOn (1, 60, 0.9f);
+            render (e, 4);
+            e.keyboardState.noteOff (1, 60, 0.0f);
+            render (e, 30);
+        }
+        check (vp.nextWord.load() == 2, "voice: each note says the next word");
+        e.keyboardState.noteOn (1, 60, 0.9f);
+        e.keyboardState.noteOn (1, 64, 0.9f);
+        render (e, 4);
+        check (vp.nextWord.load() == 3, "voice: the notes of a chord say the same word");
+        e.keyboardState.noteOff (1, 60, 0.0f);
+        e.keyboardState.noteOff (1, 64, 0.0f);
+        render (e, 30);
+        e.keyboardState.noteOn (1, 60, 0.9f);
+        render (e, 4);
+        check (vp.nextWord.load() == 1, "voice: after the last word it starts again from the first");
+    }
+
+    // Every factory sound, every mode, lo-fi and whisper: sound and no NaN.
+    {
+        bool allSound = true, allFinite = true;
+        const auto& sounds = Presets::factorySounds (Track::voice);
+        for (const auto& fs : sounds)
+        {
+            AudioEngine e;
+            e.prepareToPlay (block, rate);
+            e.selectedTrack.store (0);
+            Presets::applySoundVar (e.track (0), fs.sound);
+            e.track (0).type.store (Track::voice);
+            e.keyboardState.noteOn (1, 60, 0.9f);
+            const float p = render (e, 60);
+            allFinite = allFinite && p >= 0.0f;
+            allSound = allSound && p > 0.01f;
+            if (p <= 0.01f) std::cout << "    quiet: " << fs.name << " " << p << "\n";
+        }
+        check (sounds.size() >= 8, "voice: has factory sounds");
+        check (allSound && allFinite, "voice: every factory sound speaks, with no NaN");
+    }
+
+    // Saved with the sound: the text, the language and the settings.
+    {
+        AudioEngine e;
+        auto& vp = e.track (0).voiceParams;
+        e.track (0).type.store (Track::voice);
+        vp.setText ("hello robot");
+        vp.language.store (english);
+        vp.mode.store (VoiceParams::singWords);
+        vp.lofi.store (0.6f);
+        Presets::applySoundVar (e.track (5), Presets::soundToVar (e.track (0)));
+        const auto& kept = e.track (5).voiceParams;
+        check (e.track (5).type.load() == Track::voice && kept.getText() == "hello robot" && kept.language.load() == english
+                   && kept.mode.load() == VoiceParams::singWords && std::abs (kept.lofi.load() - 0.6f) < 1.0e-6f && kept.wordCount() == 2,
+               "voice: a sound keeps its text, language and settings");
+    }
+}
+
+// The Vocoder: a synth that speaks with another sound's words: the microphone, the Voice tracks or a track.
+static void testVocoder()
+{
+    std::cout << "Vocoder\n";
+    constexpr double rate = 48000.0;
+    constexpr int block = 512;
+    auto goertzel = [] (const std::vector<float>& x, double hz) {
+        const double w = juce::MathConstants<double>::twoPi * hz / rate;
+        double s1 = 0.0, s2 = 0.0;
+        for (float v : x) { const double s0 = v + 2.0 * std::cos (w) * s1 - s2; s2 = s1; s1 = s0; }
+        return s1 * s1 + s2 * s2 - 2.0 * std::cos (w) * s1 * s2;
+    };
+
+    // The core: the carrier comes out where the modulator has sound, and only there.
+    {
+        VocoderCore core;
+        core.prepare (rate);
+        std::vector<float> mod (block), l (block), r (block), out;
+        double phase = 0.0, modPhase = 0.0;
+        float silentPeak = 0.0f;
+        for (int b = 0; b < 200; ++b)
+        {
+            const bool speaking = b >= 40;
+            for (int i = 0; i < block; ++i)
+            {
+                phase += 100.0 / rate;   // a 100 Hz saw: harmonics every 100 Hz
+                if (phase >= 1.0) phase -= 1.0;
+                l[(size_t) i] = r[(size_t) i] = (float) (2.0 * phase - 1.0) * 0.5f;
+                modPhase += 2000.0 / rate;
+                mod[(size_t) i] = speaking ? 0.3f * (float) std::sin (juce::MathConstants<double>::twoPi * modPhase) : 0.0f;
+            }
+            core.process (mod.data(), l.data(), r.data(), block, 16, 0.0f, 40.0f, 0.0f);
+            if (! speaking && b > 2)
+                for (float v : l) silentPeak = juce::jmax (silentPeak, std::abs (v));
+            if (b >= 100)
+                out.insert (out.end(), l.begin(), l.end());
+        }
+        check (silentPeak < 1.0e-4f, "vocoder: with nothing to listen to, it is silent");
+        const double near = goertzel (out, 2000.0), far = goertzel (out, 300.0) + goertzel (out, 600.0);
+        check (near > 5.0 * far, "vocoder: the carrier sounds where the voice is (2 kHz), not elsewhere (" + juce::String (near / juce::jmax (1.0e-12, far), 1) + "x)");
+        bool finite = true;
+        for (int bands : { 8, 12, 16, 24, 32 })
+            for (float shift : { -12.0f, 0.0f, 12.0f })
+            {
+                core.process (mod.data(), l.data(), r.data(), block, bands, shift, 4.0f, 1.0f);
+                for (float v : l) finite = finite && std::isfinite (v);
+            }
+        check (finite, "vocoder: every band count and shift, with no NaN");
+    }
+
+    auto render = [] (AudioEngine& e, int blocks, int from = 0, const juce::AudioBuffer<float>* input = nullptr) {
+        juce::AudioBuffer<float> buf (2, block);
+        float peak = 0.0f;
+        for (int b = 0; b < blocks; ++b)
+        {
+            if (input != nullptr)
+                e.setLiveInput (*input, 0, block);
+            buf.clear();
+            e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, block));
+            if (b >= from)
+                peak = juce::jmax (peak, buf.getMagnitude (0, 0, block));
+            for (int i = 0; i < block; ++i)
+                if (! std::isfinite (buf.getSample (0, i))) return -1.0f;
+        }
+        return peak;
+    };
+
+    // The instrument, listening to the microphone.
+    {
+        juce::AudioBuffer<float> mic (2, block);
+        juce::Random rnd (7);
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < block; ++i)
+                mic.setSample (ch, i, (rnd.nextFloat() * 2.0f - 1.0f) * 0.2f);
+        for (bool withMic : { true, false })
+        {
+            AudioEngine e;
+            e.prepareToPlay (block, rate);
+            e.selectedTrack.store (0);
+            auto& tr = e.track (0);
+            tr.type.store (Track::vocoder);
+            tr.vocoderParams.vocoder.voiceLevel.store (0.0f);
+            tr.vocoderParams.vocoder.micLevel.store (1.0f);
+            e.keyboardState.noteOn (1, 48, 0.9f);
+            const float peak = render (e, 60, 10, withMic ? &mic : nullptr);
+            if (withMic)
+            {
+                check (peak > 0.05f && peak < 1.5f, "vocoder: the instrument speaks with the microphone (peak " + juce::String (peak, 3) + ")");
+                e.keyboardState.noteOff (1, 48, 0.0f);
+                render (e, 60, 0, &mic);
+                const float after = render (e, 10, 0, &mic);
+                check (after >= 0.0f && after < 1.0e-3f, "vocoder: with no notes playing, the microphone isn't heard through it");
+            }
+            else
+                check (peak >= 0.0f && peak < 1.0e-3f, "vocoder: with the microphone quiet, the instrument is quiet");
+        }
+    }
+
+    // Listening to a Voice track: the Voice says its text, the vocoder speaks it.
+    for (bool listen : { true, false })
+    {
+        AudioEngine e;
+        e.prepareToPlay (block, rate);
+        e.track (1).type.store (Track::voice);
+        e.track (1).voiceParams.setText ("hola hola hola hola hola hola");
+        e.track (0).type.store (Track::vocoder);
+        e.track (0).vocoderParams.vocoder.voiceLevel.store (listen ? 1.0f : 0.0f);
+        e.selectedTrack.store (1);
+        e.keyboardState.noteOn (1, 50, 0.9f);
+        render (e, 2);
+        e.keyboardState.noteOff (1, 50, 0.0f);
+        e.selectedTrack.store (0);
+        e.track (1).mute.store (true);   // only the vocoder is heard
+        render (e, 2);
+        e.keyboardState.noteOn (1, 60, 0.9f);
+        const float peak = render (e, 50, 5);
+        if (listen)
+            check (peak > 0.03f, "vocoder: it speaks with a Voice track (muted, so only the vocoder is heard; peak " + juce::String (peak, 4) + ")");
+        else
+            check (peak >= 0.0f && peak < 1.0e-3f, "vocoder: with Voice in at zero it doesn't hear the Voice");
+    }
+
+    // The Vocoder effect on a Poly track, listening to another track.
+    {
+        AudioEngine e;
+        e.prepareToPlay (block, rate);
+        e.track (2).type.store (Track::voice);
+        e.track (2).voiceParams.setText ("ah ah ah ah ah ah");
+        auto& poly = e.track (0);
+        poly.type.store (Track::poly);
+        poly.inserts[0].choose (InsertEffects::vocoder);
+        poly.vocoderParams.vocoder.voiceLevel.store (0.0f);
+        poly.vocoderParams.vocoder.trackLevel.store (1.0f);
+        poly.vocoderParams.vocoder.sourceTrack.store (2);
+        e.selectedTrack.store (0);
+        e.keyboardState.noteOn (1, 57, 0.9f);
+        const float before = render (e, 30, 5);
+        e.selectedTrack.store (2);
+        e.keyboardState.noteOff (1, 57, 0.0f);
+        e.keyboardState.noteOn (1, 50, 0.9f);
+        render (e, 1);
+        e.keyboardState.noteOff (1, 50, 0.0f);
+        e.track (2).mute.store (true);
+        e.selectedTrack.store (0);
+        e.keyboardState.noteOn (1, 57, 0.9f);
+        const float during = render (e, 40, 5);
+        check (before >= 0.0f && before < 1.0e-3f && during > 0.02f,
+               "vocoder: the effect makes a Poly track speak with another track (" + juce::String (before, 4) + " then " + juce::String (during, 3) + ")");
+    }
+
+    // Factory sounds, and saving.
+    {
+        bool finite = true;
+        for (const auto& fs : Presets::factorySounds (Track::vocoder))
+        {
+            AudioEngine e;
+            e.prepareToPlay (block, rate);
+            e.selectedTrack.store (0);
+            Presets::applySoundVar (e.track (0), fs.sound);
+            e.track (0).type.store (Track::vocoder);
+            e.keyboardState.noteOn (1, 60, 0.9f);
+            finite = finite && render (e, 20) >= 0.0f;
+        }
+        check (Presets::factorySounds (Track::vocoder).size() >= 6 && finite, "vocoder: has factory sounds, all with no NaN");
+
+        AudioEngine e;
+        auto& vp = e.track (0).vocoderParams;
+        e.track (0).type.store (Track::vocoder);
+        vp.vocoder.micLevel.store (0.4f);
+        vp.vocoder.sourceTrack.store (6);
+        vp.vocoder.bands.store (4);
+        vp.wave.store (VocoderParams::square);
+        Presets::applySoundVar (e.track (3), Presets::soundToVar (e.track (0)));
+        const auto& kept = e.track (3).vocoderParams;
+        check (std::abs (kept.vocoder.micLevel.load() - 0.4f) < 1.0e-6f && kept.vocoder.sourceTrack.load() == 6
+                   && kept.vocoder.bands.load() == 4 && kept.wave.load() == VocoderParams::square,
+               "vocoder: a sound keeps what it listens to and its settings");
+    }
+}
+
 // Hold: notes keep sounding after the keys are let go, until Hold is switched off.
 static void testHold()
 {
@@ -2260,6 +2647,8 @@ int main (int argc, char* argv[])
     testArpeggiator();
     testTremolo();
     testOscillators();
+    testVoice();
+    testVocoder();
     testKnobPage();
     testChordSteps();
     testRecordChord();

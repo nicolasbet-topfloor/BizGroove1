@@ -960,6 +960,22 @@ void MainComponent::timerCallback()
     if (externalTicks++ % 15 == 0)
         updateExternalOutputs();
 
+    // A vocoder listening to the microphone needs the sound card's input: switch it on once.
+    if (! vocoderInputAsked)
+        for (int t = 0; t < AudioEngine::numTracks; ++t)
+        {
+            auto& tr = engine.track (t);
+            bool vocoderEffect = false;
+            for (const auto& ins : tr.inserts)
+                vocoderEffect = vocoderEffect || ins.type.load() == InsertEffects::vocoder;
+            if ((tr.type.load() == Track::vocoder || vocoderEffect) && tr.vocoderParams.vocoder.micLevel.load() > 0.0005f)
+            {
+                vocoderInputAsked = true;
+                ensureAudioInput();
+                break;
+            }
+        }
+
     // Keep computer-keyboard notes working: the on-screen keyboard takes key
     // focus, and keys it doesn't use (space) bubble up to keyPressed().
     if (panel.isVisible() && isShowing() && juce::Component::getCurrentlyFocusedComponent() == nullptr)

@@ -188,6 +188,24 @@ namespace
     }
 
     template <typename Tweak>
+    Presets::FactorySound voicePreset (const char* name, const char* text, int language, Tweak&& tweak)
+    {
+        VoiceParams p;   // starts from the Voice's own settings
+        p.language.store (language);
+        p.setText (juce::String::fromUTF8 (text));
+        tweak (p);
+        return { name, soundOf (Track::voice, "voice", voiceParamsToVar (p)) };
+    }
+
+    template <typename Tweak>
+    Presets::FactorySound vocoderPreset (const char* name, Tweak&& tweak)
+    {
+        VocoderParams p;   // listens to the Voice tracks
+        tweak (p);
+        return { name, soundOf (Track::vocoder, "vocoder", vocoderParamsToVar (p)) };
+    }
+
+    template <typename Tweak>
     Presets::FactorySound externalPreset (const char* name, Tweak&& tweak)
     {
         ExternalParams p;   // standard knob CCs, channel 1
@@ -476,6 +494,64 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
         })
     };
 
+    static const std::vector<FactorySound> voices {
+        voicePreset ("Hola (Spanish)", "hola, soy biz groove", speech::spanish, [] (VoiceParams&) {}),
+        voicePreset ("Hello (English)", "hello, i am biz groove", speech::english, [] (VoiceParams&) {}),
+        voicePreset ("Speak and spell", "spell. robot. music.", speech::english, [] (VoiceParams& p) {
+            p.lofi.store (0.7f); p.buzz.store (0.6f); p.intonation.store (0.8f); p.speed.store (0.85f);
+        }),
+        voicePreset ("Robot", "yo soy el robot", speech::spanish, [] (VoiceParams& p) {
+            p.intonation.store (0.0f); p.buzz.store (1.0f); p.lofi.store (0.3f);
+        }),
+        voicePreset ("Whisper", "escucha el silencio", speech::spanish, [] (VoiceParams& p) {
+            p.whisper.store (1.0f); p.speed.store (0.8f); p.level.store (2.0f); p.release.store (0.4f);
+        }),
+        voicePreset ("Giant", "soy un gigante", speech::spanish, [] (VoiceParams& p) {
+            p.size.store (1.0f); p.speed.store (0.7f); p.buzz.store (0.5f);
+        }),
+        voicePreset ("Tiny", "soy chiquito", speech::spanish, [] (VoiceParams& p) {
+            p.size.store (0.0f); p.speed.store (1.4f);
+        }),
+        voicePreset ("Words in a row (sequence me)", "uno dos tres cuatro", speech::spanish, [] (VoiceParams& p) {
+            p.mode.store (VoiceParams::wordByWord); p.intonation.store (0.2f);
+        }),
+        voicePreset ("Singing words", "la luna brilla sobre el mar", speech::spanish, [] (VoiceParams& p) {
+            p.mode.store (VoiceParams::singWords); p.intonation.store (0.0f); p.attack.store (0.03f); p.release.store (0.35f); p.buzz.store (0.2f);
+        }),
+        voicePreset ("Chant loop", "groove, groove, groove", speech::english, [] (VoiceParams& p) {
+            p.mode.store (VoiceParams::phraseLoop); p.intonation.store (0.3f); p.buzz.store (0.7f);
+        }),
+        voicePreset ("Numbers station", "cero siete tres nueve", speech::spanish, [] (VoiceParams& p) {
+            p.lofi.store (0.85f); p.speed.store (0.75f); p.intonation.store (0.1f);
+        })
+    };
+
+    static const std::vector<FactorySound> vocoders {
+        vocoderPreset ("Robot choir (listens to the Voice)", [] (VocoderParams&) {}),
+        vocoderPreset ("Classic strings vocoder", [] (VocoderParams& p) {
+            p.wave.store (VocoderParams::threeSaws); p.detune.store (0.6f); p.attack.store (0.08f); p.release.store (0.8f);
+            p.vocoder.bands.store (3); p.vocoder.response.store (0.5f);
+        }),
+        vocoderPreset ("Microphone vocoder", [] (VocoderParams& p) {
+            p.vocoder.voiceLevel.store (0.0f); p.vocoder.micLevel.store (1.0f); p.vocoder.sibilance.store (0.45f); p.vocoder.bands.store (3);
+        }),
+        vocoderPreset ("Mic and Voice together", [] (VocoderParams& p) {
+            p.vocoder.micLevel.store (0.8f); p.vocoder.voiceLevel.store (0.8f);
+        }),
+        vocoderPreset ("Talking drums (listens to track 2)", [] (VocoderParams& p) {
+            p.vocoder.voiceLevel.store (0.0f); p.vocoder.trackLevel.store (1.0f); p.vocoder.sourceTrack.store (1);
+            p.wave.store (VocoderParams::saw); p.vocoder.response.store (0.2f);
+        }),
+        vocoderPreset ("Square robot", [] (VocoderParams& p) {
+            p.wave.store (VocoderParams::square); p.detune.store (0.0f); p.vocoder.bands.store (0); p.noise.store (0.05f);
+        }),
+        vocoderPreset ("Deep voice (formants down)", [] (VocoderParams& p) { p.vocoder.shift.store (0.3f); }),
+        vocoderPreset ("Tiny voice (formants up)", [] (VocoderParams& p) { p.vocoder.shift.store (0.72f); }),
+        vocoderPreset ("Whisper vocoder", [] (VocoderParams& p) {
+            p.noise.store (1.0f); p.osc.main.store (0.0f); p.vocoder.sibilance.store (0.5f); p.level.store (2.0f);
+        })
+    };
+
     static const std::vector<FactorySound> externals {
         externalPreset ("Channel 1", [] (ExternalParams&) {}),
         externalPreset ("Channel 2", [] (ExternalParams& p) { p.channel.store (2); }),
@@ -488,6 +564,8 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
     {
         case Track::external: return externals;
         case Track::noise:   return noises;
+        case Track::voice:   return voices;
+        case Track::vocoder: return vocoders;
         case Track::fm:      return fms;
         case Track::wavetable: return waves;
         case Track::poly:    return polys;
@@ -516,6 +594,10 @@ juce::var Presets::soundToVar (const Track& tr)
         return soundOf (type, "external", externalParamsToVar (tr.ext, tr.externalDeviceName));
     if (type == Track::noise)
         return soundOf (type, "noise", noiseParamsToVar (tr.noiseParams));
+    if (type == Track::voice)
+        return soundOf (type, "voice", voiceParamsToVar (tr.voiceParams));
+    if (type == Track::vocoder)
+        return soundOf (type, "vocoder", vocoderParamsToVar (tr.vocoderParams));
     return soundOf (type, "synth", synthToVar (tr.synthParams));
 }
 
@@ -571,6 +653,14 @@ void Presets::applySoundVar (Track& tr, const juce::var& v)
     else if (type == Track::noise)
     {
         applyNoiseParams (tr.noiseParams, v["noise"]);
+    }
+    else if (type == Track::voice)
+    {
+        applyVoiceParams (tr.voiceParams, v["voice"]);
+    }
+    else if (type == Track::vocoder)
+    {
+        applyVocoderParams (tr.vocoderParams, v["vocoder"]);
     }
     else if (type == Track::external)
     {

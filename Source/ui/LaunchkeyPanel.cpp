@@ -5,6 +5,7 @@
 #include "EffectsPanel.h"
 #include "ArpPanel.h"
 #include "OscPanel.h"
+#include "VoicePanel.h"
 
 namespace bizgroove
 {
@@ -245,6 +246,12 @@ LaunchkeyPanel::LaunchkeyPanel (AudioEngine& e, const ControlTargets& t)
     };
     addChildComponent (oscButton);
 
+    styleHardwareButton (voiceTextButton, "The Voice's text: type what it says, choose Spanish or English, and whether each note says the whole text or the next word.", true);
+    voiceTextButton.onClick = [this] {
+        juce::CallOutBox::launchAsynchronously (std::make_unique<VoicePanel> (engine), voiceTextButton.getBounds(), this);
+    };
+    addChildComponent (voiceTextButton);
+
     pads.setTwoRows (true);
     addAndMakeVisible (pads);
 
@@ -456,6 +463,7 @@ void LaunchkeyPanel::showTrack()
         const bool sampler = type == Track::sampler, kit = type == Track::drums, ext = type == Track::external;
         loadSampleButton.setVisible (sampler || kit || ext);
         oscButton.setVisible (! (sampler || kit || ext));
+        voiceTextButton.setVisible (type == Track::voice);
         editSampleButton.setVisible (sampler || kit || ext);
         recSourceButton.setVisible (sampler || kit || ext);
         recSourceButton.setTooltip (ext ? "Hear the gear's sound through this track: connect its audio output to your sound card's input. Turn it off if you hear feedback."
@@ -496,9 +504,12 @@ void LaunchkeyPanel::showTrack()
         shownExternal = externalState();
     }
 
+    const bool typeChanged = type != shownType;
     shownTrack = t;
     shownType = type;
     shownDrum = drum;
+    if (typeChanged)
+        resized();   // the Text and Oscillators buttons share a row on a Voice track
 
     const auto dot = juce::String::fromUTF8 ("  \xc2\xb7  ");
     juce::String text = "Track " + juce::String (t + 1) + dot + library[(size_t) type].name;
@@ -522,6 +533,13 @@ void LaunchkeyPanel::showTrack()
     if (engine.recordNotes.load())
         text << dot << (engine.countInBeatsLeft.load() > 0 ? "COUNT-IN " + juce::String (engine.countInBeatsLeft.load())
                                                            : juce::String ("RECORDING NOTES (onto the nearest 1/16)"));
+    if (type == Track::voice)
+    {
+        const auto& said = tr.voiceParams.getText();
+        shownVoiceText = said;
+        text << dot << (said.isEmpty() ? juce::String ("no text: press Text...")
+                                       : "\"" + (said.length() > 40 ? said.substring (0, 38).trimEnd() + "..." : said) + "\"");
+    }
     if (type == Track::external)
     {
         text << dot << (tr.externalDeviceName.isNotEmpty() ? tr.externalDeviceName + ", channel " + juce::String (tr.ext.channel.load())
@@ -766,7 +784,8 @@ void LaunchkeyPanel::timerCallback()
         if (engine.selectedTrack.load() != shownTrack || tr.type.load() != shownType || tr.selectedDrum.load() != shownDrum
             || (tr.type.load() == Track::sampler && tr.samplerEngine.getSampleName() != shownSample)
             || (tr.type.load() == Track::drums && tr.kit.getPadSampleName (tr.selectedDrum.load()) != shownSample)
-            || (tr.type.load() == Track::external && externalState() != shownExternal))
+            || (tr.type.load() == Track::external && externalState() != shownExternal)
+            || (tr.type.load() == Track::voice && tr.voiceParams.getText() != shownVoiceText))
             showTrack();
     }
 
@@ -875,7 +894,13 @@ void LaunchkeyPanel::resized()
     fxButton.setBounds (right.getX() + 22 + moreW, controls.getY() + 70, right.getWidth() - 22 - moreW, 30);
     const int halfW = (right.getWidth() - 22) / 2;
     loadSampleButton.setBounds (right.getX() + 16, controls.getY() + 106, halfW, 26);
-    oscButton.setBounds (right.getX() + 16, controls.getY() + 106, right.getWidth() - 16, 26);
+    if (shownType == Track::voice)
+    {
+        voiceTextButton.setBounds (right.getX() + 16, controls.getY() + 106, halfW, 26);
+        oscButton.setBounds (right.getX() + 22 + halfW, controls.getY() + 106, halfW, 26);
+    }
+    else
+        oscButton.setBounds (right.getX() + 16, controls.getY() + 106, right.getWidth() - 16, 26);
     editSampleButton.setBounds (right.getX() + 22 + halfW, controls.getY() + 106, halfW, 26);
     recSourceButton.setBounds (right.getX() + 16, controls.getY() + 136, right.getWidth() - 16, 24);
     trackInfo.setBounds (right.getX() - 120, controls.getY() + 34, right.getWidth() + 120, 22);

@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cmath>
 #include <vector>
+#include "Vocoder.h"
 
 namespace bizgroove
 {
@@ -13,7 +14,7 @@ namespace bizgroove
     before its volume, pan and sends. */
 struct InsertEffects
 {
-    enum Type { off = 0, chorus, flanger, phaser, ensemble, drive, lofi, autoFilter, compressor, duck, tremolo, harmonicTremolo, numTypes };
+    enum Type { off = 0, chorus, flanger, phaser, ensemble, drive, lofi, autoFilter, compressor, duck, tremolo, harmonicTremolo, vocoder, numTypes };
 
     static juce::String name (int type)
     {
@@ -30,6 +31,7 @@ struct InsertEffects
             case duck:       return "Duck (sidechain)";
             case tremolo:    return "Tremolo";
             case harmonicTremolo: return "Harmonic tremolo (vintage)";
+            case vocoder:    return "Vocoder";
             default:         return "Off";
         }
     }
@@ -50,6 +52,7 @@ struct InsertEffects
             case duck:       return { { "Amount", "Release", "Trigger", "Smooth" } };
             case tremolo:    return { { "Depth", "Speed", "Shape", "Stereo" } };
             case harmonicTremolo: return { { "Depth", "Speed", "Crossover", "Stereo" } };
+            case vocoder:    return { { "Mix", "Shift", "Response", "Sibilance" } };
             default:         return { { "-", "-", "-", "-" } };
         }
     }
@@ -70,6 +73,7 @@ struct InsertEffects
             case duck:       return { { 0.7f, 0.35f, 0.0f, 0.2f } };
             case tremolo:    return { { 0.6f, 0.3f, 0.0f, 0.0f } };
             case harmonicTremolo: return { { 0.6f, 0.25f, 0.45f, 0.0f } };
+            case vocoder:    return { { 1.0f, 0.5f, 0.35f, 0.3f } };
             default:         return { { 0.5f, 0.5f, 0.5f, 0.5f } };
         }
     }
@@ -120,6 +124,10 @@ struct InsertEffects
                 if (knob == 2 && type == tremolo) return tremoloShapeName (tremoloShape (v));
                 if (knob == 2) return juce::String (juce::roundToInt (crossoverHz (v))) + " Hz";
                 if (knob == 3) return v < 0.01f ? juce::String ("Mono") : pct (v);
+                break;
+            case vocoder:
+                if (knob == 1) { const int s = juce::roundToInt (VocoderSettings::shiftSemitones (v)); return s == 0 ? juce::String ("None") : (s > 0 ? "+" : "") + juce::String (s) + " st"; }
+                if (knob == 2) return juce::String (juce::roundToInt (VocoderSettings::releaseMs (v))) + " ms";
                 break;
             default:
                 return "-";
@@ -185,6 +193,10 @@ struct EffectContext
     double beatAtStart = 0.0;            // song position in beats at the block's first sample
     std::array<int, 32> kicks {};        // sample positions of kick drum hits in this block
     int numKicks = 0;
+
+    // The Vocoder effect: what this track's vocoder listens to, and its number of bands.
+    const float* modulator = nullptr;
+    int vocoderBands = 16;
 };
 
 /** The sound of one insert slot. Audio thread; keeps the state of every
@@ -195,6 +207,7 @@ public:
     void prepare (double sampleRate)
     {
         sr = sampleRate;
+        vocoderCore.prepare (sampleRate);
         const int size = juce::nextPowerOfTwo ((int) (sampleRate * 0.06) + 4);   // 60 ms
         for (auto& line : lines)
             line.assign ((size_t) size, 0.0f);
@@ -219,6 +232,7 @@ public:
         tremGainL = tremGainR = 0.5f;
         tremLowL = tremLowR = 0.0f;
         tremCycle = { { -1, -1 } };
+        vocoderCore.reset();
         lastType = -1;
     }
 
@@ -256,6 +270,7 @@ public:
             case InsertEffects::duck:       duckProcess (l, r, numSamples, k, ctx); break;
             case InsertEffects::tremolo:    tremoloProcess (l, r, numSamples, k, ctx, false); break;
             case InsertEffects::harmonicTremolo: tremoloProcess (l, r, numSamples, k, ctx, true); break;
+            case InsertEffects::vocoder:    vocoderProcess (l, r, numSamples, k, ctx); break;
             default: break;
         }
     }
@@ -514,6 +529,26 @@ private:
 
     /** Tremolo: the volume beats up and down. The vintage harmonic tremolo of 1960s amps splits the
         sound in lows and highs and beats them in turn, so it pulses without ever going quiet. */
+    /** The vocoder: the track's sound is the carrier, made to speak by what the track's vocoder listens to. */
+    void vocoderProcess (float* l, float* r, int n, const std::array<float, 4>& k, const EffectContext& ctx)
+    {
+        std::array<float, 64> dryL {}, dryR {};
+        const float mix = k[0];
+        for (int start = 0; start < n; start += 64)
+        {
+            const int len = juce::jmin (64, n - start);
+            std::copy (l + start, l + start + len, dryL.begin());
+            std::copy (r + start, r + start + len, dryR.begin());
+            vocoderCore.process (ctx.modulator != nullptr ? ctx.modulator + start : nullptr, l + start, r + start, len,
+                                 ctx.vocoderBands, VocoderSettings::shiftSemitones (k[1]), VocoderSettings::releaseMs (k[2]), k[3]);
+            for (int i = 0; i < len; ++i)
+            {
+                l[start + i] = dryL[(size_t) i] + mix * (l[start + i] - dryL[(size_t) i]);
+                r[start + i] = dryR[(size_t) i] + mix * (r[start + i] - dryR[(size_t) i]);
+            }
+        }
+    }
+
     void tremoloProcess (float* l, float* r, int n, const std::array<float, 4>& k, const EffectContext& ctx, bool harmonic)
     {
         const float depth = k[0];
@@ -582,6 +617,7 @@ private:
     }
 
     double sr = 44100.0;
+    VocoderCore vocoderCore;
     std::array<std::vector<float>, 2> lines;
     int write = 0, mask = 0;
     double lfoPhase = 0.0, slowPhase = 0.0, fastPhase = 0.0;

@@ -248,6 +248,57 @@ inline const std::vector<SynthDefinition>& synthLibrary()
                 { "Glide mode",             "noise.glidemode",  "Fixed time: every slide takes the glide time. By distance: wider jumps slide for longer, the glide time per octave." },
                 { "Volume",                 "track.volume",     "How loud this track is." }
             }
+        },
+        {
+            "voice",
+            "Voice",
+            "A speaking synth, like the Speak & Spell and the Monomachine's VO: it says your text, in Spanish or English, at the pitch of the note you play. The whole text on each note, or one word per note so a sequence sings it. Write the text with the Text button.",
+            { {
+                { "Mode",       "voice.mode",       "What each note says: the whole text, the whole text over and over while you hold the key, the next word, or the next word sung (its last vowel lasts as long as the note)." },
+                { "Speed",      "voice.speed",      "How fast it talks." },
+                { "Intonation", "voice.intonation", "Left: a flat robot voice that only follows your notes. Right: the rise and fall of speech, around your notes." },
+                { "Size",       "voice.size",       "The size of the mouth: left is tiny (chipmunk), right is a giant." },
+                { "Buzz",       "voice.buzz",       "Left: a soft human voice. Right: a buzzy machine voice." },
+                { "Whisper",    "voice.whisper",    "Turns the voice into a whisper: breath instead of buzz." },
+                { "Lo-fi",      "voice.lofi",       "Fewer samples and fewer levels, for the crunchy sound of old speaking toys." },
+                { "Fade out",   "voice.release",    "How long the voice takes to fade when it stops." }
+            } },
+            {
+                { "Language",               "voice.language",   "Spanish or English: how the text is read." },
+                { "Fade in",                "voice.attack",     "How long the voice takes to come in." },
+                { "Level",                  "voice.level",      "The voice's own level." },
+                { "Velocity to volume",     "voice.velocity",   "How much harder hits are louder." },
+                { "Glide",                  "voice.glide",      "Slides from one note to the next instead of jumping: how long the slide takes (per octave, when it glides by distance)." },
+                { "Glide mode",             "voice.glidemode",  "Fixed time: every slide takes the glide time. By distance: wider jumps slide for longer, the glide time per octave." },
+                { "Volume",                 "track.volume",     "How loud this track is." }
+            }
+        },
+        {
+            "vocoder",
+            "Vocoder",
+            "A vocoder: the synth you play on the keys speaks with another sound's words. It listens to a microphone, to the Voice tracks and to any track, mixed with the first four knobs. Mute the track it listens to if you only want to hear the vocoder.",
+            { {
+                { "Voice in",   "vocoder.voice",     "How much it listens to the Voice tracks (the speaking synth), all of them mixed." },
+                { "Mic in",     "vocoder.mic",       "How much it listens to the sound card's input: sing or talk into a microphone." },
+                { "Track in",   "vocoder.track",     "How much it listens to the track chosen with From track (its sound before its effects and volume)." },
+                { "From track", "vocoder.source",    "Which track Track in listens to." },
+                { "Bands",      "vocoder.bands",     "How many bands it splits the voice into: few for a rough robot, many for clear words." },
+                { "Shift",      "vocoder.shift",     "Moves the voice's formants down (a giant) or up (a tiny voice)." },
+                { "Sibilance",  "vocoder.sibilance", "Lets the voice's own hiss through (s, t, ch), for clearer words." },
+                { "Carrier",    "vocoder.wave",      "The synth that speaks: a saw, a square, a thin pulse or three saws (rich, like the classic string vocoders)." }
+            } },
+            {
+                { "Response",               "vocoder.response", "How quickly the bands follow the voice: tight and choppy, or smooth." },
+                { "Detune",                 "vocoder.detune",   "How far apart the carrier's saws are: from one clean tone to a wide chorus." },
+                { "Breath",                 "vocoder.noise",    "Adds noise to the carrier, so whispers and hiss come through too." },
+                { "Fade in",                "vocoder.attack",   "How long a note takes to come in." },
+                { "Fade out",               "vocoder.release",  "How long a note takes to fade after you let go." },
+                { "Level",                  "vocoder.level",    "The vocoder's own level." },
+                { "Velocity to volume",     "vocoder.velocity", "How much harder hits are louder." },
+                { "Glide",                  "vocoder.glide",    "Slides from one note to the next instead of jumping: how long the slide takes (per octave, when it glides by distance)." },
+                { "Glide mode",             "vocoder.glidemode", "Fixed time: every slide takes the glide time. By distance: wider jumps slide for longer, the glide time per octave." },
+                { "Volume",                 "track.volume",     "How loud this track is." }
+            }
         }
     };
     return library;
