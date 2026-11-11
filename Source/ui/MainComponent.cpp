@@ -957,6 +957,8 @@ void MainComponent::runExport (const ExportOptions& options, const juce::File& f
 void MainComponent::timerCallback()
 {
     handleRecorder();
+    engine.lfoTargets.store (&controlTargets);
+    controlTargets.resolveLfos (engine);   // after a project or sound is loaded, the LFOs find their knobs
     if (externalTicks++ % 15 == 0)
         updateExternalOutputs();
 
