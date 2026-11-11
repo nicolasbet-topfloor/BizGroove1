@@ -735,7 +735,29 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
 
 // ================================================================ sound <-> JSON
 
+namespace
+{
+    juce::var soundVarOf (const Track& tr);
+    void applySoundOf (Track& tr, const juce::var& v);
+}
+
+// A sound keeps the track's LFOs (what they move and how) along with the instrument's settings.
 juce::var Presets::soundToVar (const Track& tr)
+{
+    auto v = soundVarOf (tr);
+    if (auto* o = v.getDynamicObject())
+        o->setProperty ("lfos", lfosToVar (tr.lfos));
+    return v;
+}
+
+void Presets::applySoundVar (Track& tr, const juce::var& v)
+{
+    applySoundOf (tr, v);
+    applyLfos (tr.lfos, v["lfos"]);   // a sound without LFOs switches them off
+}
+
+juce::var soundVarOfImpl (const Track& tr);
+juce::var soundVarOfImpl (const Track& tr)
 {
     const int type = clampType (tr.type.load());
     if (type == Track::drums)
@@ -759,7 +781,8 @@ juce::var Presets::soundToVar (const Track& tr)
     return soundOf (type, "synth", synthToVar (tr.synthParams));
 }
 
-void Presets::applySoundVar (Track& tr, const juce::var& v)
+void applySoundOfImpl (Track& tr, const juce::var& v);
+void applySoundOfImpl (Track& tr, const juce::var& v)
 {
     const int type = clampType (getI (v, "type", tr.type.load()));
 
@@ -1062,4 +1085,13 @@ bool Presets::copyDrumFromFile (AudioEngine& e, int trackIndex, int drum, const 
     return ok;
 }
 
+} // namespace bizgroove
+
+namespace bizgroove
+{
+namespace
+{
+    juce::var soundVarOf (const Track& tr)               { return soundVarOfImpl (tr); }
+    void applySoundOf (Track& tr, const juce::var& v)     { applySoundOfImpl (tr, v); }
+}
 } // namespace bizgroove
