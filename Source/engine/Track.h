@@ -8,6 +8,7 @@
 #include "NoiseSynth.h"
 #include "VoiceSynth.h"
 #include "VocoderSynth.h"
+#include "Lfo.h"
 #include "ExternalMidi.h"
 #include "Effects.h"
 #include "DrumKit.h"
@@ -98,6 +99,7 @@ struct Track
     FmParams fmParams;
     NoiseParams noiseParams;
     VoiceParams voiceParams;
+    std::array<LfoSettings, 2> lfos;   // two LFOs that move any knob of this track
     VocoderParams vocoderParams;   // the Vocoder instrument; its listening settings also serve the Vocoder effect
     ExternalParams ext;   // External MIDI tracks
 
@@ -133,6 +135,7 @@ struct Track
     juce::Synthesiser voiceSynth;
     juce::Synthesiser vocoderSynth;
     VocoderCore vocoderCore;
+    std::array<LfoRunner, 2> lfoRunners;
     juce::SmoothedValue<float> gain;
     ChannelStrip strip;
     std::array<InsertProcessor, 2> insertFx;
