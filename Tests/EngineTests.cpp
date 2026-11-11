@@ -1674,6 +1674,20 @@ static void testWindowKnobs()
     targets.applyValue ("panel.knob.1", 0.65f);
     check (std::abs (tr.mix.reverb.load() - 0.65f) < 1.0e-4f, "window knobs: page 2 turns the reverb send");
 
+    e.knobOverlay.store (AudioEngine::overlayArp);
+    e.knobPages.store (1);
+    e.knobPage.store (1);
+    e.arp.on.store (false);
+    targets.applyValue ("panel.knob.1", 0.95f);
+    targets.applyValue ("panel.knob.2", 0.0f);
+    targets.applyValue ("panel.knob.6", 1.0f);
+    targets.applyValue ("panel.knob.7", 1.0f);
+    check (e.arp.mode.load() == ArpSettings::numModes - 1 && e.arp.rate.load() == 0 && e.arp.on.load() && e.hold.load(),
+           "window knobs: with the arpeggiator open, the knobs turn its mode and rate and switch it and Hold on");
+    targets.applyValue ("panel.knob.6", 0.0f);
+    targets.applyValue ("panel.knob.7", 0.0f);
+    check (! e.arp.on.load() && ! e.hold.load(), "window knobs: and switch them off again");
+
     e.knobOverlay.store (AudioEngine::overlayNone);
     e.knobPage.store (0);
     targets.applyButton ("track.next", true);
@@ -1692,6 +1706,83 @@ static void testWindowKnobs()
     float peak = 0.0f;
     for (const auto& v : e.scope) peak = juce::jmax (peak, std::abs (v.load()));
     check (e.scopeWrite.load() == 5120 && peak > 0.01f, "scope: it holds the selected track's sound");
+}
+
+// LFOs: two per track, moving any of its knobs around where it is set, on that track only.
+static void testLfos()
+{
+    std::cout << "LFOs\n";
+    AudioEngine e;
+    ControlTargets targets (e);
+    e.lfoTargets.store (&targets);
+    e.prepareToPlay (480, 48000.0);
+    e.selectedTrack.store (0);
+    auto& tr = e.track (2);
+    tr.type.store (Track::poly);
+    tr.polyParams.cutoffHz.store (1000.0f);
+    auto& lfo = tr.lfos[0];
+    lfo.setDestination ("poly.cutoff");
+    lfo.depth.store (0.4f);
+    lfo.rate.store (0.25f);   // 1 Hz, free
+    targets.resolveLfos (e);
+    check (lfo.destIndex.load() == targets.indexOf ("poly.cutoff"), "lfo: it finds the knob it moves");
+
+    juce::AudioBuffer<float> buf (2, 480);
+    auto run = [&] (int blocks, float& lo, float& hi) {
+        lo = 1.0e9f; hi = 0.0f;
+        for (int b = 0; b < blocks; ++b)
+        {
+            buf.clear();
+            e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 480));
+            const float c = tr.polyParams.cutoffHz.load();
+            lo = juce::jmin (lo, c); hi = juce::jmax (hi, c);
+        }
+    };
+    float lo, hi;
+    run (100, lo, hi);   // one second: a whole cycle
+    check (lo < 700.0f && hi > 1400.0f && e.track (0).polyParams.cutoffHz.load() == PolyParams().cutoffHz.load(),
+           "lfo: it moves the cutoff of its own track up and down (" + juce::String (lo, 0) + " to " + juce::String (hi, 0) + " Hz), and not the selected track's");
+
+    // Turned by hand: it moves around the new place.
+    e.selectedTrack.store (2);
+    targets.applyValue ("poly.cutoff", 0.9f);
+    float firstLo = lo;
+    run (100, lo, hi);
+    juce::ignoreUnused (firstLo);
+    check (lo > 1500.0f && hi > 8000.0f, "lfo: when the knob is turned, it moves around where it was turned to ("
+                                             + juce::String (lo, 0) + " to " + juce::String (hi, 0) + " Hz)");
+
+    // Switched off: the knob goes back to where it was set.
+    lfo.setDestination ({});
+    targets.resolveLfos (e);
+    run (2, lo, hi);
+    check (std::abs (targets.getValue ("poly.cutoff") - 0.9f) < 0.02f, "lfo: switched off, the knob is back where it was set");
+
+    // In time with the song, saved with the sound and the project, and what it may move.
+    lfo.setDestination ("track.pan");
+    lfo.rate.store (0.8f);
+    lfo.shape.store (LfoSettings::stepped);
+    Presets::applySoundVar (e.track (5), Presets::soundToVar (tr));
+    const auto& kept = e.track (5).lfos[0];
+    check (kept.destId == "track.pan" && kept.shape.load() == LfoSettings::stepped && std::abs (kept.rate.load() - 0.8f) < 1.0e-6f,
+           "lfo: a sound keeps its LFOs");
+    const auto saved = Project::toVar (e);
+    tr.lfos[0].setDestination ({});
+    Project::applyVar (e, saved);
+    check (e.track (2).lfos[0].destId == "track.pan", "lfo: a project keeps its LFOs");
+    check (! ControlTargets::lfoCanMove (*targets.find ("transport.tempo")) && ! ControlTargets::lfoCanMove (*targets.find ("panel.knob.1"))
+               && ControlTargets::lfoCanMove (*targets.find ("fx1.k1")) && ControlTargets::lfoCanMove (*targets.find ("osc1.width")),
+           "lfo: it can move the track's knobs, not the transport or the knob pages");
+
+    // The controller's knobs follow the LFO window.
+    e.knobOverlay.store (AudioEngine::overlayLfo);
+    e.knobPage.store (1);
+    targets.applyValue ("panel.knob.5", 0.95f);
+    targets.applyValue ("panel.knob.7", 1.0f);
+    check (e.track (2).lfos[1].shape.load() == LfoSettings::smooth && std::abs (e.track (2).lfos[1].depth.load() - 1.0f) < 1.0e-4f,
+           "lfo: with its window open, knobs 5-8 turn LFO 2");
+    e.knobOverlay.store (AudioEngine::overlayNone);
+    e.knobPage.store (0);
 }
 
 // Levels: how loud each factory sound plays the same notes, to even them out. Information only.
@@ -2830,6 +2921,7 @@ int main (int argc, char* argv[])
     testPads();
     testOwnReverbDelay();
     testWindowKnobs();
+    testLfos();
     testKnobPage();
     testChordSteps();
     testRecordChord();
