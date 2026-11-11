@@ -2,6 +2,7 @@
 
 #include "LaunchkeyPanel.h"   // PanelKnob
 #include "LookAndFeel.h"
+#include "ScopeView.h"
 
 namespace bizgroove
 {
@@ -105,13 +106,55 @@ public:
             addAndMakeVisible (*sendKnobs[i]);
         }
 
+        addAndMakeVisible (scope);
+
+        // The controller's eight knobs follow this window, a page at a time.
+        pageLabel.setText ("Controller knobs:", juce::dontSendNotification);
+        pageLabel.setColour (juce::Label::textColourId, Colours::textDim);
+        addAndMakeVisible (pageLabel);
+        static const char* pageNames[3] = { "Effects 1+2", "Reverb, delay", "Vocoder" };
+        for (int pg = 0; pg < 3; ++pg)
+        {
+            auto& b = pageButtons[(size_t) pg];
+            b.setButtonText (pageNames[pg]);
+            b.setWantsKeyboardFocus (false);
+            b.setTooltip ("The controller's eight knobs turn this part of the window. The controller's track arrows switch parts too.");
+            b.onClick = [this, pg] { engine.knobPage.store (pg + 1); };
+            addAndMakeVisible (b);
+        }
+        engine.knobOverlay.store (AudioEngine::overlayFx);
+        engine.knobPage.store (1);
+
         relabel();
         startTimerHz (20);
+    }
+
+    ~EffectsPanel() override
+    {
+        if (engine.knobOverlay.load() == AudioEngine::overlayFx)
+        {
+            engine.knobOverlay.store (AudioEngine::overlayNone);
+            engine.knobPage.store (0);
+        }
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        // The part the controller's knobs turn.
+        const int page = engine.knobPage.load();
+        const auto area = page == 2 ? sendsArea : (page == 3 && showVocoder ? vocoderArea : effectsArea);
+        g.setColour (Colours::accent.withAlpha (0.09f));
+        g.fillRoundedRectangle (area.reduced (2).toFloat(), 6.0f);
     }
 
     void resized() override
     {
         auto r = getLocalBounds();
+        {
+            auto top = r.withHeight (2 * rowHeight + 10);
+            effectsArea = top.removeFromLeft (150 + 4 * knobWidth);
+            scope.setBounds (top.reduced (6, 8));
+        }
         for (auto& row : rows)
         {
             auto line = r.removeFromTop (rowHeight);
@@ -127,12 +170,14 @@ public:
         if (showVocoder)
         {
             auto line = r.removeFromTop (rowHeight);
+            vocoderArea = line;
             vocoderTitle.setBounds (line.removeFromLeft (100).reduced (6, 12).removeFromTop (40));
             for (auto& knob : vocoderKnobs)
                 knob->setBounds (line.removeFromLeft (knobWidth));
             r.removeFromTop (10);
         }
 
+        sendsArea = r.withHeight (20 + rowHeight);
         sendTitle.setBounds (r.removeFromTop (20).reduced (6, 0));
         auto sends = r.removeFromTop (rowHeight);
         for (auto& knob : sendKnobs)
@@ -145,10 +190,19 @@ public:
             b->setBounds (line.removeFromLeft (100).reduced (6, 35));
         division.setBounds (line.removeFromLeft (110).reduced (4, 40));
         stopKnob->setBounds (line.removeFromLeft (knobWidth));
+
+        auto pages = line.reduced (4, 40);
+        pageLabel.setBounds (pages.removeFromLeft (118));
+        for (auto& b : pageButtons)
+            if (b.isVisible())
+            {
+                b.setBounds (pages.removeFromLeft (96));
+                pages.removeFromLeft (4);
+            }
     }
 
 private:
-    static constexpr int knobWidth = 100, rowHeight = 124, sendWidth = 92;
+    static constexpr int knobWidth = 100, rowHeight = 124, sendWidth = 92, scopeWidth = 380;
 
     void relabel()
     {
@@ -177,7 +231,11 @@ private:
         vocoderTitle.setVisible (vocoder);
         for (auto& knob : vocoderKnobs)
             knob->setVisible (vocoder);
-        const int width = juce::jmax (150 + 4 * knobWidth, 100 + 5 * knobWidth, 8 * sendWidth);
+        pageButtons[2].setVisible (vocoder);
+        engine.knobPages.store (vocoder ? 3 : 2);
+        if (engine.knobPage.load() > (vocoder ? 3 : 2))
+            engine.knobPage.store (1);
+        const int width = juce::jmax (150 + 4 * knobWidth + scopeWidth, 100 + 5 * knobWidth, 8 * sendWidth);
         const int height = 2 * rowHeight + 10 + (vocoder ? rowHeight + 10 : 0) + 20 + rowHeight + 6 + 130;
         if (getWidth() != width || getHeight() != height)
             setSize (width, height);
@@ -200,6 +258,16 @@ private:
                 knob->refresh();
         for (auto& knob : sendKnobs)
             knob->refresh();
+        if (const int page = engine.knobPage.load(); page != shownPage)
+        {
+            shownPage = page;
+            for (int pg = 0; pg < 3; ++pg)
+            {
+                pageButtons[(size_t) pg].setColour (juce::TextButton::buttonColourId, pg + 1 == page ? Colours::accent : Colours::panelEdge);
+                pageButtons[(size_t) pg].setColour (juce::TextButton::textColourOffId, pg + 1 == page ? juce::Colours::black : Colours::text);
+            }
+            repaint();
+        }
 
         // Light the buttons, also when a controller switched them on.
         repeatButton.setToggleState (engine.perform.repeat.load(), juce::dontSendNotification);
@@ -239,6 +307,11 @@ private:
     std::array<std::unique_ptr<PanelKnob>, 5> vocoderKnobs;
     bool showVocoder = false;
     juce::Label sendTitle;
+    ScopeView scope { engine };
+    juce::Label pageLabel;
+    std::array<juce::TextButton, 3> pageButtons;
+    juce::Rectangle<int> effectsArea, sendsArea, vocoderArea;
+    int shownPage = -1;
     std::array<std::unique_ptr<PanelKnob>, 8> sendKnobs;
     bool heldDown[3] { false, false, false };
     int shownTrack = -1;
