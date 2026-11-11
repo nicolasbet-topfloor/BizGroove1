@@ -42,6 +42,13 @@ public:
 
     const std::vector<Target>& all() const { return targets; }
     const Target* find (const juce::String& id) const;
+    int indexOf (const juce::String& id) const;
+
+    /** Message thread: finds the knobs the LFOs move (after a project or sound is loaded). */
+    void resolveLfos (AudioEngine& engine) const;
+
+    /** Whether an LFO may move this target: a knob of the track, not a transport, stem or page control. */
+    static bool lfoCanMove (const Target& t);
 
     /** Applies a knob/fader value (0..1) or a button press/release. */
     void applyValue (const juce::String& id, float value01) const;
