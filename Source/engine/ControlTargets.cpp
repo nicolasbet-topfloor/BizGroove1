@@ -358,10 +358,18 @@ ControlTargets::ControlTargets (AudioEngine& e)
          [&e] { return e.selected().volume.load(); }, percent);
     add ("track.mute", "Mute selected track", "Tracks", TargetKind::toggle,
          [&e] (float) { toggle (e.selected().mute); });
-    add ("track.next", "Next track", "Tracks", TargetKind::trigger,
-         [&e] (float) { e.selectedTrack.store (juce::jmin (AudioEngine::numTracks - 1, e.selectedTrack.load() + 1)); });
-    add ("track.prev", "Previous track", "Tracks", TargetKind::trigger,
-         [&e] (float) { e.selectedTrack.store (juce::jmax (0, e.selectedTrack.load() - 1)); });
+    // While a window that the knobs follow is open (More, Oscillators, Effects), the track
+    // arrows turn its pages of knobs instead of changing track.
+    auto turnPage = [&e] (int by) {
+        if (e.knobOverlay.load() == AudioEngine::overlayNone)
+            return false;
+        e.knobPage.store (juce::jlimit (1, juce::jmax (1, e.knobPages.load()), e.knobPage.load() + by));
+        return true;
+    };
+    add ("track.next", "Next track (or the next page of knobs)", "Tracks", TargetKind::trigger,
+         [&e, turnPage] (float) { if (! turnPage (1)) e.selectedTrack.store (juce::jmin (AudioEngine::numTracks - 1, e.selectedTrack.load() + 1)); });
+    add ("track.prev", "Previous track (or the previous page of knobs)", "Tracks", TargetKind::trigger,
+         [&e, turnPage] (float) { if (! turnPage (-1)) e.selectedTrack.store (juce::jmax (0, e.selectedTrack.load() - 1)); });
     for (int t = 0; t < AudioEngine::numTracks; ++t)
         add ("track.select." + juce::String (t + 1), "Select track " + juce::String (t + 1), "Tracks", TargetKind::trigger,
              [&e, t] (float) { e.selectedTrack.store (t); });
@@ -829,14 +837,48 @@ ControlTargets::ControlTargets (AudioEngine& e)
              [] (float v) { return v < 0.005f ? juce::String ("Off") : percent (v); });
     }
 
+    // Sync and ring as knobs, for the controller: the right half switches them on.
+    add ("osc.syncknob", "Oscillators: sync 2 to 1 (knob)", "Oscillators", TargetKind::continuous,
+         [oscOf] (float v) { if (auto* o = oscOf()) o->sync.store (v >= 0.5f); },
+         [oscOf] { auto* o = oscOf(); return o != nullptr && o->sync.load() ? 0.75f : 0.25f; },
+         [] (float v) { return v >= 0.5f ? juce::String ("Sync on") : juce::String ("Sync off"); });
+    add ("osc.ringknob", "Oscillators: ring 1 x 2 (knob)", "Oscillators", TargetKind::continuous,
+         [oscOf] (float v) { if (auto* o = oscOf()) o->ring.store (v >= 0.5f); },
+         [oscOf] { auto* o = oscOf(); return o != nullptr && o->ring.load() ? 0.75f : 0.25f; },
+         [] (float v) { return v >= 0.5f ? juce::String ("Ring on") : juce::String ("Ring off"); });
+
     // ---- Panel knobs 1-8: whatever the loaded synth puts on that knob.
     for (int k = 0; k < 8; ++k)
     {
         auto knobTarget = [this, &e, k]() -> const Target* {
             const auto& library = synthLibrary();
             const auto& def = library[(size_t) juce::jlimit (0, (int) library.size() - 1, e.selected().type.load())];
+            const int overlay = e.knobOverlay.load(), page = e.knobPage.load();
+            // The Oscillators window: page 1 is oscillator 1 (and the synth's own sound), page 2 oscillator 2 (and sync, ring).
+            if (overlay == AudioEngine::overlayOsc)
+            {
+                static const char* ids[6] = { "wave", "octave", "semi", "fine", "width", "level" };
+                const int n = page >= 2 ? 2 : 1;
+                if (k < 6) return find ("osc" + juce::String (n) + "." + ids[k]);
+                if (n == 1) return k == 6 ? find ("osc.main") : nullptr;
+                return find (k == 6 ? "osc.syncknob" : "osc.ringknob");
+            }
+            // The Effects window: page 1 the two effect slots, page 2 the shared reverb and delay, page 3 what the vocoder hears.
+            if (overlay == AudioEngine::overlayFx)
+            {
+                if (page <= 1)
+                    return find ("fx" + juce::String (k < 4 ? 1 : 2) + ".k" + juce::String (k % 4 + 1));
+                if (page == 2)
+                {
+                    static const char* shared[8] = { "track.reverb", "track.delay", "master.reverbtype", "master.reverbsize",
+                                                     "master.reverbtone", "master.delaytype", "master.delaytime", "master.delayfeedback" };
+                    return find (shared[k]);
+                }
+                static const char* listen[5] = { "vocoder.voice", "vocoder.mic", "vocoder.track", "vocoder.source", "vocoder.bands" };
+                return k < 5 ? find (listen[k]) : nullptr;
+            }
             // While the More window is open, the knobs turn its highlighted row instead.
-            if (const int page = e.knobPage.load(); page > 0)
+            if (page > 0)
             {
                 const auto i = (size_t) ((page - 1) * 8 + k);
                 return i < def.more.size() ? find (def.more[i].target) : nullptr;
