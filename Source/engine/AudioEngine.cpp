@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "ControlTargets.h"
 #include <algorithm>
 
 namespace bizgroove
@@ -319,6 +320,9 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         for (const auto meta : selInput)
             deliver (meta.getMessage(), meta.samplePosition, sel);
     }
+
+    // The LFOs move their knobs, once a block.
+    runLfos (numSamples, playing, bpm);
 
     // What the effects need: the tempo, the song position, and where the kick drums hit.
     EffectContext fxContext;
@@ -681,6 +685,73 @@ const float* AudioEngine::buildModulator (const VocoderSettings& s, int numSampl
     if (other > 0.0005f && fromLast > 0)
         juce::FloatVectorOperations::addWithMultiply (out, tapPrev.getReadPointer (juce::jlimit (0, numTracks - 1, s.sourceTrack.load())), other, fromLast);
     return out;
+}
+
+} // namespace bizgroove
+
+namespace bizgroove
+{
+
+void AudioEngine::runLfos (int numSamples, bool playing, double bpm)
+{
+    const auto* targets = lfoTargets.load();
+    if (targets == nullptr)
+        return;
+    const auto& all = targets->all();
+    const double seconds = (double) numSamples / currentRate;
+    const double beatPos = (double) transportSamples / currentRate * juce::jlimit (20.0, 300.0, bpm) / 60.0;
+
+    for (int t = 0; t < numTracks; ++t)
+    {
+        auto& tr = *tracks[(size_t) t];
+        bool noteOn = false;
+        for (const auto meta : trackMidi[(size_t) t])
+            if (meta.getMessage().isNoteOn() && meta.getMessage().getVelocity() > 0) { noteOn = true; break; }
+
+        trackOverride = t;   // the knobs below are this track's
+        std::array<float, 2> offset {};
+        std::array<int, 2> dest {};
+        for (size_t n = 0; n < 2; ++n)
+        {
+            auto& s = tr.lfos[n];
+            auto& r = tr.lfoRunners[n];
+            const int d = s.destIndex.load();
+            dest[n] = (d >= 0 && d < (int) all.size() && all[(size_t) d].get && all[(size_t) d].set) ? d : -1;
+            if (noteOn)
+                r.noteStarted (s);
+            const float v = r.advance (s, seconds, playing, beatPos, bpm);
+            s.shownPhase.store ((float) r.phase);
+            s.shownValue.store (v);
+            offset[n] = 0.5f * juce::jlimit (-1.0f, 1.0f, s.depth.load()) * v;
+
+            // A new destination: the old knob goes back to where it was set.
+            if (r.dest != dest[n])
+            {
+                if (r.dest >= 0 && r.dest < (int) all.size() && r.lastWritten >= 0.0f)
+                    all[(size_t) r.dest].set (r.base);
+                r.dest = dest[n];
+                r.lastWritten = -1.0f;
+            }
+        }
+        if (dest[1] >= 0 && dest[1] == dest[0])
+        {
+            offset[0] += offset[1];   // both LFOs on one knob: they add up
+            dest[1] = -1;
+        }
+        for (size_t n = 0; n < 2; ++n)
+        {
+            if (dest[n] < 0)
+                continue;
+            auto& r = tr.lfoRunners[n];
+            const auto& target = all[(size_t) dest[n]];
+            const float now = target.get();
+            if (r.lastWritten < 0.0f || std::abs (now - r.lastWritten) > 1.0e-4f)
+                r.base = now;   // turned by hand (or new): the LFO moves around the new place
+            target.set (juce::jlimit (0.0f, 1.0f, r.base + offset[n]));
+            r.lastWritten = target.get();
+        }
+        trackOverride = -1;
+    }
 }
 
 } // namespace bizgroove
