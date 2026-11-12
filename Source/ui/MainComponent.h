@@ -60,6 +60,14 @@ private:
     // Recording into the Sampler
     void handleRecorder();
     bool ensureAudioInput();
+
+    /** Keeps the sound going: reopens the sound card if it was lost (headphones unplugged,
+        the Mac asleep) or stopped calling, and follows the system's output when it changes. */
+    void watchAudioDevice();
+    juce::uint32 lastBlocksRendered = 0;
+    int audioTicks = 0, stalledChecks = 0;
+    juce::String lastDefaultOutput;
+    bool followSystemOutput = true, exporting = false;
     int recordingTrack = -1, recordingPad = 0;
 
     // Program bank
