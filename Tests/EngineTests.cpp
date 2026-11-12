@@ -1785,6 +1785,47 @@ static void testLfos()
     e.knobPage.store (0);
 }
 
+// A broken number in a sound must not leave the app silent: the track and the mix start clean.
+static void testRecoversFromBadNumbers()
+{
+    std::cout << "Recovery\n";
+    AudioEngine e;
+    e.prepareToPlay (512, 48000.0);
+    e.selectedTrack.store (0);
+    auto& tr = e.track (0);
+    tr.type.store (Track::poly);
+    tr.mix.reverb.store (0.6f);
+    tr.mix.delay.store (0.6f);
+    juce::AudioBuffer<float> buf (2, 512);
+    auto render = [&] (int blocks) {
+        float peak = 0.0f;
+        bool finite = true;
+        for (int b = 0; b < blocks; ++b)
+        {
+            buf.clear();
+            e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 512));
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < 512; ++i)
+                    finite = finite && std::isfinite (buf.getSample (ch, i));
+            peak = juce::jmax (peak, buf.getMagnitude (0, 0, 512));
+        }
+        return finite ? peak : -1.0f;
+    };
+    const auto blocksBefore = e.blocksRendered.load();
+    const float good = tr.polyParams.cutoffHz.load();
+    tr.polyParams.cutoffHz.store (std::numeric_limits<float>::quiet_NaN());   // a filter pushed to a broken value
+    e.keyboardState.noteOn (1, 60, 0.9f);
+    const float broken = render (20);
+    e.keyboardState.noteOff (1, 60, 0.0f);
+    tr.polyParams.cutoffHz.store (good);
+    render (10);
+    e.keyboardState.noteOn (1, 60, 0.9f);
+    const float after = render (20);
+    check (broken >= 0.0f, "recovery: a broken number never reaches the speakers");
+    check (after > 0.01f, "recovery: and the sound comes back as soon as the setting is sane again");
+    check (e.blocksRendered.load() == blocksBefore + 50, "recovery: the engine counts the blocks it plays (for the sound card watchdog)");
+}
+
 // Levels: how loud each factory sound plays the same notes, to even them out. Information only.
 static void testLevels()
 {
@@ -2922,6 +2963,7 @@ int main (int argc, char* argv[])
     testOwnReverbDelay();
     testWindowKnobs();
     testLfos();
+    testRecoversFromBadNumbers();
     testKnobPage();
     testChordSteps();
     testRecordChord();
