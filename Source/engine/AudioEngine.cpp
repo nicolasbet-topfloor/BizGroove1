@@ -95,8 +95,26 @@ void AudioEngine::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
     smoothedGain.setCurrentAndTargetValue (masterGain.load());
 }
 
+namespace
+{
+    /** False if any sample is NaN or infinite. */
+    bool allFinite (const juce::AudioBuffer<float>& b, int start, int n, int channels)
+    {
+        float sum = 0.0f;
+        for (int ch = 0; ch < juce::jmin (channels, b.getNumChannels()); ++ch)
+        {
+            const float* x = b.getReadPointer (ch, start);
+            for (int i = 0; i < n; ++i)
+                sum += x[i];
+        }
+        return std::isfinite (sum);
+    }
+}
+
 void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
 {
+    const juce::ScopedNoDenormals noDenormals;   // tiny numbers in fading reverbs and filters slow the processor to a crawl
+    ++blocksRendered;
     info.clearActiveBufferRegion();
     const int numSamples = info.numSamples;
     if (trackBuffer.getNumSamples() < numSamples)
@@ -444,6 +462,17 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         trackBuffer.applyGainRamp (1, 0, numSamples, tr.gain.getCurrentValue(), tr.gain.getTargetValue());
         tr.gain.skip (numSamples);
 
+        // A broken number (from a filter pushed too far) would silence everything from here on:
+        // the track starts clean instead.
+        if (! allFinite (trackBuffer, 0, numSamples, 2))
+        {
+            trackBuffer.clear (0, numSamples);
+            for (auto& fx : tr.insertFx) fx.reset();
+            tr.vocoderCore.reset();
+            for (auto* s : { &tr.synth, &tr.polySynth, &tr.waveSynth, &tr.fmSynth, &tr.noiseSynth, &tr.voiceSynth, &tr.vocoderSynth })
+                s->allNotesOff (0, false);
+        }
+
         tr.strip.process (trackBuffer, numSamples, tr.mix, reverbBus, delayBus);
 
         float peak = 0.0f;
@@ -472,8 +501,17 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     // Repeat, stutter and tape stop play on the whole mix.
     performFx.process (*info.buffer, info.startSample, numSamples, perform, bpm);
 
-    smoothedGain.setTargetValue (masterGain.load());
+    // The same for the whole mix: the reverb, delay and performance effects start clean.
     const int numChannels = info.buffer->getNumChannels();
+    if (! allFinite (*info.buffer, info.startSample, numSamples, numChannels))
+    {
+        info.clearActiveBufferRegion();
+        effects.reset();
+        for (auto& t : tracks)
+            t->strip.prepare (currentRate);
+    }
+
+    smoothedGain.setTargetValue (masterGain.load());
     for (int i = 0; i < numSamples; ++i)
     {
         const float g = smoothedGain.getNextValue();
