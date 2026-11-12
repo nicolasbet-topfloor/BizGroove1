@@ -920,6 +920,7 @@ void MainComponent::runExport (const ExportOptions& options, const juce::File& f
     };
 
     engine.transport.playing.store (false);
+    exporting = true;
     deviceManager.removeAudioCallback (&sourcePlayer);
 
     auto job = std::make_shared<Job> (engine, options, folder, projectName());
@@ -941,6 +942,7 @@ void MainComponent::runExport (const ExportOptions& options, const juce::File& f
     waiter->job = job;
     waiter->done = [this, job, waiter, folder] {
         deviceManager.addAudioCallback (&sourcePlayer);   // prepares the engine for the sound card again
+        exporting = false;
         juce::String message;
         if (job->cancelled)
             message = "Export cancelled.";
@@ -954,9 +956,55 @@ void MainComponent::runExport (const ExportOptions& options, const juce::File& f
     waiter->startTimer (100);
 }
 
+void MainComponent::watchAudioDevice()
+{
+    if (exporting)
+        return;   // the sound card rests while a song is written to files
+    auto* type = deviceManager.getCurrentDeviceTypeObject();
+    if (type == nullptr)
+        return;
+
+    const auto outputs = type->getDeviceNames (false);
+    if (outputs.isEmpty())
+        return;   // no outputs at all: nothing to reopen
+    const int defaultIndex = type->getDefaultDeviceIndex (false);
+    const auto systemOutput = juce::isPositiveAndBelow (defaultIndex, outputs.size()) ? outputs[defaultIndex] : juce::String();
+    auto setup = deviceManager.getAudioDeviceSetup();
+    auto* device = deviceManager.getCurrentAudioDevice();
+
+    // Follow the system's output (speakers, headphones) unless another output was picked in Setup.
+    if (setup.outputDeviceName == systemOutput)
+        followSystemOutput = true;
+    else if (systemOutput == lastDefaultOutput && device != nullptr)
+        followSystemOutput = false;   // chosen by hand while the system's output stayed the same
+    const bool systemChanged = lastDefaultOutput.isNotEmpty() && systemOutput != lastDefaultOutput;
+    lastDefaultOutput = systemOutput;
+
+    // Is the engine still being called? If not for three seconds, the sound card has stalled.
+    const auto blocks = engine.blocksRendered.load();
+    stalledChecks = (device != nullptr && blocks == lastBlocksRendered) ? stalledChecks + 1 : 0;
+    lastBlocksRendered = blocks;
+
+    const bool lost = device == nullptr || ! outputs.contains (setup.outputDeviceName);
+    const bool stalled = stalledChecks >= 3;
+    const bool follow = followSystemOutput && systemChanged && systemOutput.isNotEmpty() && systemOutput != setup.outputDeviceName;
+    if (! (lost || stalled || follow))
+        return;
+
+    stalledChecks = 0;
+    if ((lost || follow) && systemOutput.isNotEmpty())
+        setup.outputDeviceName = systemOutput;
+    deviceManager.closeAudioDevice();
+    const auto error = deviceManager.setAudioDeviceSetup (setup, true);
+    if (error.isNotEmpty())
+        deviceManager.restartLastAudioDevice();
+}
+
 void MainComponent::timerCallback()
 {
     handleRecorder();
+    if (++audioTicks % 30 == 0)
+        watchAudioDevice();   // about once a second
     engine.lfoTargets.store (&controlTargets);
     controlTargets.resolveLfos (engine);   // after a project or sound is loaded, the LFOs find their knobs
     if (externalTicks++ % 15 == 0)
