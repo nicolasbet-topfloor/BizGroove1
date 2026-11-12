@@ -226,23 +226,23 @@ inline const std::vector<SynthDefinition>& synthLibrary()
                 { "Source",     "noise.source",    "How the noise becomes sound: pure coloured noise, FM noise (a tone shaken by noise), ring noise (a band around the note), digital noise (old sound chips) or crackle." },
                 { "Modifier",   "noise.mod",       "Changes with the source: how hard the noise shakes the tone (FM), tone or noise (ring), long or metallic loop (digital), how many clicks (crackle)." },
                 { "Pitch",      "noise.tone",      "Tunes the noise to the note you play: from plain noise to a singing, whistling tone." },
-                { "Filter",     "noise.cutoff",    "Where the filter cuts: left is dark, right is open." },
-                { "Edge",       "noise.resonance", "Adds a ringing peak where the filter is set." },
-                { "Fade in",    "noise.attack",    "How long a note takes to reach full volume after you press a key." },
-                { "Fade out",   "noise.release",   "How long a note keeps sounding after you let go of the key." }
+                { "Cutoff",     "noise.cutoff",    "Where the filter cuts: left is dark, right is open." },
+                { "Resonance",  "noise.resonance", "Adds a ringing peak where the filter is set." },
+                { "Attack",     "noise.attack",    "How long a note takes to reach full volume after you press a key. At the left, it starts at once: a hit." },
+                { "Release",    "noise.release",   "How long a note keeps sounding after you let go of the key." }
             } },
             {
                 { "Filter type",            "noise.filtermode", "Low-pass keeps the lows, band-pass a band in the middle, high-pass the highs." },
-                { "Filter sweep",           "noise.envamount",  "How much each note opens (or closes) the filter as it plays: right opens, left closes." },
-                { "Filter follows note",    "noise.keyfollow",  "How much the filter moves up with higher notes." },
+                { "Env amount",             "noise.envamount",  "How much each note opens (or closes) the filter as it plays: right opens, left closes." },
+                { "Key tracking",           "noise.keyfollow",  "How much the filter moves up with higher notes." },
                 { "Grain",                  "noise.grain",      "Holds each value for a moment: from smooth to a coarse, steppy, digital noise." },
-                { "Punch",                  "noise.decay",      "How long the first hit of each note lasts before it settles." },
-                { "Hold level",             "noise.sustain",    "How loud a note stays while you keep holding the key." },
+                { "Decay",                  "noise.decay",      "How long the first hit of each note lasts before it settles to the Sustain level. Short, with Sustain at 0: a drum hit." },
+                { "Sustain",                "noise.sustain",    "How loud a note stays while you keep holding the key. At 0 every note is a hit that dies away." },
                 { "Width",                  "noise.width",      "Mono, or a different noise on each side for a wide sound." },
-                { "Velocity to volume",     "noise.velocity",   "How much harder hits are louder." },
-                { "Wobble speed",           "noise.lforate",    "How fast the wobble moves." },
-                { "Wobble on filter",       "noise.lfofilter",  "How much the wobble opens and closes the filter: wind and waves." },
-                { "Wobble on colour",       "noise.lfocolour",  "How much the wobble moves the colour." },
+                { "Velocity",               "noise.velocity",   "How much harder hits are louder." },
+                { "LFO rate",               "noise.lforate",    "How fast the noise's own wobble (LFO) moves." },
+                { "LFO to cutoff",          "noise.lfofilter",  "How much the wobble opens and closes the filter: wind and waves." },
+                { "LFO to colour",          "noise.lfocolour",  "How much the wobble moves the colour." },
                 { "Level",                  "noise.level",      "The sound's own level: turn it up when a narrow filter makes the noise quiet." },
                 { "Glide",                  "noise.glide",      "Slides from one note to the next instead of jumping: how long the slide takes (per octave, when it glides by distance)." },
                 { "Glide mode",             "noise.glidemode",  "Fixed time: every slide takes the glide time. By distance: wider jumps slide for longer, the glide time per octave." },
@@ -302,6 +302,81 @@ inline const std::vector<SynthDefinition>& synthLibrary()
         }
     };
     return library;
+}
+
+/** A section of an instrument's Sound settings window: a title and its knobs.
+    The envelope section also draws the envelope's shape. */
+struct SoundSection
+{
+    juce::String title;
+    std::vector<SynthKnob> knobs;
+    bool envelope = false;   // its first four knobs are Attack, Decay, Sustain and Release
+};
+
+/** Every setting of an instrument, by section, for its Sound settings window
+    (empty: the instrument still uses the older More window). Each knob is the
+    one on the panel or under More, with the same name and help. */
+inline const std::vector<SoundSection>& soundSections (int type)
+{
+    static const std::vector<SoundSection> none;
+    const auto& library = synthLibrary();
+    if (! juce::isPositiveAndBelow (type, (int) library.size()))
+        return none;
+    const auto& def = library[(size_t) type];
+    auto knob = [&def] (const char* target) {
+        for (const auto& k : def.knobs) if (k.target == target) return k;
+        for (const auto& k : def.more)  if (k.target == target) return k;
+        jassertfalse;
+        return SynthKnob { target, target, {} };
+    };
+    if (def.id == "noise")
+    {
+        static const std::vector<SoundSection> noise {
+            { "Source",     { knob ("noise.colour"), knob ("noise.source"), knob ("noise.mod"), knob ("noise.grain"), knob ("noise.tone") } },
+            { "Filter",     { knob ("noise.filtermode"), knob ("noise.cutoff"), knob ("noise.resonance"), knob ("noise.envamount"), knob ("noise.keyfollow") } },
+            { "Envelope",   { knob ("noise.attack"), knob ("noise.decay"), knob ("noise.sustain"), knob ("noise.release"), knob ("noise.velocity") }, true },
+            { "Modulation", { knob ("noise.lforate"), knob ("noise.lfofilter"), knob ("noise.lfocolour") } },
+            { "Output",     { knob ("noise.level"), knob ("noise.width"), knob ("noise.glide"), knob ("noise.glidemode"), knob ("track.volume") } }
+        };
+        return noise;
+    }
+    return none;
+}
+
+/** The controller's pages in the Sound settings window: neighbouring sections share
+    a page while they fit on the eight knobs. The page (from 1) of a section. */
+inline int soundPageOfSection (const std::vector<SoundSection>& sections, int section)
+{
+    int page = 1, used = 0;
+    for (int s = 0; s < (int) sections.size(); ++s)
+    {
+        const int n = juce::jmin (8, (int) sections[(size_t) s].knobs.size());
+        if (used > 0 && used + n > 8) { ++page; used = 0; }
+        if (s == section) return page;
+        used += n;
+    }
+    return page;
+}
+
+inline int soundPageCount (const std::vector<SoundSection>& sections)
+{
+    return sections.empty() ? 0 : soundPageOfSection (sections, (int) sections.size() - 1);
+}
+
+/** Which knob the controller's knob k (0-7) turns on a page; nullptr if none. */
+inline const SynthKnob* soundPageKnob (const std::vector<SoundSection>& sections, int page, int k)
+{
+    int index = 0;
+    for (int s = 0; s < (int) sections.size(); ++s)
+    {
+        if (soundPageOfSection (sections, s) != page)
+            continue;
+        const auto& knobs = sections[(size_t) s].knobs;
+        for (int i = 0; i < juce::jmin (8, (int) knobs.size()); ++i, ++index)
+            if (index == k)
+                return &knobs[(size_t) i];
+    }
+    return nullptr;
 }
 
 } // namespace bizgroove
