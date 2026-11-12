@@ -8,6 +8,7 @@
 #include "engine/Project.h"
 #include "engine/Presets.h"
 #include "engine/SynthLibrary.h"
+#include <map>
 #include "engine/SampleTools.h"
 #include <iostream>
 #include <vector>
@@ -1636,6 +1637,49 @@ static void testKnobPage()
     e.knobPage.store (0);
 }
 
+// The Noise's Sound settings window: every setting once, by section, with standard names;
+// the controller's knobs turn the highlighted sections, a page at a time.
+static void testSoundSections()
+{
+    std::cout << "Sound settings window\n";
+    const auto& def = synthLibrary()[(size_t) Track::noise];
+    const auto& sections = soundSections (Track::noise);
+    check (! sections.empty(), "sound settings: the Noise has sections");
+    std::map<juce::String, int> seen;
+    for (const auto& s : sections)
+        for (const auto& k : s.knobs)
+            ++seen[k.target];
+    bool everyOnce = true;
+    for (const auto& k : def.knobs) everyOnce = everyOnce && seen[k.target] == 1;
+    for (const auto& k : def.more)  everyOnce = everyOnce && seen[k.target] == 1;
+    check (everyOnce && (int) seen.size() == (int) def.knobs.size() + (int) def.more.size(),
+           "sound settings: every Noise setting appears exactly once");
+    bool adsr = false;
+    for (const auto& s : sections)
+        if (s.envelope)
+            adsr = s.knobs.size() >= 4 && s.knobs[0].label == "Attack" && s.knobs[1].label == "Decay"
+                   && s.knobs[2].label == "Sustain" && s.knobs[3].label == "Release";
+    check (adsr, "sound settings: the envelope reads Attack, Decay, Sustain, Release");
+    check (soundSections (Track::poly).empty(), "sound settings: the other instruments keep their More window for now");
+
+    AudioEngine e;
+    ControlTargets targets (e);
+    e.selectedTrack.store (0);
+    e.track (0).type.store (Track::noise);
+    e.knobOverlay.store (AudioEngine::overlayMore);
+    e.knobPages.store (soundPageCount (sections));
+    check (soundPageCount (sections) == 4, "sound settings: five sections on four controller pages");
+    e.knobPage.store (3);   // Envelope and Modulation
+    targets.applyValue ("panel.knob.3", 0.0f);
+    targets.applyValue ("panel.knob.6", 0.75f);
+    check (e.track (0).noiseParams.sustain.load() < 1.0e-4f && std::abs (targets.getValue ("noise.lforate") - 0.75f) < 0.03f,
+           "sound settings: on page 3 the knobs turn the envelope, then the modulation");
+    targets.applyButton ("track.next", true);
+    check (e.knobPage.load() == 4 && e.selectedTrack.load() == 0, "sound settings: the track arrow turns the page");
+    e.knobOverlay.store (AudioEngine::overlayNone);
+    e.knobPage.store (0);
+}
+
 // The controller's knobs follow the Oscillators and Effects windows, a page at a time; the
 // track arrows turn the pages. And the oscilloscope hears the selected track.
 static void testWindowKnobs()
@@ -2965,6 +3009,7 @@ int main (int argc, char* argv[])
     testLfos();
     testRecoversFromBadNumbers();
     testKnobPage();
+    testSoundSections();
     testChordSteps();
     testRecordChord();
     testMetronome();
