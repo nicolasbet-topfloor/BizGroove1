@@ -563,43 +563,43 @@ ControlTargets::ControlTargets (AudioEngine& e)
          [np] (float v) { np().filterMode.store (juce::jlimit (0, NoiseParams::numFilterModes - 1, (int) (v * ((float) NoiseParams::numFilterModes - 0.001f)))); },
          [np] { return ((float) np().filterMode.load() + 0.5f) / (float) NoiseParams::numFilterModes; },
          [] (float v) { return NoiseParams::filterName (juce::jlimit (0, NoiseParams::numFilterModes - 1, (int) (v * ((float) NoiseParams::numFilterModes - 0.001f)))); });
-    add ("noise.cutoff", "Noise filter", "Noise", TargetKind::continuous,
+    add ("noise.cutoff", "Noise cutoff", "Noise", TargetKind::continuous,
          [np] (float v) { np().cutoffHz.store (expMap (v, 40.0f, 18000.0f)); },
          [np] { return expInv (np().cutoffHz.load(), 40.0f, 18000.0f); },
          [] (float v) { const float hz = expMap (v, 40.0f, 18000.0f); return hz >= 1000.0f ? juce::String (hz / 1000.0f, 1) + " kHz" : juce::String (juce::roundToInt (hz)) + " Hz"; });
-    add ("noise.resonance", "Noise filter edge", "Noise", TargetKind::continuous,
+    add ("noise.resonance", "Noise resonance", "Noise", TargetKind::continuous,
          [np] (float v) { np().resonance.store (v); }, [np] { return np().resonance.load(); }, percent);
-    add ("noise.keyfollow", "Noise filter follows the note", "Noise", TargetKind::continuous,
+    add ("noise.keyfollow", "Noise key tracking", "Noise", TargetKind::continuous,
          [np] (float v) { np().keyFollow.store (v); }, [np] { return np().keyFollow.load(); }, percent);
-    add ("noise.envamount", "Noise filter sweep", "Noise", TargetKind::continuous,
+    add ("noise.envamount", "Noise env amount", "Noise", TargetKind::continuous,
          [np] (float v) { np().envAmount.store (v * 2.0f - 1.0f); }, [np] { return (np().envAmount.load() + 1.0f) * 0.5f; },
          [] (float v) { const int p = juce::roundToInt ((v * 2.0f - 1.0f) * 100.0f); return p == 0 ? juce::String ("None") : (p > 0 ? "Opens " : "Closes ") + juce::String (std::abs (p)) + "%"; });
-    add ("noise.attack", "Noise fade in", "Noise", TargetKind::continuous,
+    add ("noise.attack", "Noise attack", "Noise", TargetKind::continuous,
          [np] (float v) { np().attack.store (expMap (v, 0.001f, 4.0f)); },
          [np] { return expInv (np().attack.load(), 0.001f, 4.0f); },
          [] (float v) { return seconds (expMap (v, 0.001f, 4.0f)); });
-    add ("noise.decay", "Noise punch", "Noise", TargetKind::continuous,
+    add ("noise.decay", "Noise decay", "Noise", TargetKind::continuous,
          [np] (float v) { np().decay.store (expMap (v, 0.005f, 4.0f)); },
          [np] { return expInv (np().decay.load(), 0.005f, 4.0f); },
          [] (float v) { return seconds (expMap (v, 0.005f, 4.0f)); });
-    add ("noise.sustain", "Noise hold level", "Noise", TargetKind::continuous,
+    add ("noise.sustain", "Noise sustain", "Noise", TargetKind::continuous,
          [np] (float v) { np().sustain.store (v); }, [np] { return np().sustain.load(); }, percent);
-    add ("noise.release", "Noise fade out", "Noise", TargetKind::continuous,
+    add ("noise.release", "Noise release", "Noise", TargetKind::continuous,
          [np] (float v) { np().release.store (expMap (v, 0.005f, 8.0f)); },
          [np] { return expInv (np().release.load(), 0.005f, 8.0f); },
          [] (float v) { return seconds (expMap (v, 0.005f, 8.0f)); });
     add ("noise.width", "Noise width", "Noise", TargetKind::continuous,
          [np] (float v) { np().width.store (v); }, [np] { return np().width.load(); },
          [] (float v) { return v < 0.01f ? juce::String ("Mono") : percent (v); });
-    add ("noise.velocity", "Noise velocity to volume", "Noise", TargetKind::continuous,
+    add ("noise.velocity", "Noise velocity", "Noise", TargetKind::continuous,
          [np] (float v) { np().velocity.store (v); }, [np] { return np().velocity.load(); }, percent);
-    add ("noise.lforate", "Noise wobble speed", "Noise", TargetKind::continuous,
+    add ("noise.lforate", "Noise LFO rate", "Noise", TargetKind::continuous,
          [np] (float v) { np().lfoRate.store (expMap (v, 0.05f, 30.0f)); },
          [np] { return expInv (np().lfoRate.load(), 0.05f, 30.0f); },
          [] (float v) { return juce::String (expMap (v, 0.05f, 30.0f), 2) + " Hz"; });
-    add ("noise.lfofilter", "Noise wobble on the filter", "Noise", TargetKind::continuous,
+    add ("noise.lfofilter", "Noise LFO to cutoff", "Noise", TargetKind::continuous,
          [np] (float v) { np().lfoFilter.store (v); }, [np] { return np().lfoFilter.load(); }, percent);
-    add ("noise.lfocolour", "Noise wobble on the colour", "Noise", TargetKind::continuous,
+    add ("noise.lfocolour", "Noise LFO to colour", "Noise", TargetKind::continuous,
          [np] (float v) { np().lfoColour.store (v); }, [np] { return np().lfoColour.load(); }, percent);
     add ("noise.level", "Noise level", "Noise", TargetKind::continuous,
          [np] (float v) { np().level.store (expMap (v, 0.25f, 4.0f)); },
@@ -922,6 +922,13 @@ ControlTargets::ControlTargets (AudioEngine& e)
                 }
                 static const char* listen[5] = { "vocoder.voice", "vocoder.mic", "vocoder.track", "vocoder.source", "vocoder.bands" };
                 return k < 5 ? find (listen[k]) : nullptr;
+            }
+            // While the Sound settings window is open, the knobs turn the sections of its page.
+            const auto& sections = soundSections (e.selected().type.load());
+            if (page > 0 && ! sections.empty())
+            {
+                const auto* knob = soundPageKnob (sections, page, k);
+                return knob != nullptr ? find (knob->target) : nullptr;
             }
             // While the More window is open, the knobs turn its highlighted row instead.
             if (page > 0)
