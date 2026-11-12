@@ -7,6 +7,7 @@
 #include "OscPanel.h"
 #include "VoicePanel.h"
 #include "LfoPanel.h"
+#include "SoundPanel.h"
 
 namespace bizgroove
 {
@@ -366,10 +367,21 @@ void LaunchkeyPanel::loadSynth (const SynthDefinition& synth)
         knobs[i]->setKnob (synth.knobs[(size_t) i]);
     moreKnobs = synth.more;
     moreButton.setVisible (! moreKnobs.empty());
+    // Instruments with a Sound settings window show every setting there, by section.
+    const bool sections = ! soundSections ((int) (&synth - synthLibrary().data())).empty();
+    moreButton.setButtonText (sections ? "Sound settings" : "More sound settings");
+    moreButton.setTooltip (sections ? "Every setting of this sound in one window: source, filter, envelope (attack, decay, sustain, release), modulation and output."
+                                    : "More settings for this synth");
 }
 
 void LaunchkeyPanel::showMore()
 {
+    if (! soundSections (engine.selected().type.load()).empty())
+    {
+        juce::CallOutBox::launchAsynchronously (std::make_unique<SoundPanel> (engine, targets), moreButton.getBounds(), this);
+        return;
+    }
+
     // The loaded synth's other settings, in rows of eight. While the window is open the
     // controller's eight knobs turn the highlighted row; click a row's button to pick another.
     struct MoreWindow final : public juce::Component, private juce::Timer
