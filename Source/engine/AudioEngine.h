@@ -109,6 +109,9 @@ public:
     static constexpr int scopeSize = 8192;
     std::array<std::atomic<float>, scopeSize> scope {};
     std::atomic<int> scopeWrite { 0 };
+
+    /** Counts the blocks played, so the app can tell when the sound card has stopped calling. */
+    std::atomic<juce::uint32> blocksRendered { 0 };
     double getSampleRate() const { return currentRate; }
 
     /** Hold: notes keep sounding after you let go of the keys, for long, evolving sounds.
