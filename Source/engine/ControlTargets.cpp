@@ -606,6 +606,68 @@ ControlTargets::ControlTargets (AudioEngine& e)
          [np] { return expInv (np().level.load(), 0.25f, 4.0f); },
          [] (float v) { const float db = juce::Decibels::gainToDecibels (expMap (v, 0.25f, 4.0f)); return (db >= 0.0f ? "+" : "") + juce::String (db, 1) + " dB"; });
 
+    // ---- Granular
+    auto gp = [&e]() -> GranularParams& { return e.selected().granularParams; };
+    {
+        auto pick = [] (float v, int count) { return juce::jlimit (0, count - 1, (int) (v * ((float) count - 0.001f))); };
+        add ("gran.source", "Granular source", "Granular", TargetKind::continuous,
+             [gp, pick] (float v) { gp().source.store (pick (v, GranularSources::numSources)); },
+             [gp] { return ((float) gp().source.load() + 0.5f) / (float) GranularSources::numSources; },
+             [pick] (float v) { return GranularSources::name (pick (v, GranularSources::numSources)); });
+        add ("gran.position", "Granular position", "Granular", TargetKind::continuous,
+             [gp] (float v) { gp().position.store (v); }, [gp] { return gp().position.load(); }, percent);
+        add ("gran.size", "Granular grain size", "Granular", TargetKind::continuous,
+             [gp] (float v) { gp().size.store (expMap (v, 0.01f, 0.5f)); },
+             [gp] { return expInv (gp().size.load(), 0.01f, 0.5f); },
+             [] (float v) { return juce::String (juce::roundToInt (expMap (v, 0.01f, 0.5f) * 1000.0f)) + " ms"; });
+        add ("gran.density", "Granular density", "Granular", TargetKind::continuous,
+             [gp] (float v) { gp().density.store (expMap (v, 1.0f, 100.0f)); },
+             [gp] { return expInv (gp().density.load(), 1.0f, 100.0f); },
+             [] (float v) { return juce::String (expMap (v, 1.0f, 100.0f), 1) + " /s"; });
+        add ("gran.spread", "Granular spread", "Granular", TargetKind::continuous,
+             [gp] (float v) { gp().spread.store (v); }, [gp] { return gp().spread.load(); }, percent);
+        add ("gran.scan", "Granular scan", "Granular", TargetKind::continuous,
+             [gp] (float v) { gp().scan.store (v * 2.0f - 1.0f); }, [gp] { return (gp().scan.load() + 1.0f) * 0.5f; },
+             [] (float v) { const int p = juce::roundToInt ((v * 2.0f - 1.0f) * 100.0f); return p == 0 ? juce::String ("Still") : (p > 0 ? "Forward " : "Back ") + juce::String (std::abs (p)) + "%"; });
+        add ("gran.pitch", "Granular pitch", "Granular", TargetKind::continuous,
+             [gp] (float v) { gp().pitch.store ((float) juce::roundToInt (v * 48.0f - 24.0f)); },
+             [gp] { return (gp().pitch.load() + 24.0f) / 48.0f; },
+             [] (float v) { const int s = juce::roundToInt (v * 48.0f - 24.0f); return (s > 0 ? "+" : "") + juce::String (s) + " st"; });
+        add ("gran.detune", "Granular detune", "Granular", TargetKind::continuous,
+             [gp] (float v) { gp().detune.store (v); }, [gp] { return gp().detune.load(); },
+             [] (float v) { return juce::String (juce::roundToInt (v * 50.0f)) + " cents"; });
+        add ("gran.reverse", "Granular reverse", "Granular", TargetKind::continuous,
+             [gp] (float v) { gp().reverse.store (v); }, [gp] { return gp().reverse.load(); }, percent);
+        add ("gran.spray", "Granular stereo spray", "Granular", TargetKind::continuous,
+             [gp] (float v) { gp().spray.store (v); }, [gp] { return gp().spray.load(); }, percent);
+        add ("gran.cutoff", "Granular cutoff", "Granular", TargetKind::continuous,
+             [gp] (float v) { gp().cutoffHz.store (expMap (v, 60.0f, 18000.0f)); },
+             [gp] { return expInv (gp().cutoffHz.load(), 60.0f, 18000.0f); },
+             [] (float v) { const float hz = expMap (v, 60.0f, 18000.0f); return hz >= 1000.0f ? juce::String (hz / 1000.0f, 1) + " kHz" : juce::String (juce::roundToInt (hz)) + " Hz"; });
+        add ("gran.resonance", "Granular resonance", "Granular", TargetKind::continuous,
+             [gp] (float v) { gp().resonance.store (v); }, [gp] { return gp().resonance.load(); }, percent);
+        add ("gran.attack", "Granular attack", "Granular", TargetKind::continuous,
+             [gp] (float v) { gp().attack.store (expMap (v, 0.002f, 6.0f)); },
+             [gp] { return expInv (gp().attack.load(), 0.002f, 6.0f); },
+             [] (float v) { return seconds (expMap (v, 0.002f, 6.0f)); });
+        add ("gran.decay", "Granular decay", "Granular", TargetKind::continuous,
+             [gp] (float v) { gp().decay.store (expMap (v, 0.01f, 6.0f)); },
+             [gp] { return expInv (gp().decay.load(), 0.01f, 6.0f); },
+             [] (float v) { return seconds (expMap (v, 0.01f, 6.0f)); });
+        add ("gran.sustain", "Granular sustain", "Granular", TargetKind::continuous,
+             [gp] (float v) { gp().sustain.store (v); }, [gp] { return gp().sustain.load(); }, percent);
+        add ("gran.release", "Granular release", "Granular", TargetKind::continuous,
+             [gp] (float v) { gp().release.store (expMap (v, 0.01f, 10.0f)); },
+             [gp] { return expInv (gp().release.load(), 0.01f, 10.0f); },
+             [] (float v) { return seconds (expMap (v, 0.01f, 10.0f)); });
+        add ("gran.level", "Granular level", "Granular", TargetKind::continuous,
+             [gp] (float v) { gp().level.store (expMap (v, 0.25f, 4.0f)); },
+             [gp] { return expInv (gp().level.load(), 0.25f, 4.0f); },
+             [] (float v) { const float db = juce::Decibels::gainToDecibels (expMap (v, 0.25f, 4.0f)); return (db >= 0.0f ? "+" : "") + juce::String (db, 1) + " dB"; });
+        add ("gran.velocity", "Granular velocity", "Granular", TargetKind::continuous,
+             [gp] (float v) { gp().velocity.store (v); }, [gp] { return gp().velocity.load(); }, percent);
+    }
+
     // ---- Voice
     auto vp = [&e]() -> VoiceParams& { return e.selected().voiceParams; };
     auto choose = [] (float v, int count) { return juce::jlimit (0, count - 1, (int) (v * ((float) count - 0.001f))); };
@@ -617,6 +679,10 @@ ControlTargets::ControlTargets (AudioEngine& e)
          [vp, choose] (float v) { vp().language.store (choose (v, speech::numLanguages)); },
          [vp] { return ((float) vp().language.load() + 0.5f) / (float) speech::numLanguages; },
          [choose] (float v) { return speech::languageName (choose (v, speech::numLanguages)); });
+    add ("voice.keyspitch", "Voice note for Sounds on keys", "Voice", TargetKind::continuous,
+         [vp] (float v) { vp().keysPitch.store (36 + juce::roundToInt (v * 36.0f)); },
+         [vp] { return (float) (vp().keysPitch.load() - 36) / 36.0f; },
+         [] (float v) { return juce::MidiMessage::getMidiNoteName (36 + juce::roundToInt (v * 36.0f), true, true, 3); });
     add ("voice.speed", "Voice speed", "Voice", TargetKind::continuous,
          [vp] (float v) { vp().speed.store (expMap (v, 0.4f, 2.5f)); },
          [vp] { return expInv (vp().speed.load(), 0.4f, 2.5f); },
@@ -739,6 +805,9 @@ ControlTargets::ControlTargets (AudioEngine& e)
     add ("fm.glide", "FM glide", "FM", TargetKind::continuous,
          [&e, glideSet] (float v) { glideSet (e.selected().fmParams.glide, v); },
          [&e, glideGet] { return glideGet (e.selected().fmParams.glide); }, glideShow);
+    add ("gran.glide", "Granular glide", "Granular", TargetKind::continuous,
+         [&e, glideSet] (float v) { glideSet (e.selected().granularParams.glide, v); },
+         [&e, glideGet] { return glideGet (e.selected().granularParams.glide); }, glideShow);
     add ("noise.glide", "Noise glide", "Noise", TargetKind::continuous,
          [&e, glideSet] (float v) { glideSet (e.selected().noiseParams.glide, v); },
          [&e, glideGet] { return glideGet (e.selected().noiseParams.glide); }, glideShow);
@@ -759,6 +828,7 @@ ControlTargets::ControlTargets (AudioEngine& e)
             case Track::noise:     return &tr.noiseParams.glide;
             case Track::voice:     return &tr.voiceParams.glide;
             case Track::vocoder:   return &tr.vocoderParams.glide;
+            case Track::granular:  return &tr.granularParams.glide;
             default:               return nullptr;
         }
     };
@@ -773,13 +843,14 @@ ControlTargets::ControlTargets (AudioEngine& e)
             case Track::noise:     return &tr.noiseParams.glideMode;
             case Track::voice:     return &tr.voiceParams.glideMode;
             case Track::vocoder:   return &tr.vocoderParams.glideMode;
+            case Track::granular:  return &tr.granularParams.glideMode;
             default:               return nullptr;
         }
     };
     add ("track.glide", "Glide time (selected track's synth)", "Tracks", TargetKind::continuous,
          [glideOf, glideSet] (float v) { if (auto* g = glideOf()) glideSet (*g, v); },
          [glideOf, glideGet] { auto* g = glideOf(); return g != nullptr ? glideGet (*g) : 0.0f; }, glideShow);
-    for (const char* id : { "synth.glidemode", "poly.glidemode", "wave.glidemode", "fm.glidemode", "noise.glidemode", "voice.glidemode", "vocoder.glidemode", "track.glidemode" })
+    for (const char* id : { "synth.glidemode", "poly.glidemode", "wave.glidemode", "fm.glidemode", "noise.glidemode", "voice.glidemode", "vocoder.glidemode", "gran.glidemode", "track.glidemode" })
         add (id, "Glide: fixed time or by distance", "Tracks", TargetKind::continuous,
              [glideModeOf, modeSet] (float v) { if (auto* m = glideModeOf()) modeSet (*m, v); },
              [glideModeOf] { auto* m = glideModeOf(); return m != nullptr && m->load() == Glide::byDistance ? 0.75f : 0.25f; }, modeShow);
