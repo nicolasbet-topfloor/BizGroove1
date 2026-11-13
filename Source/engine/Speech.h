@@ -660,6 +660,95 @@ inline void compile (const juce::String& text, int language, Script& script)
     script.wordStart[(size_t) script.numWords] = (std::uint16_t) script.numSegs;
 }
 
+/** A script cut into pieces, one per note: syllables ("ciu-dad"), or single sounds ("s", "a", "k").
+    start[i] .. start[i + 1] are the segments of piece i, without the pauses after it. Returns how many. */
+constexpr int maxPieces = 512;
+using Pieces = std::array<std::uint16_t, maxPieces + 1>;
+
+inline int syllables (const Script& s, Pieces& start, Pieces& end)
+{
+    auto isVowel = [&s] (int i) { return phone (s.segs[(size_t) i].phone).kind == vowel; };
+    auto kindOf = [&s] (int i) { return phone (s.segs[(size_t) i].phone).kind; };
+    int n = 0;
+    for (int w = 0; w < s.numWords && n < maxPieces; ++w)
+    {
+        const int from = s.wordStart[(size_t) w], to = s.wordStart[(size_t) w + 1];
+        int last = to;   // the word without its pause
+        while (last > from && kindOf (last - 1) == pause) --last;
+        // The vowels (a vowel straight after another, or a glide between two, stays in the same syllable).
+        std::array<int, 64> nuclei {};
+        int count = 0;
+        for (int i = from; i < last && count < 64; ++i)
+            if (isVowel (i) && (count == 0 || ! (i > from && (isVowel (i - 1) || kindOf (i - 1) == glide))))
+                nuclei[(size_t) count++] = i;
+        if (count == 0)
+        {
+            if (last > from) { start[(size_t) n] = (std::uint16_t) from; end[(size_t) n] = (std::uint16_t) last; ++n; }
+            continue;
+        }
+        int pieceStart = from;
+        for (int k = 1; k < count && n < maxPieces; ++k)
+        {
+            // The consonants between two vowels: the last one starts the next syllable (a stop with an
+            // l or r after it goes with them: "pla", "tre"); with none, the next vowel starts it.
+            int boundary = nuclei[(size_t) k];
+            int c = nuclei[(size_t) k] - 1;
+            while (c > nuclei[(size_t) k - 1] && (isVowel (c) || kindOf (c) == glide)) --c;
+            if (c > nuclei[(size_t) k - 1])
+            {
+                boundary = c;
+                if (kindOf (c) == burst && c - 1 > nuclei[(size_t) k - 1] && kindOf (c - 1) == closure) boundary = c - 1;
+                const auto kc = kindOf (c);
+                if ((kc == liquid || kc == tap) && boundary - 1 > nuclei[(size_t) k - 1] && kindOf (boundary - 1) == burst)
+                {
+                    boundary -= 1;
+                    if (boundary - 1 > nuclei[(size_t) k - 1] && kindOf (boundary - 1) == closure) boundary -= 1;
+                }
+                // Glides before the vowel belong to it too ("ciu", "bien").
+                while (boundary > nuclei[(size_t) k - 1] + 1 && kindOf (boundary - 1) == glide) --boundary;
+            }
+            start[(size_t) n] = (std::uint16_t) pieceStart;
+            end[(size_t) n] = (std::uint16_t) boundary;
+            ++n;
+            pieceStart = boundary;
+        }
+        if (n < maxPieces) { start[(size_t) n] = (std::uint16_t) pieceStart; end[(size_t) n] = (std::uint16_t) last; ++n; }
+    }
+    return n;
+}
+
+/** One piece per sound you hear: each vowel, consonant or hiss alone (a stop is its release only). */
+inline int sounds (const Script& s, Pieces& start, Pieces& end)
+{
+    int n = 0;
+    for (int i = 0; i < s.numSegs && n < maxPieces; ++i)
+    {
+        const auto k = phone (s.segs[(size_t) i].phone).kind;
+        if (k == pause || k == closure) continue;
+        start[(size_t) n] = (std::uint16_t) i;
+        end[(size_t) n] = (std::uint16_t) (i + 1);
+        ++n;
+    }
+    return n;
+}
+
+/** The sounds the keys play in the "Sounds on keys" mode, from C2 (note 36) upwards: vowels first, then the
+    consonants, as on the Elektron voice machines. */
+inline const std::vector<int>& keySounds()
+{
+    static const std::vector<int> list { A, E, I, O, U, AE, AA, AO, EH, IH, UH, AH, ER,
+                                         M, N, NG, L, Rtap, RR, W, Yg,
+                                         S, SH, Z, F, V, TH, X, H,
+                                         Pb, Bb, Tb, Db, Kb, Gb };
+    return list;
+}
+
+inline int keySoundFor (int note)
+{
+    const auto& list = keySounds();
+    return list[(size_t) ((note - 36) % (int) list.size() + (int) list.size()) % list.size()];
+}
+
 /** The sounds of a script as text, for tests: "o l a" (stops show as their release). */
 inline juce::String describe (const Script& s)
 {
