@@ -489,11 +489,12 @@ void LaunchkeyPanel::showTrack()
         loadSynth (library[(size_t) type]);
 
         // A Sampler track loads and edits its recording; a Drums track puts recordings on the selected pad.
-        const bool sampler = type == Track::sampler, kit = type == Track::drums, ext = type == Track::external;
-        loadSampleButton.setVisible (sampler || kit || ext);
-        oscButton.setVisible (! (sampler || kit || ext));
+        // A Granular track loads a recording to take its grains from.
+        const bool sampler = type == Track::sampler, kit = type == Track::drums, ext = type == Track::external, gran = type == Track::granular;
+        loadSampleButton.setVisible (sampler || kit || ext || gran);
+        oscButton.setVisible (! (sampler || kit || ext || gran));
         voiceTextButton.setVisible (type == Track::voice);
-        editSampleButton.setVisible (sampler || kit || ext);
+        editSampleButton.setVisible (sampler || kit || ext || gran);
         recSourceButton.setVisible (sampler || kit || ext);
         recSourceButton.setTooltip (ext ? "Hear the gear's sound through this track: connect its audio output to your sound card's input. Turn it off if you hear feedback."
                                         : "What Record captures: the sound card's input (a microphone or line in), or BizGroove's own sound (resampling). Click to switch.");
@@ -501,7 +502,8 @@ void LaunchkeyPanel::showTrack()
         loadSampleButton.setButtonText (kit ? "Pad..." : "Load...");
         editSampleButton.setButtonText (kit ? "Clear pad" : "Edit...");
         loadSampleButton.setTooltip (kit ? "The selected pad: put a recording on it (or drop a file onto the panel), or take the same drum from another kit to build your own. Keep it with Sounds > Save as a new sound."
-                                         : "Choose a recording for this Sampler track (WAV, AIFF, FLAC or OGG). You can also drop a file onto the panel.");
+                                         : gran ? juce::String ("Choose a recording to take the grains from (WAV, AIFF, FLAC or OGG); the source becomes Your recording.")
+                                                : juce::String ("Choose a recording for this Sampler track (WAV, AIFF, FLAC or OGG). You can also drop a file onto the panel."));
         editSampleButton.setTooltip (kit ? "Take the recording off the selected pad, so it plays its synthesised drum again."
                                          : "Open the sample editor: trim, chop into slices for the pads, and process the recording.");
 
@@ -618,6 +620,8 @@ void LaunchkeyPanel::loadSample (const juce::File& file)
                   : Project::loadSampleIntoTrack (engine, engine.selectedTrack.load(), file.getFileName(), data, formats, error)))
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Couldn't load the recording",
                                                 file.getFileName() + (error.isNotEmpty() ? ": " + error : juce::String()));
+    else if (engine.selected().type.load() == Track::granular)
+        engine.selected().granularParams.source.store (GranularSources::recording);   // the grains come from what was just loaded
     showTrack();
 }
 
