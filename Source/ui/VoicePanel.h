@@ -48,7 +48,10 @@ public:
             "Each note says the whole text, to the end.",
             "The whole text, over and over, while you hold the key.",
             "Each note says the next word: sequence it and the words come in order.",
-            "Each note sings the next word: its last vowel lasts as long as the note."
+            "Each note sings the next word: its last vowel lasts as long as the note.",
+            "Each note says the next syllable (\"ciu-dad\", \"to-ma-te\"): for chopped, stuttering raps.",
+            "Each note says the next single sound of the text, a vowel or a consonant; vowels and hisses last while you hold the key.",
+            "No text: each key is a sound, as on the Elektron voice machines. Vowels from C2 (a, e, i, o, u...), then m, n, l, r, w, y, s, sh, z, f, v, th, j, h, p, b, t, d, k, g. The Keys note knob sets the pitch."
         };
         for (int m = 0; m < VoiceParams::numModes; ++m)
         {
@@ -68,7 +71,7 @@ public:
         info.setColour (juce::Label::textColourId, Colours::textDim);
         addAndMakeVisible (info);
 
-        setSize (620, 246);
+        setSize (720, 284);
         refresh();
         startTimerHz (10);
     }
@@ -96,12 +99,18 @@ public:
         firstWordButton.setBounds (langRow.removeFromRight (150));
         r.removeFromTop (8);
 
-        auto modeRow = r.removeFromTop (30);
-        const int w = (modeRow.getWidth() - 3 * 8) / VoiceParams::numModes;
-        for (auto& b : modeButtons)
+        // The modes in two rows: four that read the text, then the pieces and the keys.
+        for (int row = 0; row < 2; ++row)
         {
-            b.setBounds (modeRow.removeFromLeft (w));
-            modeRow.removeFromLeft (8);
+            auto modeRow = r.removeFromTop (30);
+            const int first = row == 0 ? 0 : 4, count = row == 0 ? 4 : VoiceParams::numModes - 4;
+            const int w = (modeRow.getWidth() - 3 * 8) / 4;
+            for (int m = first; m < first + count; ++m)
+            {
+                modeButtons[(size_t) m].setBounds (modeRow.removeFromLeft (w));
+                modeRow.removeFromLeft (8);
+            }
+            r.removeFromTop (6);
         }
         r.removeFromTop (6);
         info.setBounds (r.removeFromTop (22));
@@ -125,13 +134,20 @@ private:
             light (languageButtons[(size_t) l], l == shownLanguage);
         for (int m = 0; m < VoiceParams::numModes; ++m)
             light (modeButtons[(size_t) m], m == shownMode);
-        const bool byWord = shownMode == VoiceParams::wordByWord || shownMode == VoiceParams::singWords;
+        const bool byWord = VoiceParams::byPiece (shownMode);
+        const bool keys = shownMode == VoiceParams::soundsOnKeys;
         firstWordButton.setEnabled (byWord);
-        const int words = vp.wordCount();
-        info.setText (juce::String (words) + (words == 1 ? " word" : " words")
-                          + (byWord && words > 0 ? juce::String::fromUTF8 ("  \xc2\xb7  next note says word ") + juce::String (vp.nextWord.load() % words + 1) : juce::String())
-                          + juce::String::fromUTF8 ("  \xc2\xb7  play notes on the keys or pads to hear it"),
-                      juce::dontSendNotification);
+        editor.setEnabled (! keys);
+        editor.setAlpha (keys ? 0.4f : 1.0f);
+        const juce::String unit = shownMode == VoiceParams::syllableBySyllable ? "syllable" : shownMode == VoiceParams::soundBySound ? "sound" : "word";
+        const int pieces = vp.pieceCount (shownMode);
+        if (keys)
+            info.setText (juce::String::fromUTF8 ("Keys from C2: a e i o u, then the consonants  \xc2\xb7  the text is not used in this mode"), juce::dontSendNotification);
+        else
+            info.setText (juce::String (pieces) + " " + unit + (pieces == 1 ? "" : "s")
+                              + (byWord && pieces > 0 ? juce::String::fromUTF8 ("  \xc2\xb7  next note says ") + unit + " " + juce::String (vp.nextWord.load() % pieces + 1) : juce::String())
+                              + juce::String::fromUTF8 ("  \xc2\xb7  play notes on the keys or pads to hear it"),
+                          juce::dontSendNotification);
     }
 
     void timerCallback() override
@@ -156,7 +172,7 @@ private:
     juce::TextEditor editor;
     std::array<juce::TextButton, speech::numLanguages> languageButtons;
     std::array<juce::TextButton, VoiceParams::numModes> modeButtons;
-    juce::TextButton firstWordButton { "Back to word 1" };
+    juce::TextButton firstWordButton { "Back to the start" };
     int shownLanguage = -1, shownMode = -1, shownNext = -1;
 };
 
