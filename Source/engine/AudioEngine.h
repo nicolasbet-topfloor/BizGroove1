@@ -66,6 +66,10 @@ public:
     struct SampleFile { juce::String name; juce::MemoryBlock data; };
     std::array<SampleFile, StemDeck::numStems> stemFiles;
 
+    /** Message thread: what a light app (BizHop and the others) keeps with a project, such as
+        which sound each track uses and the lyrics. Saved and opened as it is; BizGroove leaves it alone. */
+    juce::var appState;
+
     /** True if a track has any steps in any scene (used to skip empty stems). */
     bool trackHasContent (int track);
 
