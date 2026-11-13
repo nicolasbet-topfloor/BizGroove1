@@ -8,6 +8,7 @@
 #include "NoiseSynth.h"
 #include "VoiceSynth.h"
 #include "VocoderSynth.h"
+#include "GranularSynth.h"
 #include "Lfo.h"
 #include "ExternalMidi.h"
 #include "Effects.h"
@@ -23,8 +24,8 @@ namespace bizgroove
     thread; the atomics are shared with the UI and controllers. */
 struct Track
 {
-    enum Type { testSynth = 0, drums = 1, sampler = 2, poly = 3, wavetable = 4, fm = 5, external = 6, noise = 7, voice = 8, vocoder = 9 };   // index into synthLibrary()
-    static constexpr int numTypes = 10;
+    enum Type { testSynth = 0, drums = 1, sampler = 2, poly = 3, wavetable = 4, fm = 5, external = 6, noise = 7, voice = 8, vocoder = 9, granular = 10 };   // index into synthLibrary()
+    static constexpr int numTypes = 11;
 
     /** Each instrument comes out at its own natural level; this evens them out, so
         switching sounds doesn't jump in volume. Measured on the factory sounds
@@ -48,6 +49,7 @@ struct Track
     static constexpr int numNoiseVoices = 8;
     static constexpr int numSpeechVoices = 4;
     static constexpr int numVocoderVoices = 8;
+    static constexpr int numGranularVoices = 8;
 
     Track (const Performance& perf)
     {
@@ -85,6 +87,11 @@ struct Track
             vocoderSynth.addVoice (new VocoderVoice (vocoderParams, perf, (std::uint32_t) (i + 1) * 15485863u));
         vocoderSynth.addSound (new VocoderSound());
         vocoderSynth.setNoteStealingEnabled (true);
+
+        for (int i = 0; i < numGranularVoices; ++i)
+            granularSynth.addVoice (new GranularVoice (granularParams, perf, (std::uint32_t) (i + 1) * 2246822519u));
+        granularSynth.addSound (new GranularSound());
+        granularSynth.setNoteStealingEnabled (true);
     }
 
     std::atomic<int> type { testSynth };
@@ -99,6 +106,7 @@ struct Track
     FmParams fmParams;
     NoiseParams noiseParams;
     VoiceParams voiceParams;
+    GranularParams granularParams;   // the Granular: grains of a built-in sound or of this track's recording
     std::array<LfoSettings, 2> lfos;   // two LFOs that move any knob of this track
     VocoderParams vocoderParams;   // the Vocoder instrument; its listening settings also serve the Vocoder effect
     ExternalParams ext;   // External MIDI tracks
@@ -134,6 +142,7 @@ struct Track
     juce::Synthesiser noiseSynth;
     juce::Synthesiser voiceSynth;
     juce::Synthesiser vocoderSynth;
+    juce::Synthesiser granularSynth;
     VocoderCore vocoderCore;
     std::array<LfoRunner, 2> lfoRunners;
     juce::SmoothedValue<float> gain;
