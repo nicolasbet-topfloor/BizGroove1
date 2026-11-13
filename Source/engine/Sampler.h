@@ -54,6 +54,19 @@ public:
     double getSampleSeconds() const;
 
     // ---------------------------------------------------------- audio thread
+    /** Lets another instrument read the recording (the Granular plays grains of it): calls
+        f (audio, sampleRate) while the recording cannot change. False, without calling f, when
+        there is none or it is being swapped right now. */
+    template <typename F>
+    bool useSample (F&& f) const
+    {
+        const juce::SpinLock::ScopedTryLockType sl (lock);
+        if (! sl.isLocked() || loaded == nullptr)
+            return false;
+        f (static_cast<const juce::AudioBuffer<float>&> (loaded->audio), loaded->sampleRate);
+        return true;
+    }
+
     void prepare (double sampleRate, int maxBlock);
     void render (juce::AudioBuffer<float>& out, int startSample, int numSamples, const juce::MidiBuffer& midi);
 
