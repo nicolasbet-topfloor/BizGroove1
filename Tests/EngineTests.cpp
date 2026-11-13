@@ -8,6 +8,7 @@
 #include "engine/Project.h"
 #include "engine/Presets.h"
 #include "engine/SynthLibrary.h"
+#include "engine/VocalShots.h"
 #include <map>
 #include "engine/SampleTools.h"
 #include <iostream>
@@ -1620,11 +1621,12 @@ static void testKnobPage()
     e.selectedTrack.store (0);
     e.track (0).type.store (Track::poly);
     const auto& def = synthLibrary()[(size_t) Track::poly];
-    check (! def.more.empty(), "knob page: the poly synth has More settings");
-    if (def.more.empty())
+    const auto* first = soundPageKnob (soundSections (Track::poly), 1, 0);
+    check (first != nullptr, "knob page: the poly synth's Sound settings have a first page");
+    if (first == nullptr)
         return;
 
-    const auto mainId = def.knobs[0].target, moreId = def.more[0].target;
+    const auto mainId = def.knobs[0].target, moreId = first->target;
     targets.applyValue ("panel.knob.1", 0.7f);
     const float moreBefore = targets.getValue (moreId);
     check (std::abs (targets.getValue (mainId) - 0.7f) < 0.03f, "knob page: knob 1 turns the first main knob");
@@ -1637,30 +1639,42 @@ static void testKnobPage()
     e.knobPage.store (0);
 }
 
-// The Noise's Sound settings window: every setting once, by section, with standard names;
+// The Sound settings window of every instrument: every setting once, by section, with standard names;
 // the controller's knobs turn the highlighted sections, a page at a time.
 static void testSoundSections()
 {
     std::cout << "Sound settings window\n";
-    const auto& def = synthLibrary()[(size_t) Track::noise];
+    bool allHave = true, everyOnce = true, adsrNames = true, noOldNames = true;
+    for (int type = 0; type < Track::numTypes; ++type)
+    {
+        const auto& def = synthLibrary()[(size_t) type];
+        const auto& sections = soundSections (type);
+        allHave = allHave && ! sections.empty();
+        std::map<juce::String, int> seen;
+        for (const auto& sec : sections)
+        {
+            for (const auto& k : sec.knobs)
+                ++seen[k.target];
+            if (sec.envelope)
+                adsrNames = adsrNames && sec.knobs.size() >= 4 && sec.knobs[0].label == "Attack" && sec.knobs[1].label == "Decay"
+                            && sec.knobs[2].label == "Sustain" && sec.knobs[3].label == "Release";
+        }
+        bool once = (int) seen.size() == (int) def.knobs.size() + (int) def.more.size();
+        for (const auto& k : def.knobs) once = once && seen[k.target] == 1;
+        for (const auto& k : def.more)  once = once && seen[k.target] == 1;
+        if (! once) std::cout << "    (" << def.name << ": a setting is missing or appears twice)\n";
+        everyOnce = everyOnce && once;
+        for (const auto* list : { &def.more })
+            for (const auto& k : *list)
+                noOldNames = noOldNames && k.label != "Fade in" && k.label != "Fade out" && k.label != "Punch" && k.label != "Hold level";
+        for (const auto& k : def.knobs)
+            noOldNames = noOldNames && k.label != "Fade in" && k.label != "Fade out" && k.label != "Punch" && k.label != "Hold level";
+    }
+    check (allHave, "sound settings: every instrument has its sections");
+    check (everyOnce, "sound settings: every setting of every instrument appears exactly once");
+    check (adsrNames, "sound settings: envelopes read Attack, Decay, Sustain, Release");
+    check (noOldNames, "sound settings: no knob is called Fade in, Punch, Hold level or Fade out any more");
     const auto& sections = soundSections (Track::noise);
-    check (! sections.empty(), "sound settings: the Noise has sections");
-    std::map<juce::String, int> seen;
-    for (const auto& s : sections)
-        for (const auto& k : s.knobs)
-            ++seen[k.target];
-    bool everyOnce = true;
-    for (const auto& k : def.knobs) everyOnce = everyOnce && seen[k.target] == 1;
-    for (const auto& k : def.more)  everyOnce = everyOnce && seen[k.target] == 1;
-    check (everyOnce && (int) seen.size() == (int) def.knobs.size() + (int) def.more.size(),
-           "sound settings: every Noise setting appears exactly once");
-    bool adsr = false;
-    for (const auto& s : sections)
-        if (s.envelope)
-            adsr = s.knobs.size() >= 4 && s.knobs[0].label == "Attack" && s.knobs[1].label == "Decay"
-                   && s.knobs[2].label == "Sustain" && s.knobs[3].label == "Release";
-    check (adsr, "sound settings: the envelope reads Attack, Decay, Sustain, Release");
-    check (soundSections (Track::poly).empty(), "sound settings: the other instruments keep their More window for now");
 
     AudioEngine e;
     ControlTargets targets (e);
@@ -1678,6 +1692,195 @@ static void testSoundSections()
     check (e.knobPage.load() == 4 && e.selectedTrack.load() == 0, "sound settings: the track arrow turns the page");
     e.knobOverlay.store (AudioEngine::overlayNone);
     e.knobPage.store (0);
+}
+
+// The Voice by pieces: syllable by syllable, sound by sound, and single sounds on the keys (as on the
+// Elektron voice machines); the MC voices; and the vocal shots kit.
+static void testVoicePieces()
+{
+    std::cout << "Voice: syllables, sounds and shots\n";
+    speech::Script sc;
+    speech::Pieces a {}, b {};
+    speech::compile ("ciudad tomate", speech::spanish, sc);
+    const int syl = speech::syllables (sc, a, b);
+    juce::StringArray parts;
+    for (int i = 0; i < syl; ++i)
+    {
+        juce::StringArray ph;
+        for (int k = a[(size_t) i]; k < b[(size_t) i]; ++k)
+        {
+            const auto& d = speech::phone (sc.segs[(size_t) k].phone);
+            if (d.kind != speech::closure) ph.add (d.name);
+        }
+        parts.add (ph.joinIntoString (""));
+    }
+    std::cout << "    syllables: " << parts.joinIntoString ("-") << "\n";
+    check (syl == 5, "voice: \"ciudad tomate\" has five syllables");
+    speech::compile ("hello beautiful world", speech::english, sc);
+    { const int n = speech::syllables (sc, a, b); std::cout << "    hello beautiful world: " << n << " syllables\n"; check (n == 6, "voice: \"hello beautiful world\" has six syllables in English"); }
+    speech::compile ("sol", speech::spanish, sc);
+    check (speech::sounds (sc, a, b) == 3, "voice: \"sol\" is three single sounds");
+
+    // Each mode speaks; syllable by syllable says a short piece per note.
+    auto render = [] (int mode, int note, const juce::String& text, double seconds) {
+        AudioEngine e;
+        e.prepareToPlay (512, 48000.0);
+        e.selectedTrack.store (0);
+        auto& tr = e.track (0);
+        tr.type.store (Track::voice);
+        tr.voiceParams.setText (text);
+        tr.voiceParams.mode.store (mode);
+        juce::AudioBuffer<float> out (2, (int) (seconds * 48000.0) + 512), buf (2, 512);
+        out.clear();
+        e.keyboardState.noteOn (1, note, 0.9f);
+        for (int pos = 0; pos + 512 <= out.getNumSamples(); pos += 512)
+        {
+            if (pos >= (int) (0.4 * 48000.0) && pos < (int) (0.4 * 48000.0) + 512) e.keyboardState.noteOff (1, note, 0.0f);
+            buf.clear();
+            e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 512));
+            out.copyFrom (0, pos, buf, 0, 0, 512);
+        }
+        return out;
+    };
+    auto soundLength = [] (const juce::AudioBuffer<float>& x) {
+        int last = 0;
+        for (int i = 0; i < x.getNumSamples(); ++i) if (std::abs (x.getSample (0, i)) > 0.01f) last = i;
+        return last / 48000.0;
+    };
+    const auto whole = render (VoiceParams::phrase, 48, "ciudad tomate", 2.0);
+    const auto one = render (VoiceParams::syllableBySyllable, 48, "ciudad tomate", 2.0);
+    std::cout << "    whole text " << soundLength (whole) << " s, one syllable " << soundLength (one) << " s\n";
+    check (soundLength (one) > 0.05 && soundLength (one) < 0.6 * soundLength (whole), "voice: a note says one syllable, not the whole text");
+
+    // Sounds on keys: C2 says "a" (low, voiced), the key for "s" a hiss (bright).
+    auto brightness = [] (const juce::AudioBuffer<float>& x) {
+        double lo = 0.0, all = 0.0;
+        for (int i = 1; i < x.getNumSamples(); ++i)
+        {
+            const double d = x.getSample (0, i) - x.getSample (0, i - 1);
+            lo += d * d; all += (double) x.getSample (0, i) * x.getSample (0, i);
+        }
+        return all > 0.0 ? lo / all : 0.0;   // more change from sample to sample: brighter
+    };
+    const auto& keys = speech::keySounds();
+    int sKey = 36;
+    for (size_t i = 0; i < keys.size(); ++i) if (keys[i] == speech::S) sKey = 36 + (int) i;
+    const auto vowelA = render (VoiceParams::soundsOnKeys, 36, "x", 0.6), hiss = render (VoiceParams::soundsOnKeys, sKey, "x", 0.6);
+    check (vowelA.getMagnitude (0, vowelA.getNumSamples()) > 0.02f && hiss.getMagnitude (0, hiss.getNumSamples()) > 0.01f
+               && brightness (hiss) > 4.0 * brightness (vowelA),
+           "voice: on the keys, C2 says a vowel and the key for s hisses");
+    check (soundLength (render (VoiceParams::soundsOnKeys, 36, "x", 1.5)) > 0.38, "voice: a vowel on the keys lasts while the key is held");
+
+    // The MC voices and the shots kit.
+    int mcs = 0;
+    for (const auto& f : Presets::factorySounds (Track::voice))
+        if (f.name.startsWith ("MC:")) ++mcs;
+    check (mcs >= 2, "voice: the MC voices are among the factory sounds");
+    AudioEngine e;
+    e.prepareToPlay (512, 48000.0);
+    const juce::var* shotsKit = nullptr;
+    for (const auto& f : Presets::factorySounds (Track::drums))
+        if (f.name == "Vocal shots") shotsKit = &f.sound;
+    check (shotsKit != nullptr, "shots: the Vocal shots kit is in the Drums sounds");
+    if (shotsKit == nullptr) return;
+    Presets::applySoundVar (e.track (1), *shotsKit);
+    bool allPads = true;
+    for (int d = 0; d < DrumKit::numDrums; ++d)
+        allPads = allPads && e.track (1).kit.hasPadSample (d) && e.track (1).padFileData[(size_t) d].getSize() > 1000;
+    check (allPads, "shots: all sixteen pads have a shout, kept for saving");
+    e.track (1).mute.store (false);
+    e.song.scene (0).tracks[1].drumLanes[0].store (1);
+    e.song.scene (0).tracks[1].drumLanes[5].store (1 << 8);
+    e.transport.playing.store (true);
+    juce::AudioBuffer<float> buf (2, 512);
+    float peak = 0.0f;
+    for (int b = 0; b < 200; ++b)
+    {
+        buf.clear();
+        e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 512));
+        peak = juce::jmax (peak, buf.getMagnitude (0, 0, 512));
+    }
+    check (peak > 0.05f && peak < 1.5f, "shots: the steps play the shouts");
+}
+
+// The Granular: grains of every source, at the note's pitch, quiet and clean; your recording as a source;
+// the settings survive a save; and the factory sounds all play.
+static void testGranular()
+{
+    std::cout << "Granular\n";
+    AudioEngine e;
+    e.prepareToPlay (512, 48000.0);
+    e.selectedTrack.store (0);
+    auto& tr = e.track (0);
+    tr.type.store (Track::granular);
+    juce::AudioBuffer<float> buf (2, 512);
+    auto play = [&] (int blocks) {
+        float peak = 0.0f; bool finite = true;
+        e.keyboardState.noteOn (1, 60, 0.9f);
+        for (int b = 0; b < blocks; ++b)
+        {
+            buf.clear();
+            e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 512));
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < 512; ++i) finite = finite && std::isfinite (buf.getSample (ch, i));
+            peak = juce::jmax (peak, buf.getMagnitude (0, 0, 512));
+        }
+        e.keyboardState.noteOff (1, 60, 0.0f);
+        for (int b = 0; b < 400; ++b) { buf.clear(); e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 512)); }
+        return finite ? peak : -1.0f;
+    };
+    bool sources = true;
+    for (int s = 0; s < GranularSources::recording; ++s)
+    {
+        tr.granularParams.source.store (s);
+        const float p = play (60);
+        if (! (p > 0.02f && p < 1.5f)) std::cout << "    (" << GranularSources::name (s) << ": peak " << p << ")\n";
+        sources = sources && p > 0.02f && p < 1.5f;
+    }
+    check (sources, "granular: every built-in source sounds, at a sensible level");
+
+    tr.granularParams.source.store (GranularSources::recording);
+    check (play (20) == 0.0f, "granular: Your recording is silent until a recording is loaded");
+    juce::AudioBuffer<float> rec (2, 48000);
+    for (int i = 0; i < rec.getNumSamples(); ++i)
+        rec.setSample (0, i, 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * 440.0 * i / 48000.0)), rec.setSample (1, i, rec.getSample (0, i));
+    tr.samplerEngine.setSample (rec, 48000.0, "tone");
+    tr.granularParams.size.store (0.08f); tr.granularParams.spread.store (0.0f); tr.granularParams.detune.store (0.0f);
+    tr.granularParams.density.store (40.0f); tr.granularParams.attack.store (0.005f);
+    juce::AudioBuffer<float> long_ (2, 512 * 40);
+    e.keyboardState.noteOn (1, 72, 0.9f);   // an octave above C4: the 440 Hz recording sounds at 880 Hz
+    for (int b = 0; b < 40; ++b)
+    {
+        buf.clear();
+        e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 512));
+        long_.copyFrom (0, b * 512, buf, 0, 0, 512);
+    }
+    e.keyboardState.noteOff (1, 72, 0.0f);
+    // Count zero crossings in the second half: about 2 x 880 a second.
+    int crossings = 0;
+    const int from = 512 * 20, to = 512 * 40;
+    for (int i = from + 1; i < to; ++i)
+        if ((long_.getSample (0, i - 1) < 0.0f) != (long_.getSample (0, i) < 0.0f)) ++crossings;
+    const double hz = crossings / 2.0 / ((to - from) / 48000.0);
+    check (hz > 800.0 && hz < 960.0, "granular: grains of your recording play at the note's pitch (" + juce::String (hz, 0) + " Hz)");
+
+    tr.granularParams.position.store (0.77f); tr.granularParams.source.store (GranularSources::metal);
+    const auto saved = Presets::soundToVar (tr);
+    tr.granularParams.position.store (0.1f); tr.granularParams.source.store (GranularSources::glass);
+    Presets::applySoundVar (tr, saved);
+    check (std::abs (tr.granularParams.position.load() - 0.77f) < 1.0e-4f && tr.granularParams.source.load() == GranularSources::metal
+               && tr.type.load() == Track::granular, "granular: a sound keeps its settings");
+
+    bool factory = Presets::factorySounds (Track::granular).size() >= 10;
+    for (const auto& fs : Presets::factorySounds (Track::granular))
+    {
+        Presets::applySoundVar (tr, fs.sound);
+        if (tr.granularParams.source.load() == GranularSources::recording) continue;
+        const float p = play (40);
+        if (! (p > 0.01f && p < 1.5f)) std::cout << "    (" << fs.name << ": peak " << p << ")\n";
+        factory = factory && p > 0.01f && p < 1.5f;
+    }
+    check (factory, "granular: the factory sounds all play, at a sensible level");
 }
 
 // The controller's knobs follow the Oscillators and Effects windows, a page at a time; the
@@ -2968,6 +3171,27 @@ int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI init; // needed by some JUCE singletons
 
+    if (argc > 2 && juce::String (argv[1]) == "--vocal-shots")   // the vocal shots, one after another, as one WAV
+    {
+        AudioEngine e;
+        VocalShots::load (e.track (0));
+        juce::AudioBuffer<float> all (2, 1);
+        all.clear();
+        for (int d = 0; d < DrumKit::numDrums; ++d)
+        {
+            juce::AudioFormatManager formats;
+            formats.registerBasicFormats();
+            juce::AudioBuffer<float> one;
+            double sr = 48000.0;
+            juce::String err;
+            Project::decodeAudio (e.track (0).padFileData[(size_t) d], formats, one, sr, err);
+            const int at = all.getNumSamples();
+            all.setSize (2, at + one.getNumSamples() + 12000, true, true);
+            for (int ch = 0; ch < 2; ++ch) all.copyFrom (ch, at, one, juce::jmin (ch, one.getNumChannels() - 1), 0, one.getNumSamples());
+        }
+        juce::String error;
+        return Exporter::writeWav (all, 48000.0, 24, juce::File::getCurrentWorkingDirectory().getChildFile (argv[2]), error) ? 0 : 1;
+    }
     if (argc > 2 && juce::String (argv[1]) == "--make-demo")
         return makeDemo (juce::File::getCurrentWorkingDirectory().getChildFile (argv[2]));
 
@@ -3010,6 +3234,8 @@ int main (int argc, char* argv[])
     testRecoversFromBadNumbers();
     testKnobPage();
     testSoundSections();
+    testGranular();
+    testVoicePieces();
     testChordSteps();
     testRecordChord();
     testMetronome();
