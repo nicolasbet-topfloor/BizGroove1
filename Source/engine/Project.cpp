@@ -34,6 +34,8 @@ juce::var Project::toVar (AudioEngine& e)
     root->setProperty ("tempo", e.transport.bpm.load());
     root->setProperty ("masterVolume", e.masterGain.load());
     root->setProperty ("arp", arpToVar (e.arp));
+    if (! e.appState.isVoid())
+        root->setProperty ("appState", e.appState);
 
     auto* fx = new Obj();
     fx->setProperty ("reverbSize", e.effects.reverbSize.load());
@@ -96,6 +98,7 @@ juce::var Project::toVar (AudioEngine& e)
         o->setProperty ("noise", noiseParamsToVar (tr.noiseParams));
         o->setProperty ("voice", voiceParamsToVar (tr.voiceParams));
         o->setProperty ("vocoder", vocoderParamsToVar (tr.vocoderParams));
+        o->setProperty ("granular", granularParamsToVar (tr.granularParams));
         o->setProperty ("external", externalParamsToVar (tr.ext, tr.externalDeviceName));
         o->setProperty ("inserts", insertsToVar (tr.inserts));
         o->setProperty ("lfos", lfosToVar (tr.lfos));
@@ -225,6 +228,7 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
     e.transport.bpm.store (juce::jlimit (40.0, 240.0, (double) getF (v, "tempo", 120.0f)));
     e.masterGain.store (getF (v, "masterVolume", 0.8f));
     applyArp (e.arp, v["arp"]);
+    e.appState = v["appState"];
 
     const auto fx = v["effects"];
     e.effects.reverbSize.store (getF (fx, "reverbSize", 0.5f));
@@ -287,6 +291,7 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
             applyNoiseParams (tr.noiseParams, o["noise"]);
             applyVoiceParams (tr.voiceParams, o["voice"]);
             applyVocoderParams (tr.vocoderParams, o["vocoder"]);
+            applyGranularParams (tr.granularParams, o["granular"]);
             applyExternalParams (tr.ext, tr.externalDeviceName, o["external"]);
             tr.externalDeviceId = {};   // found again by name on this computer
             applyInserts (tr.inserts, o["inserts"]);
