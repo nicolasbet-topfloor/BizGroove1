@@ -1,6 +1,7 @@
 #include "Presets.h"
 #include "Project.h"
 #include "SynthLibrary.h"
+#include "VocalShots.h"
 
 namespace bizgroove
 {
@@ -196,6 +197,14 @@ namespace
     }
 
     template <typename Tweak>
+    Presets::FactorySound granularPreset (const char* name, Tweak&& tweak)
+    {
+        GranularParams p;   // starts from the Granular's own settings
+        tweak (p);
+        return { name, soundOf (Track::granular, "granular", granularParamsToVar (p)) };
+    }
+
+    template <typename Tweak>
     Presets::FactorySound noisePreset (const char* name, Tweak&& tweak)
     {
         NoiseParams p;   // starts from the Noise synth's own settings
@@ -339,7 +348,16 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
         }),
         kitPreset ("Metal kit", [] (int d, DrumKit::DrumParams& p) {
             if (d != 0) { p.model.store (2); p.colour.store (0.6f); p.volume.store (p.volume.load() * 0.8f); }
-        })
+        }),
+        [] {
+            // Shouts and ad-libs on the pads, made by the Voice (see VocalShots): the kit carries a mark that loads them.
+            auto f = kitPreset ("Vocal shots", [] (int, DrumKit::DrumParams& p) {
+                p.pitch.store (0.0f); p.length.store (1.0f); p.tone.store (1.0f); p.snap.store (0.0f); p.drive.store (0.0f); p.volume.store (0.8f);
+            });
+            if (auto* kit = f.sound["kit"].getDynamicObject())
+                kit->setProperty ("vocalShots", true);
+            return f;
+        }()
     };
 
     static const std::vector<FactorySound> sampler {
@@ -659,6 +677,25 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
             p.whisper.store (0.45f); p.release.store (0.5f); p.level.store (1.3f);
             layer (p.osc, 0, OscSettings::triangle, 1, 0, 0.1f, 15.0f);   // a thin, cracked edge
         }),
+        voicePreset ("MC: hip house", "come on, get up, move your feet, all night long", speech::english, [] (VoiceParams& p) {
+            // Deep and forceful, shouted on the beat: one word per note, to sequence.
+            p.mode.store (VoiceParams::wordByWord);
+            p.size.store (0.72f); p.buzz.store (0.45f); p.intonation.store (0.95f); p.speed.store (1.15f);
+            p.lofi.store (0.08f); p.level.store (1.6f); p.attack.store (0.002f); p.release.store (0.06f);
+        }),
+        voicePreset ("MC: boom bap", "yo, one two, the rhythm never stops, the city keeps the beat", speech::english, [] (VoiceParams& p) {
+            // Deep and relaxed, conversational, a little breath in it.
+            p.mode.store (VoiceParams::wordByWord);
+            p.size.store (0.78f); p.buzz.store (0.22f); p.whisper.store (0.1f); p.intonation.store (0.75f); p.speed.store (0.95f);
+            p.level.store (1.4f); p.attack.store (0.003f); p.release.store (0.08f);
+        }),
+        voicePreset ("MC: chopped syllables", "rit mo ca lle con cre to", speech::spanish, [] (VoiceParams& p) {
+            p.mode.store (VoiceParams::syllableBySyllable);
+            p.size.store (0.7f); p.buzz.store (0.35f); p.intonation.store (0.6f); p.speed.store (1.2f); p.level.store (1.5f);
+        }),
+        voicePreset ("Sounds on keys", "a", speech::spanish, [] (VoiceParams& p) {
+            p.mode.store (VoiceParams::soundsOnKeys); p.intonation.store (0.0f); p.buzz.store (0.5f); p.keysPitch.store (48);
+        }),
         voicePreset ("Pad: Choir aah", "a", speech::spanish, [] (VoiceParams& p) {
             p.mode.store (VoiceParams::singWords); p.intonation.store (0.0f); p.buzz.store (0.1f);
             p.attack.store (0.6f); p.release.store (1.5f); p.velocity.store (0.2f);
@@ -710,6 +747,56 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
         })
     };
 
+    static const std::vector<FactorySound> granulars {
+        granularPreset ("Init", [] (GranularParams&) {}),
+        granularPreset ("Glass cloud", [] (GranularParams& p) {
+            p.source.store (GranularSources::glass); p.size.store (0.08f); p.density.store (35.0f); p.spread.store (0.3f);
+            p.detune.store (0.15f); p.spray.store (0.8f); p.attack.store (0.05f); p.release.store (1.5f);
+        }),
+        granularPreset ("Frozen choir", [] (GranularParams& p) {
+            p.source.store (GranularSources::choir); p.size.store (0.25f); p.density.store (18.0f); p.spread.store (0.05f);
+            p.detune.store (0.05f); p.attack.store (0.6f); p.release.store (2.0f);
+        }),
+        granularPreset ("Drifting strings", [] (GranularParams& p) {
+            p.source.store (GranularSources::strings); p.size.store (0.2f); p.density.store (25.0f); p.scan.store (0.3f);
+            p.spread.store (0.2f); p.attack.store (0.8f); p.release.store (2.5f);
+        }),
+        granularPreset ("Grain swarm", [] (GranularParams& p) {
+            p.source.store (GranularSources::noise); p.size.store (0.02f); p.density.store (80.0f); p.spread.store (1.0f);
+            p.spray.store (1.0f); p.cutoffHz.store (6000.0f); p.resonance.store (0.4f); p.attack.store (0.3f); p.release.store (1.2f);
+        }),
+        granularPreset ("Metal rain", [] (GranularParams& p) {
+            p.source.store (GranularSources::metal); p.size.store (0.04f); p.density.store (12.0f); p.spread.store (0.8f);
+            p.detune.store (0.4f); p.reverse.store (0.3f); p.spray.store (1.0f); p.attack.store (0.01f); p.release.store (1.8f);
+        }),
+        granularPreset ("Backwards choir", [] (GranularParams& p) {
+            p.source.store (GranularSources::choir); p.size.store (0.3f); p.density.store (12.0f); p.reverse.store (1.0f);
+            p.spread.store (0.4f); p.attack.store (1.0f); p.release.store (2.5f);
+        }),
+        granularPreset ("Stutter keys", [] (GranularParams& p) {
+            p.source.store (GranularSources::glass); p.size.store (0.03f); p.density.store (8.0f); p.spread.store (0.0f);
+            p.detune.store (0.0f); p.spray.store (0.3f); p.attack.store (0.002f); p.decay.store (0.4f); p.sustain.store (0.3f); p.release.store (0.4f);
+        }),
+        granularPreset ("Your recording: cloud", [] (GranularParams& p) {
+            p.source.store (GranularSources::recording); p.size.store (0.15f); p.density.store (25.0f); p.spread.store (0.2f);
+            p.spray.store (0.8f); p.attack.store (0.3f); p.release.store (1.5f);
+        }),
+        granularPreset ("Your recording: freeze", [] (GranularParams& p) {
+            p.source.store (GranularSources::recording); p.size.store (0.3f); p.density.store (20.0f); p.spread.store (0.02f);
+            p.detune.store (0.03f); p.attack.store (0.5f); p.release.store (2.0f);
+        }),
+        granularPreset ("Pad: Grain choir", [] (GranularParams& p) {
+            p.source.store (GranularSources::choir); p.size.store (0.18f); p.density.store (30.0f); p.spread.store (0.25f);
+            p.scan.store (0.15f); p.detune.store (0.2f); p.spray.store (0.9f); p.cutoffHz.store (5000.0f);
+            p.attack.store (1.5f); p.decay.store (2.0f); p.sustain.store (0.9f); p.release.store (3.0f);
+        }),
+        granularPreset ("Pad: Glass mist", [] (GranularParams& p) {
+            p.source.store (GranularSources::glass); p.size.store (0.3f); p.density.store (25.0f); p.spread.store (0.5f);
+            p.scan.store (-0.2f); p.detune.store (0.3f); p.spray.store (1.0f); p.cutoffHz.store (7000.0f);
+            p.attack.store (2.0f); p.decay.store (2.0f); p.sustain.store (0.9f); p.release.store (3.5f);
+        })
+    };
+
     static const std::vector<FactorySound> externals {
         externalPreset ("Channel 1", [] (ExternalParams&) {}),
         externalPreset ("Channel 2", [] (ExternalParams& p) { p.channel.store (2); }),
@@ -722,6 +809,7 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
     {
         case Track::external: return externals;
         case Track::noise:   return noises;
+        case Track::granular: return granulars;
         case Track::voice:   return voices;
         case Track::vocoder: return vocoders;
         case Track::fm:      return fms;
@@ -778,6 +866,8 @@ juce::var soundVarOfImpl (const Track& tr)
         return soundOf (type, "voice", voiceParamsToVar (tr.voiceParams));
     if (type == Track::vocoder)
         return soundOf (type, "vocoder", vocoderParamsToVar (tr.vocoderParams));
+    if (type == Track::granular)
+        return soundOf (type, "granular", granularParamsToVar (tr.granularParams));
     return soundOf (type, "synth", synthToVar (tr.synthParams));
 }
 
@@ -818,6 +908,8 @@ void applySoundOfImpl (Track& tr, const juce::var& v)
                 dp.colour.store (a->size() > 8 ? (float) (double) (*a)[8] : 0.5f);
             }
         }
+        if (getB (k, "vocalShots", false))
+            VocalShots::load (tr);   // the shots are made here, the first time, and put on the pads
     }
     else if (type == Track::poly)
     {
@@ -842,6 +934,10 @@ void applySoundOfImpl (Track& tr, const juce::var& v)
     else if (type == Track::vocoder)
     {
         applyVocoderParams (tr.vocoderParams, v["vocoder"]);
+    }
+    else if (type == Track::granular)
+    {
+        applyGranularParams (tr.granularParams, v["granular"]);
     }
     else if (type == Track::external)
     {
@@ -1043,6 +1139,8 @@ void Presets::copyDrum (AudioEngine& e, int trackIndex, int drum, const juce::va
         return;
     Project::clearPad (e, trackIndex, drum);
     applyDrum (e.track (trackIndex).kit.drums[(size_t) drum], drumOf (kitSound, drum));
+    if (getB (kitSound["kit"], "vocalShots", false))
+        VocalShots::loadOne (e.track (trackIndex), drum);
 }
 
 bool Presets::copyDrumFromFile (AudioEngine& e, int trackIndex, int drum, const juce::File& file,
