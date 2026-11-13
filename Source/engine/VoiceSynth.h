@@ -16,13 +16,17 @@ namespace bizgroove
     per note, so a sequence can sing it. Shared between the UI and the voices. */
 struct VoiceParams
 {
-    enum Mode { phrase = 0, phraseLoop, wordByWord, singWords, numModes };
+    enum Mode { phrase = 0, phraseLoop, wordByWord, singWords, syllableBySyllable, soundBySound, soundsOnKeys, numModes };
 
     static juce::String modeName (int m)
     {
-        static const char* names[numModes] = { "Whole text", "Whole text, looped", "Word by word", "Sing words" };
+        static const char* names[numModes] = { "Whole text", "Whole text, looped", "Word by word", "Sing words",
+                                               "Syllable by syllable", "Sound by sound", "Sounds on keys" };
         return names[juce::jlimit (0, numModes - 1, m)];
     }
+
+    /** Modes where each note says the next piece of the text. */
+    static bool byPiece (int m) { return m == wordByWord || m == singWords || m == syllableBySyllable || m == soundBySound; }
 
     std::atomic<int>   mode        { phrase };
     std::atomic<int>   language    { speech::spanish };
@@ -38,6 +42,7 @@ struct VoiceParams
     std::atomic<float> velocity    { 0.5f };    // 0..1
     std::atomic<float> glide       { 0.0f };
     std::atomic<int>   glideMode   { Glide::fixedTime };
+    std::atomic<int>   keysPitch   { 48 };      // Sounds on keys: the note every sound is said on (the keys choose the sound)
 
     mutable double lastNoteHz = 0.0;   // audio thread only
     OscSettings osc;                    // the Oscillators section: added to the voice's buzz, so they speak too
@@ -66,6 +71,17 @@ struct VoiceParams
     {
         const juce::SpinLock::ScopedLockType sl (lock);
         return scripts[(size_t) juce::jlimit (0, 1, language.load())].numWords;
+    }
+
+    /** How many pieces each note can say in a mode: words, syllables or sounds. Message thread. */
+    int pieceCount (int forMode) const
+    {
+        const juce::SpinLock::ScopedLockType sl (lock);
+        const auto& sc = scripts[(size_t) juce::jlimit (0, 1, language.load())];
+        speech::Pieces a {}, b {};
+        if (forMode == syllableBySyllable) return speech::syllables (sc, a, b);
+        if (forMode == soundBySound)       return speech::sounds (sc, a, b);
+        return sc.numWords;
     }
 
     /** Audio thread: copies the script for a language when it has changed. Never waits. */
@@ -133,13 +149,51 @@ public:
 
     void startNote (int midiNote, float vel, juce::SynthesiserSound*, int) override
     {
-        noteHz = juce::MidiMessage::getMidiNoteInHertz (midiNote);
+        mode = juce::jlimit (0, VoiceParams::numModes - 1, params.mode.load());
+        // Sounds on keys: the key picks the sound; every sound is said on the same note.
+        noteHz = juce::MidiMessage::getMidiNoteInHertz (mode == VoiceParams::soundsOnKeys ? juce::jlimit (24, 96, params.keysPitch.load()) : midiNote);
         glide.start (params.lastNoteHz, noteHz, params.glide.load(), params.glideMode.load(), getSampleRate());
         params.lastNoteHz = noteHz;
-        params.copyScript (params.language.load(), *script, scriptVersion, scriptLanguage);
 
-        mode = juce::jlimit (0, VoiceParams::numModes - 1, params.mode.load());
-        if (mode == VoiceParams::wordByWord || mode == VoiceParams::singWords)
+        if (mode == VoiceParams::soundsOnKeys)
+        {
+            // A script of one sound (a stop gets its short silence first, so it pops).
+            const int p = speech::keySoundFor (midiNote);
+            script->numSegs = 0;
+            auto add = [this] (int ph, float ms) {
+                speech::Seg s;
+                s.phone = (std::uint8_t) ph;
+                s.ms = (std::uint16_t) juce::roundToInt (ms);
+                script->segs[(size_t) script->numSegs++] = s;
+            };
+            if (speech::phone (p).kind == speech::burst)
+                add (p - 1, 8.0f);
+            add (p, speech::phone (p).ms * (speech::phone (p).kind == speech::burst ? 1.0f : 1.5f));
+            script->numWords = 1;
+            script->wordStart[0] = 0;
+            script->wordStart[1] = (std::uint16_t) script->numSegs;
+            scriptVersion = -1;   // the text's script must be copied again before it is spoken
+            from = 0;
+            to = script->numSegs;
+        }
+        else
+        {
+            params.copyScript (params.language.load(), *script, scriptVersion, scriptLanguage);
+        }
+
+        if (mode == VoiceParams::soundsOnKeys)
+        {
+            // from and to are set above
+        }
+        else if (mode == VoiceParams::syllableBySyllable || mode == VoiceParams::soundBySound)
+        {
+            const int count = mode == VoiceParams::syllableBySyllable ? speech::syllables (*script, pieceStart, pieceEnd)
+                                                                      : speech::sounds (*script, pieceStart, pieceEnd);
+            const int k = params.takeWord (count);
+            from = count > 0 ? pieceStart[(size_t) k] : 0;
+            to = count > 0 ? pieceEnd[(size_t) k] : 0;
+        }
+        else if (mode == VoiceParams::wordByWord || mode == VoiceParams::singWords)
         {
             const int w = params.takeWord (script->numWords);
             from = script->wordStart[(size_t) w];
@@ -225,8 +279,9 @@ public:
             // Where we are in the text.
             if (! finished)
             {
-                const bool holdHere = mode == VoiceParams::singWords && keyDown
-                                   && (script->segs[(size_t) seg].flags & speech::Seg::lastVowel) != 0;
+                const bool holdHere = keyDown
+                                   && ((mode == VoiceParams::singWords && (script->segs[(size_t) seg].flags & speech::Seg::lastVowel) != 0)
+                                       || ((mode == VoiceParams::soundBySound || mode == VoiceParams::soundsOnKeys) && seg == to - 1 && lasts (seg)));
                 if (! holdHere)
                     segLeft -= 1.0;
                 if (segLeft <= 0.0)
@@ -318,6 +373,13 @@ public:
 
 private:
     struct Resonator { float a = 1.0f, b = 0.0f, c = 0.0f, y1 = 0.0f, y2 = 0.0f; };
+
+    /** A sound that can go on for as long as the key is held: a vowel, a hum, a hiss. */
+    bool lasts (int s) const
+    {
+        const auto k = speech::phone (script->segs[(size_t) juce::jlimit (0, juce::jmax (0, script->numSegs - 1), s)].phone).kind;
+        return k == speech::vowel || k == speech::nasal || k == speech::fricative || k == speech::liquid || k == speech::trill || k == speech::glide;
+    }
 
     void release()
     {
@@ -455,6 +517,7 @@ private:
     const Performance& performance;
     std::unique_ptr<speech::Script> script;
     int scriptVersion = -1, scriptLanguage = -1;
+    speech::Pieces pieceStart {}, pieceEnd {};   // the syllables or sounds of the text, found at each note
     int mode = VoiceParams::phrase, seg = 0, from = 0, to = 0;
     double segLeft = 0.0;
     bool finished = true, keyDown = false, inTrill = false, envReleased = false;
@@ -485,6 +548,7 @@ inline juce::var voiceParamsToVar (const VoiceParams& p)
     o->setProperty ("attack", p.attack.load());          o->setProperty ("release", p.release.load());
     o->setProperty ("level", p.level.load());            o->setProperty ("velocity", p.velocity.load());
     o->setProperty ("glide", p.glide.load());            o->setProperty ("glideMode", p.glideMode.load());
+    o->setProperty ("keysPitch", p.keysPitch.load());
     o->setProperty ("osc", oscToVar (p.osc));
     return juce::var (o);
 }
@@ -503,6 +567,7 @@ inline void applyVoiceParams (VoiceParams& p, const juce::var& v)
     p.level.store (f ("level", 1.0f));                p.velocity.store (f ("velocity", 0.5f));
     p.glide.store (f ("glide", 0.0f));
     p.glideMode.store (juce::jlimit (0, Glide::numModes - 1, i ("glideMode", 0)));
+    p.keysPitch.store (juce::jlimit (24, 96, i ("keysPitch", 48)));
     applyOsc (p.osc, v["osc"]);
     p.setText (v.hasProperty ("text") ? v["text"].toString() : juce::String::fromUTF8 ("hola, soy biz groove"));
 }
