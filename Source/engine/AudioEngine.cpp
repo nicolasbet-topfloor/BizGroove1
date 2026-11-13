@@ -48,6 +48,10 @@ void AudioEngine::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
             if (auto* v = dynamic_cast<VocoderVoice*> (t->vocoderSynth.getVoice (i)))
                 v->prepare (sampleRate);
         t->vocoderCore.prepare (sampleRate);
+        t->granularSynth.setCurrentPlaybackSampleRate (sampleRate);
+        for (int i = 0; i < t->granularSynth.getNumVoices(); ++i)
+            if (auto* v = dynamic_cast<GranularVoice*> (t->granularSynth.getVoice (i)))
+                v->prepare (sampleRate);
         t->voiceSynth.setCurrentPlaybackSampleRate (sampleRate);
         for (int i = 0; i < t->voiceSynth.getNumVoices(); ++i)
             if (auto* v = dynamic_cast<SpeechVoice*> (t->voiceSynth.getVoice (i)))
@@ -154,6 +158,7 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         tracks[(size_t) lastSelected]->noiseSynth.allNotesOff (0, true);
         tracks[(size_t) lastSelected]->voiceSynth.allNotesOff (0, true);
         tracks[(size_t) lastSelected]->vocoderSynth.allNotesOff (0, true);
+        tracks[(size_t) lastSelected]->granularSynth.allNotesOff (0, true);
         latched.fill (false);   // Hold: the old track's held notes went with it
         arpScratch.clear();
         arpeggiator.reset (arpScratch, 0);   // and the arpeggiator's (all notes off above)
@@ -234,6 +239,7 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
             tracks[(size_t) t]->noiseSynth.allNotesOff (0, false);
             tracks[(size_t) t]->voiceSynth.allNotesOff (0, false);
             tracks[(size_t) t]->vocoderSynth.allNotesOff (0, false);
+            tracks[(size_t) t]->granularSynth.allNotesOff (0, false);
             if (lastType[(size_t) t] == Track::external)
                 tracks[(size_t) t]->ext.panic.store (true);
             lastType[(size_t) t] = type;
@@ -409,6 +415,20 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
                                         VocoderSettings::bandCount (vs.bands.load()), VocoderSettings::shiftSemitones (vs.shift.load()),
                                         VocoderSettings::releaseMs (vs.response.load()), vs.sibilance.load());
             }
+            else if (type == Track::granular)
+            {
+                // Grains of the track's own recording, when it has one and that is the source.
+                auto& gp = tr.granularParams;
+                const bool usesRecording = gp.source.load() == GranularSources::recording
+                    && tr.samplerEngine.useSample ([&] (const juce::AudioBuffer<float>& audio, double rate) {
+                           gp.recording = { audio.getReadPointer (0), audio.getReadPointer (audio.getNumChannels() > 1 ? 1 : 0),
+                                            audio.getNumSamples(), rate };
+                           tr.granularSynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
+                           gp.recording = {};
+                       });
+                if (! usesRecording)
+                    tr.granularSynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
+            }
             else if (type == Track::wavetable)
                 tr.waveSynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
             else if (type == Track::poly)
@@ -469,7 +489,7 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
             trackBuffer.clear (0, numSamples);
             for (auto& fx : tr.insertFx) fx.reset();
             tr.vocoderCore.reset();
-            for (auto* s : { &tr.synth, &tr.polySynth, &tr.waveSynth, &tr.fmSynth, &tr.noiseSynth, &tr.voiceSynth, &tr.vocoderSynth })
+            for (auto* s : { &tr.synth, &tr.polySynth, &tr.waveSynth, &tr.fmSynth, &tr.noiseSynth, &tr.voiceSynth, &tr.vocoderSynth, &tr.granularSynth })
                 s->allNotesOff (0, false);
         }
 
