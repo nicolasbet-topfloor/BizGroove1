@@ -59,6 +59,8 @@ juce::var Project::toVar (AudioEngine& e)
         auto& tr = e.track (t);
         auto* o = new Obj();
         o->setProperty ("type", tr.type.load());
+        if (tr.grainMode.load())
+            o->setProperty ("grainMode", true);
         o->setProperty ("volume", tr.volume.load());
         o->setProperty ("mute", tr.mute.load());
         o->setProperty ("solo", tr.mix.solo.load());
@@ -279,6 +281,9 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
             const auto o = (*tracks)[t];
             auto& tr = e.track (t);
             tr.type.store (juce::jlimit (0, Track::numTypes - 1, getI (o, "type", 0)));
+            tr.grainMode.store (getB (o, "grainMode", false));
+            tr.grainHold.store (false);
+            tr.grainLive.store (false);
             tr.volume.store (getF (o, "volume", 0.8f));
             tr.mute.store (getB (o, "mute", false));
             tr.mix.solo.store (getB (o, "solo", false));
