@@ -6,6 +6,7 @@ namespace bizgroove
 MainComponent::MainComponent()
 {
     setLookAndFeel (&lookAndFeel);
+    engine.lfoTargets.store (&controlTargets);   // before any project opens: its LFOs and locks find their knobs
     formats.registerBasicFormats();
 
     // The state of a fresh project, for File > New.
