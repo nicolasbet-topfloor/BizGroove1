@@ -262,6 +262,7 @@ LaunchkeyPanel::LaunchkeyPanel (AudioEngine& e, const ControlTargets& t)
 
     pads.setTwoRows (true);
     addAndMakeVisible (pads);
+    addAndMakeVisible (pager);
 
     styleHardwareButton (launchButton, "Go to the next scene. While playing, it starts at the next bar.", true);
     styleHardwareButton (stopSoloMuteButton, "Mute or unmute the selected track.", true);
@@ -812,6 +813,11 @@ void LaunchkeyPanel::showChannelMenu()
 
 void LaunchkeyPanel::timerCallback()
 {
+    if (pads.getLockStep() != shownLockStep)
+    {
+        shownLockStep = pads.getLockStep();
+        repaint (padModeLabelArea.expanded (0, 4));
+    }
     {
         auto& tr = engine.selected();
         if (engine.selectedTrack.load() != shownTrack || tr.type.load() != shownType || tr.selectedDrum.load() != shownDrum
@@ -876,10 +882,21 @@ void LaunchkeyPanel::paint (juce::Graphics& g)
     drawPrinted (g, "Track", trackLabelArea);
     drawPrinted (g, "Record", recordLabelArea, juce::Justification::centredRight, 10.0f);
 
-    const char* padModes[8] = { "Session", "Drum", "Custom", "Device", "Volume", "Pan", "Sends", "Custom" };
-    const int w = padModeLabelArea.getWidth() / 8;
-    for (int i = 0; i < 8; ++i)
-        drawPrinted (g, padModes[i], padModeLabelArea.withX (padModeLabelArea.getX() + i * w).withWidth (w), juce::Justification::centred, 10.0f);
+    if (const int lock = pads.getLockStep(); lock >= 0)
+    {
+        // A step held for locking: say what to do.
+        g.setColour (StepGrid::lockColour());
+        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+        g.drawText ("Step " + juce::String (lock + 1) + " is held: turn any knob to lock its value on this step. Click the step again when done.",
+                    padModeLabelArea.expanded (0, 2), juce::Justification::centred, true);
+    }
+    else
+    {
+        const char* padModes[8] = { "Session", "Drum", "Custom", "Device", "Volume", "Pan", "Sends", "Custom" };
+        const int w = padModeLabelArea.getWidth() / 8;
+        for (int i = 0; i < 8; ++i)
+            drawPrinted (g, padModes[i], padModeLabelArea.withX (padModeLabelArea.getX() + i * w).withWidth (w), juce::Justification::centred, 10.0f);
+    }
 
     g.setColour (Colours::text);
     g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
@@ -913,7 +930,8 @@ void LaunchkeyPanel::resized()
     shiftButton.setBounds (left.getX(), controls.getY() + 30, left.getWidth(), 34);
     padsModeButton.setBounds (left.getX(), controls.getY() + 74, left.getWidth(), 30);
     holdButton.setBounds (left.getX(), controls.getY() + 112, left.getWidth(), 30);
-    transposeButton.setBounds (left.getX(), padTop + rowH / 2 - 17, left.getWidth(), 34);
+    transposeButton.setBounds ({});   // its place shows which bar the pads show, and the pattern's length
+    pager.setBounds (left.getX(), padTop + 4, left.getWidth(), juce::jmin (rowH - 4, 140));
     octaveLabelArea = { left.getX(), padTop + rowH + 10, left.getWidth(), 16 };
     octaveDown.setBounds (left.getX(), padTop + rowH + 28, left.getWidth() / 2 - 3, rowH - 28);
     octaveUp.setBounds (left.getX() + left.getWidth() / 2 + 3, padTop + rowH + 28, left.getWidth() / 2 - 3, rowH - 28);
