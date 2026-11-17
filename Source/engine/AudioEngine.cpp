@@ -345,7 +345,8 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
             deliver (meta.getMessage(), meta.samplePosition, sel);
     }
 
-    // The LFOs move their knobs, once a block.
+    // The steps' locks set their knobs, then the LFOs move theirs, once a block.
+    runLocks (playing);
     runLfos (numSamples, playing, bpm);
 
     // What the effects need: the tempo, the song position, and where the kick drums hit.
@@ -621,7 +622,9 @@ bool AudioEngine::isStepOn (int step)
     auto& tr = selected();
     auto& pattern = song.scene (song.currentScene.load()).tracks[(size_t) selectedTrack.load()];
     if (tr.playsDrums())
-        return ((pattern.drumLanes[(size_t) tr.selectedDrum.load()].load() >> step) & 1u) != 0;
+        return juce::isPositiveAndBelow (step, Song::numSteps) && ((pattern.drumLanes[(size_t) tr.selectedDrum.load()].load() >> step) & 1u) != 0;
+    if (! juce::isPositiveAndBelow (step, Song::numSteps))
+        return false;
     return pattern.steps[(size_t) step].on.load();
 }
 
@@ -634,7 +637,7 @@ void AudioEngine::toggleStep (int step)
     if (tr.playsDrums())
     {
         auto& lane = pattern.drumLanes[(size_t) tr.selectedDrum.load()];
-        lane.store ((std::uint16_t) (lane.load() ^ (1u << step)));
+        lane.store (lane.load() ^ ((std::uint64_t) 1 << step));
     }
     else
     {
@@ -645,12 +648,16 @@ void AudioEngine::toggleStep (int step)
 
 int AudioEngine::getStepNote (int step)
 {
+    if (! juce::isPositiveAndBelow (step, Song::numSteps))
+        return 48;
     return song.scene (song.currentScene.load()).tracks[(size_t) selectedTrack.load()].steps[(size_t) step].note.load();
 }
 
 void AudioEngine::setStepNote (int step, int note)
 {
     // A chord moves as a whole.
+    if (! juce::isPositiveAndBelow (step, Song::numSteps))
+        return;
     auto& st = song.scene (song.currentScene.load()).tracks[(size_t) selectedTrack.load()].steps[(size_t) step];
     st.transpose (juce::jlimit (0, 127, note) - st.note.load());
 }
@@ -807,6 +814,80 @@ void AudioEngine::runLfos (int numSamples, bool playing, double bpm)
                 r.base = now;   // turned by hand (or new): the LFO moves around the new place
             target.set (juce::jlimit (0.0f, 1.0f, r.base + offset[n]));
             r.lastWritten = target.get();
+        }
+        trackOverride = -1;
+    }
+}
+
+} // namespace bizgroove
+
+namespace bizgroove
+{
+
+void AudioEngine::runLocks (bool playing)
+{
+    const auto* targets = lfoTargets.load();
+    if (targets == nullptr)
+        return;
+    const auto& all = targets->all();
+    auto valid = [&all] (int i) { return i >= 0 && i < (int) all.size() && ControlTargets::lfoCanMove (all[(size_t) i]); };
+
+    for (int t = 0; t < numTracks; ++t)
+    {
+        auto& held = lockHeld[(size_t) t];
+        const auto& ev = song.getStepEvent (t);
+        const bool any = std::any_of (held.begin(), held.end(), [] (const LockHeld& h) { return h.target >= 0; });
+        if (! any && (! playing || ev.step < 0 || ! juce::isPositiveAndBelow (ev.scene, Song::numScenes)))
+            continue;
+
+        trackOverride = t;   // the knobs below are this track's
+        const Song::TrackPattern* pattern = (playing && ev.step >= 0 && juce::isPositiveAndBelow (ev.scene, Song::numScenes))
+                                              ? &song.scene (ev.scene).tracks[(size_t) t] : nullptr;
+        if (pattern != nullptr || ! playing)
+        {
+            // Knobs locked by the last step and not by this one go back where they were set
+            // (unless they were turned meanwhile).
+            for (auto& h : held)
+            {
+                if (h.target < 0 || (pattern != nullptr && pattern->findLock (ev.step, h.target, h.drum) != nullptr))
+                    continue;
+                if (valid (h.target))
+                {
+                    drumOverride = h.drum;
+                    const auto& tg = all[(size_t) h.target];
+                    if (std::abs (tg.get() - h.written) < 1.0e-3f)
+                        tg.set (h.base);
+                    drumOverride = -1;
+                }
+                h.target = -1;
+            }
+        }
+        if (pattern != nullptr)
+        {
+            for (const auto& l : pattern->locks[(size_t) ev.step])
+            {
+                const int target = l.target.load();
+                if (! valid (target))
+                    continue;
+                const int drum = l.drum.load();
+                LockHeld* slot = nullptr;
+                for (auto& h : held)
+                    if (h.target == target && h.drum == drum) { slot = &h; break; }
+                drumOverride = drum;
+                const auto& tg = all[(size_t) target];
+                if (slot == nullptr)
+                {
+                    for (auto& h : held)
+                        if (h.target < 0) { slot = &h; break; }
+                    if (slot == nullptr) { drumOverride = -1; continue; }
+                    *slot = { target, drum, tg.get(), 0.0f };
+                }
+                else if (std::abs (tg.get() - slot->written) > 1.0e-3f)
+                    slot->base = tg.get();   // turned by hand since: that is where it goes back to
+                tg.set (l.value.load());
+                slot->written = tg.get();
+                drumOverride = -1;
+            }
         }
         trackOverride = -1;
     }
