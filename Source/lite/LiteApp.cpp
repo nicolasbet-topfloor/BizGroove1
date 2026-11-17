@@ -731,3 +731,300 @@ public:
         const auto& tr = engine.track (track);
         const bool muted = tr.mute.load();
         auto r = getLocalBounds().toFloat().reduced (3.0f);
+        g.setColour (muted ? Colours::panel : juce::Colour (0xff3a3c42));
+        g.fillRoundedRectangle (r, 8.0f);
+        g.setColour (muted ? Colours::panelEdge : Colours::accent);
+        g.drawRoundedRectangle (r.reduced (1.0f), 8.0f, muted ? 1.0f : 2.5f);
+
+        auto inner = r.reduced (10.0f, 8.0f);
+        g.setColour (muted ? Colours::textDim : Colours::text);
+        g.setFont (juce::FontOptions (18.0f, juce::Font::bold));
+        g.drawText (style.tracks[(size_t) track].label, inner.removeFromTop (24.0f), juce::Justification::centredLeft);
+        g.setFont (juce::FontOptions (12.0f));
+        g.setColour (Colours::textDim);
+        g.drawText (soundName ? soundName() : juce::String(), inner.removeFromTop (18.0f), juce::Justification::centredLeft);
+        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+        g.setColour (muted ? Colours::textDim : Colours::accent);
+        g.drawText (muted ? "MUTED" : "ON", inner.removeFromTop (18.0f), juce::Justification::centredLeft);
+
+        // How loud it plays.
+        const auto meter = r.reduced (10.0f, 0.0f).removeFromBottom (12.0f).withTrimmedBottom (6.0f);
+        g.setColour (Colours::background);
+        g.fillRoundedRectangle (meter, 2.0f);
+        const float level = muted ? 0.0f : juce::jlimit (0.0f, 1.0f, tr.level.load() * 1.5f);
+        g.setColour (Colours::playhead);
+        g.fillRoundedRectangle (meter.withWidth (meter.getWidth() * level), 2.0f);
+    }
+
+    void mouseDown (const juce::MouseEvent&) override
+    {
+        auto& m = engine.track (track).mute;
+        m.store (! m.load());
+        repaint();
+        if (onChange) onChange();
+    }
+
+private:
+    AudioEngine& engine;
+    const Style& style;
+    const int track;
+};
+
+// ============================================================================ sound to and from the sound card
+/** Hands the engine the sound card's input (for live grains), then fills the output. */
+struct LiteAudio final : public juce::AudioSource
+{
+    explicit LiteAudio (AudioEngine& e) : engine (e) {}
+    void prepareToPlay (int block, double rate) override { engine.prepareToPlay (block, rate); }
+    void releaseResources() override { engine.releaseResources(); }
+    void getNextAudioBlock (const juce::AudioSourceChannelInfo& info) override
+    {
+        engine.setLiveInput (*info.buffer, info.startSample, info.numSamples);
+        engine.getNextAudioBlock (info);
+    }
+    AudioEngine& engine;
+};
+
+// ============================================================================ the window
+class LiteComponent final : public juce::Component, private juce::Timer
+{
+public:
+    LiteComponent() : style (lite::style (BIZ_LITE_STYLE))
+    {
+        setLookAndFeel (&lookAndFeel);
+        formats.registerBasicFormats();
+        engine.lfoTargets.store (&targets);
+        deviceManager.initialiseWithDefaultDevices (0, 2);   // the input only when Live input is switched on
+        sourcePlayer.setSource (&liteAudio);
+        deviceManager.addAudioCallback (&sourcePlayer);
+
+        Generator::setUp (engine, style, states);
+        seeds.resize (style.tracks.size());
+        for (auto& s : seeds) s = rng.nextInt (100000);
+
+        title.setText (style.appName, juce::dontSendNotification);
+        title.setFont (juce::FontOptions (22.0f, juce::Font::bold));
+        title.setColour (juce::Label::textColourId, Colours::accent);
+        title.setMinimumHorizontalScale (0.7f);
+        addAndMakeVisible (title);
+
+        button (playButton, juce::String::fromUTF8 ("\xe2\x96\xb6"), [this] { engine.transport.playing.store (! engine.transport.playing.load()); });
+        button (recButton, juce::String::fromUTF8 ("\xe2\x97\x8f Rec"), [this] { toggleRecord(); });
+        recButton.setTooltip ("Record: what you play on the pad goes into the loop (and grain moves, as locks). Starts the loop if it is stopped.");
+        button (generateButton, "Generate", [this] { generateAll(); });
+        generateButton.setColour (juce::TextButton::buttonColourId, Colours::accent);
+        generateButton.setColour (juce::TextButton::textColourOffId, juce::Colours::black);
+        generateButton.setTooltip ("A new song in the style: new chords and a new part on every track.");
+        button (menuButton, juce::String::fromUTF8 ("\xe2\x8b\xaf"), [this] { showMenu(); });
+        menuButton.setTooltip ("Open, save, export and audio settings");
+
+        for (int t = 0; t < (int) style.tracks.size(); ++t)
+        {
+            auto* tab = tabs.add (new juce::TextButton (style.tracks[(size_t) t].label));
+            tab->setWantsKeyboardFocus (false);
+            tab->onClick = [this, t] { showTrack (t); };
+            addAndMakeVisible (tab);
+
+            auto* pad = pads.add (new TouchPad (engine, targets, style, t));
+            pad->onTone = [this, t] (float y) { setTone (t, y); };
+            addChildComponent (pad);
+
+            auto* row = stepRows.add (new StepRow (engine, style, t));
+            row->onEdit = [this] { repaint(); };
+            addChildComponent (row);
+
+            auto* tile = tiles.add (new LiveTile (engine, style, t));
+            tile->soundName = [this, t] {
+                const int which = states[(size_t) t].sound;
+                return juce::String (which == 0 ? "A  " : "B  ") + style.tracks[(size_t) t].sounds[(size_t) which].name;
+            };
+            addChildComponent (tile);
+        }
+
+        for (int b = 0; b < numBars; ++b)
+        {
+            auto* bb = barButtons.add (new juce::TextButton (juce::String (b + 1)));
+            bb->setWantsKeyboardFocus (false);
+            bb->setTooltip ("Show bar " + juce::String (b + 1) + " of the loop in the steps");
+            bb->onClick = [this, b] { showBar (b); };
+            addAndMakeVisible (bb);
+        }
+        tempo.setSliderStyle (juce::Slider::LinearBar);
+        tempo.setRange (60.0, 180.0, 1.0);
+        tempo.setValue (style.bpm, juce::dontSendNotification);
+        tempo.setTextValueSuffix (" BPM");
+        tempo.setColour (juce::Slider::trackColourId, Colours::accentDim);
+        tempo.onValueChange = [this] { engine.transport.bpm.store (tempo.getValue()); };
+        addAndMakeVisible (tempo);
+
+        static const char* knobNames[4] = { "Rhythm", "Alter", "Tone", "Volume" };
+        static const char* knobTips[4] = { "Fewer notes to the left, more to the right: the part is rewritten when you let go.",
+                                           "Another version of the part, in the style and on the same chords: turn and let go.",
+                                           "Darker or brighter (the pad's up and down does the same).",
+                                           "This track's volume" };
+        for (int k = 0; k < 4; ++k)
+        {
+            auto& s = knobs[(size_t) k];
+            s.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+            s.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+            s.setRange (0.0, 1.0);
+            s.setTooltip (knobTips[k]);
+            s.onValueChange = [this, k] { knobMoved (k, false); };
+            s.onDragEnd = [this, k] { knobMoved (k, true); };
+            addAndMakeVisible (s);
+            auto& l = knobLabels[(size_t) k];
+            l.setText (knobNames[k], juce::dontSendNotification);
+            l.setJustificationType (juce::Justification::centred);
+            l.setFont (juce::FontOptions (12.0f));
+            l.setColour (juce::Label::textColourId, Colours::textDim);
+            addAndMakeVisible (l);
+        }
+        for (int i = 0; i < 2; ++i)
+        {
+            auto& b = soundButtons[(size_t) i];
+            b.setWantsKeyboardFocus (false);
+            b.onClick = [this, i] { chooseSound (current, i); };
+            addAndMakeVisible (b);
+        }
+
+        // The Sampler's buttons.
+        button (freezeButton, "Freeze", [this] { auto& f = engine.track (current).granularParams.freeze; f.store (! f.load()); });
+        freezeButton.setTooltip ("Hold the grains where they are");
+        button (liveButton, "Live input", [this] { toggleLive(); });
+        liveButton.setTooltip ("Grains of the microphone or line in, as it comes in (the last ten seconds)");
+        button (spotsButton, "Spots", [this] { openSpots(); });
+        spotsButton.setTooltip ("The 16 pads' spots on the recording, each with its own size and pitch; keep the live input as the recording");
+        button (loadButton, "Load", [this] { loadRecording(); });
+        loadButton.setTooltip ("Load a field recording (WAV, AIFF, FLAC or OGG, up to five minutes)");
+
+        // The rap's lyrics and how they sit.
+        if (rapTrack() >= 0)
+        {
+            lyrics.setMultiLine (true, true);
+            lyrics.setReturnKeyStartsNewLine (true);
+            lyrics.setFont (juce::FontOptions (17.0f));
+            lyrics.setText (defaultLyrics(), juce::dontSendNotification);
+            lyrics.setColour (juce::TextEditor::backgroundColourId, Colours::panel);
+            lyrics.setColour (juce::TextEditor::outlineColourId, Colours::panelEdge);
+            lyrics.setTooltip ("Your lyrics. Rap it lays them on the beat; what does not fit in the four bars is left out.");
+            addChildComponent (lyrics);
+            for (int f = 0; f < (int) Flow::numFlows; ++f)
+                flowBox.addItem (flowName ((Flow) f), f + 1);
+            flowBox.setSelectedId (1, juce::dontSendNotification);
+            flowBox.setTooltip ("How the words sit on the beat: laid back, double time, or choppy.");
+            addChildComponent (flowBox);
+            bySyllable.setButtonText ("By syllable");
+            bySyllable.setClickingTogglesState (true);
+            bySyllable.setColour (juce::TextButton::buttonOnColourId, Colours::accent);
+            bySyllable.setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+            bySyllable.setTooltip ("On: one note per syllable, so the rap can be chopped in the steps. Off: one note per word.");
+            bySyllable.onClick = [this] { rapIt(); };
+            addChildComponent (bySyllable);
+            for (int l = 0; l < speech::numLanguages; ++l)
+            {
+                auto& b = languageButtons[(size_t) l];
+                b.setButtonText (l == speech::spanish ? "ES" : "EN");
+                b.setTooltip (l == speech::spanish ? "Rap in Spanish" : "Rap in English");
+                b.onClick = [this, l] { engine.track (rapTrack()).voiceParams.language.store (l); refresh(); };
+                addChildComponent (b);
+            }
+            button (rapButton, "Rap it", [this] { rapIt(); });
+            rapButton.setVisible (false);
+            rapInfo.setColour (juce::Label::textColourId, Colours::textDim);
+            rapInfo.setFont (juce::FontOptions (12.0f));
+            addChildComponent (rapInfo);
+        }
+
+        generateAll();
+        showTrack (0);
+        setSize (430, 900);
+        startTimerHz (20);
+    }
+
+    ~LiteComponent() override
+    {
+        deviceManager.removeAudioCallback (&sourcePlayer);
+        sourcePlayer.setSource (nullptr);
+        setLookAndFeel (nullptr);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (Colours::background);
+        const int barBottom = safeArea().getY() + topHeight;   // the top bar, under the phone's notch and clock
+        g.setColour (Colours::panel);
+        g.fillRect (getLocalBounds().withHeight (barBottom));
+        g.setColour (Colours::panelEdge);
+        g.drawHorizontalLine (barBottom - 1, 0.0f, (float) getWidth());
+    }
+
+    /** The part of the screen nothing covers: on a phone, inside the notch, the clock and the home bar. */
+    juce::Rectangle<int> safeArea() const
+    {
+        auto r = getLocalBounds();
+       #if JUCE_IOS || JUCE_ANDROID
+        if (const auto* d = juce::Desktop::getInstance().getDisplays().getDisplayForRect (getScreenBounds()))
+            r = d->safeAreaInsets.subtractedFrom (r);
+       #endif
+        return r;
+    }
+
+    void resized() override
+    {
+        auto r = safeArea();
+        auto top = r.removeFromTop (topHeight).reduced (10, 8);
+        menuButton.setBounds (top.removeFromRight (40).reduced (2, 2));
+        generateButton.setBounds (top.removeFromRight (96).reduced (2, 2));
+        recButton.setBounds (top.removeFromRight (66).reduced (2, 2));
+        playButton.setBounds (top.removeFromRight (46).reduced (2, 2));
+        title.setBounds (top);
+
+        r.reduce (10, 8);
+        auto tabRow = r.removeFromTop (40);
+        const int tw = tabRow.getWidth() / juce::jmax (1, tabs.size());
+        for (auto* t : tabs)
+            t->setBounds (tabRow.removeFromLeft (tw).reduced (2, 2));
+        r.removeFromTop (8);
+
+        const bool wide = getWidth() > getHeight();   // sideways: the tiles and the pad, for playing live
+        updateVisibility (wide);
+        if (wide)
+        {
+            layoutWide (r);
+            return;
+        }
+
+        auto padArea = wide ? r.removeFromLeft (r.getWidth() * 3 / 5) : r;
+        auto side = wide ? r.withTrimmedLeft (12) : r;
+
+        // From the bottom up: A / B, the dials, the bars and tempo, the steps, the Sampler's or the rap's buttons.
+        soundArea = side.removeFromBottom (44);
+        side.removeFromBottom (6);
+        auto knobRow = side.removeFromBottom (92);
+        const int kw = knobRow.getWidth() / 4;
+        for (int k = 0; k < 4; ++k)
+        {
+            auto c = knobRow.removeFromLeft (kw);
+            knobLabels[(size_t) k].setBounds (c.removeFromBottom (18));
+            knobs[(size_t) k].setBounds (c.reduced (6, 0));
+        }
+        side.removeFromBottom (6);
+        auto barRow = side.removeFromBottom (32);
+        tempo.setBounds (barRow.removeFromRight (juce::jmin (130, barRow.getWidth() / 3)).reduced (2, 2));
+        barRow.removeFromRight (8);
+        const int bw = barRow.getWidth() / numBars;
+        for (auto* b : barButtons)
+            b->setBounds (barRow.removeFromLeft (bw).reduced (2, 2));
+        side.removeFromBottom (6);
+        stepsArea = side.removeFromBottom (wide ? juce::jmin (130, side.getHeight() / 2) : 74);
+        side.removeFromBottom (6);
+        extraArea = side.removeFromBottom (role (current) == Role::sampler || role (current) == Role::rap ? 40 : 0);
+        if (! wide)
+            padArea = side.withTrimmedBottom (6);
+        else
+            padArea = padArea.withTrimmedBottom (0);
+
+        for (int t = 0; t < pads.size(); ++t)
+        {
+            pads[t]->setBounds (padArea);
+            stepRows[t]->setBounds (stepsArea);
