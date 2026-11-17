@@ -469,6 +469,16 @@ ControlTargets::ControlTargets (AudioEngine& e) : engine (&e)
     add ("sampler.record", "Sampler record start / stop", "Sampler", TargetKind::trigger,
          [&e] (float) { e.recorder.toggleRequested.store (true); });
 
+    // ---- Sampler Grain mode: the recording as a cloud of grains
+    add ("sampler.grain", "Sampler: Grain mode on/off", "Sampler", TargetKind::toggle,
+         [&e] (float) { toggle (e.selected().grainMode); });
+    add ("gran.hold", "Grains: hold a note on/off", "Granular", TargetKind::toggle,
+         [&e] (float) { toggle (e.selected().grainHold); });
+    add ("gran.freeze", "Grains: freeze on/off", "Granular", TargetKind::toggle,
+         [&e] (float) { toggle (e.selected().granularParams.freeze); });
+    add ("gran.live", "Grains: live input on/off", "Granular", TargetKind::toggle,
+         [&e] (float) { toggle (e.selected().grainLive); });
+
     // ---- Scenes and song
     add ("scene.next", "Next scene (starts at the next bar)", "Song", TargetKind::trigger,
          [&e] (float) {
@@ -959,7 +969,7 @@ ControlTargets::ControlTargets (AudioEngine& e) : engine (&e)
     {
         auto knobTarget = [this, &e, k]() -> const Target* {
             const auto& library = synthLibrary();
-            const auto& def = library[(size_t) juce::jlimit (0, (int) library.size() - 1, e.selected().type.load())];
+            const auto& def = library[(size_t) juce::jlimit (0, (int) library.size() - 1, e.selected().soundType())];
             const int overlay = e.knobOverlay.load(), page = e.knobPage.load();
             // The Oscillators window: page 1 is oscillator 1 (and the synth's own sound), page 2 oscillator 2 (and sync, ring).
             if (overlay == AudioEngine::overlayOsc)
@@ -997,7 +1007,7 @@ ControlTargets::ControlTargets (AudioEngine& e) : engine (&e)
                 return k < 5 ? find (listen[k]) : nullptr;
             }
             // While the Sound settings window is open, the knobs turn the sections of its page.
-            const auto& sections = soundSections (e.selected().type.load());
+            const auto& sections = soundSections (e.selected().soundType());
             if (page > 0 && ! sections.empty())
             {
                 const auto* knob = soundPageKnob (sections, page, k);
@@ -1009,6 +1019,8 @@ ControlTargets::ControlTargets (AudioEngine& e) : engine (&e)
                 const auto i = (size_t) ((page - 1) * 8 + k);
                 return i < def.more.size() ? find (def.more[i].target) : nullptr;
             }
+            if (k == 0 && e.selected().type.load() == Track::sampler && e.selected().grainMode.load())
+                return find ("gran.scan");   // a Sampler's grains always come from its recording
             return find (def.knobs[(size_t) k].target);
         };
         add ("panel.knob." + juce::String (k + 1), "Knob " + juce::String (k + 1) + " (loaded synth)", "Panel",
