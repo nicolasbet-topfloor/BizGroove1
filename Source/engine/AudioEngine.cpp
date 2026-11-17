@@ -69,6 +69,10 @@ void AudioEngine::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
         m.ensureSize (2048);
     liveMidi.ensureSize (2048);
     selInput.ensureSize (2048);
+    grainMidi.ensureSize (2048);
+    liveRing.setSize (2, (int) (sampleRate * liveRingSeconds), false, true, false);
+    liveRing.clear();
+    liveRingHead.store (0);
     arpOut.ensureSize (2048);
     arpScratch.ensureSize (512);
     for (auto& m : externalMidi)
@@ -373,6 +377,26 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
     const int only = renderOnlyTrack.load();
 
     tapNow.clear (numTracks, 0, numSamples);   // the Voice tracks, mixed: added up below
+
+    // Live grains: the sound card's input goes round a ring of the last seconds, for any Sampler that grains it.
+    bool anyLive = false;
+    for (auto& tr : tracks)
+        anyLive = anyLive || (tr->type.load() == Track::sampler && tr->grainMode.load() && tr->grainLive.load());
+    if (anyLive && liveInputSamples == numSamples && liveRing.getNumSamples() > numSamples)
+    {
+        const int len = liveRing.getNumSamples();
+        int head = liveRingHead.load();
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float l = liveInput.getSample (0, i);
+            const float r = liveInput.getNumChannels() > 1 ? liveInput.getSample (1, i) : l;
+            liveRing.setSample (0, head, l);
+            liveRing.setSample (1, head, r);
+            if (++head >= len) head = 0;
+        }
+        liveRingHead.store (head);
+    }
+
     for (int t = 0; t < numTracks; ++t)
     {
         auto& tr = *tracks[(size_t) t];
@@ -394,8 +418,17 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         }
         else if (type == Track::drums)
             tr.kit.render (trackBuffer, 0, numSamples, trackMidi[(size_t) t]);
+        else if (type == Track::sampler && tr.grainMode.load())
+            renderGrains (tr, trackMidi[(size_t) t], numSamples, grainHeld[(size_t) t]);
         else if (type == Track::sampler)
+        {
+            if (grainHeld[(size_t) t])
+            {
+                tr.granularSynth.allNotesOff (0, false);   // Grain mode was switched off
+                grainHeld[(size_t) t] = false;
+            }
             tr.samplerEngine.render (trackBuffer, 0, numSamples, trackMidi[(size_t) t]);
+        }
         else
         {
             if (type == Track::fm)
@@ -891,6 +924,66 @@ void AudioEngine::runLocks (bool playing)
         }
         trackOverride = -1;
     }
+}
+
+} // namespace bizgroove
+
+namespace bizgroove
+{
+
+void AudioEngine::renderGrains (Track& tr, const juce::MidiBuffer& midi, int numSamples, bool& held)
+{
+    // The pads (channel 10) play the pads' spots; the keys and the steps play the cloud at their pitch.
+    grainMidi.clear();
+    const bool hold = tr.grainHold.load();
+    if (hold != held)
+    {
+        grainMidi.addEvent (hold ? juce::MidiMessage::noteOn (1, Sampler::rootNote, 0.8f) : juce::MidiMessage::noteOff (1, Sampler::rootNote), 0);
+        held = hold;
+    }
+    for (const auto meta : midi)
+    {
+        auto m = meta.getMessage();
+        const int pad = m.getNoteNumber() - Sampler::padBase;
+        if (m.isNoteOnOrOff() && m.getChannel() == 10 && juce::isPositiveAndBelow (pad, GranularParams::numPads))
+            m.setNoteNumber (GranularParams::padNoteBase + pad);
+        grainMidi.addEvent (m, meta.samplePosition);
+    }
+
+    auto& gp = tr.granularParams;
+    if (tr.grainLive.load() && liveRing.getNumSamples() > 64)
+    {
+        gp.recording = { liveRing.getReadPointer (0), liveRing.getReadPointer (1), liveRing.getNumSamples(), currentRate,
+                         liveRingHead.load(), true };
+        tr.granularSynth.renderNextBlock (trackBuffer, grainMidi, 0, numSamples);
+        gp.recording = {};
+        return;
+    }
+    const bool usedRecording = tr.samplerEngine.useSample ([&] (const juce::AudioBuffer<float>& audio, double rate) {
+        gp.recording = { audio.getReadPointer (0), audio.getReadPointer (audio.getNumChannels() > 1 ? 1 : 0),
+                         audio.getNumSamples(), rate, 0, true };
+        tr.granularSynth.renderNextBlock (trackBuffer, grainMidi, 0, numSamples);
+        gp.recording = {};
+    });
+    if (! usedRecording)
+        tr.granularSynth.renderNextBlock (trackBuffer, grainMidi, 0, numSamples);   // nothing loaded yet: Choir
+}
+
+bool AudioEngine::copyLiveRing (juce::AudioBuffer<float>& out, double& rate) const
+{
+    const int len = liveRing.getNumSamples();
+    if (len < 64)
+        return false;
+    const int head = liveRingHead.load();
+    out.setSize (2, len);
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        out.copyFrom (ch, 0, liveRing, ch, head, len - head);   // oldest first
+        if (head > 0)
+            out.copyFrom (ch, len - head, liveRing, ch, 0, head);
+    }
+    rate = currentRate;
+    return true;
 }
 
 } // namespace bizgroove
