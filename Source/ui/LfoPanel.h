@@ -180,6 +180,7 @@ private:
                             });
     }
 
+public:
     /** The menu shows the sections of this track's instrument, and those every track has. */
     static bool belongs (const juce::String& group, const juce::String& instrument)
     {
@@ -191,6 +192,8 @@ private:
             return true;
         return group == instrument || (instrument == "Test synth" && group == "Synth");
     }
+
+private:
 
     void refreshButtons()
     {
