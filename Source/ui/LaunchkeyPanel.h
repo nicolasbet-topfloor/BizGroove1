@@ -161,7 +161,9 @@ private:
     juce::AudioFormatManager formats;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::String shownSample;
-    StepGrid pads { engine };
+    StepGrid pads { engine, targets };
+    StepPager pager { engine };
+    int shownLockStep = -1;
 
     // Beside the pads
     juce::TextButton launchButton { ">" }, stopSoloMuteButton { "Stop\nSolo\nMute" };
