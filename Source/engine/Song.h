@@ -9,8 +9,13 @@ namespace bizgroove
 
 /** Patterns, scenes and the song chain, and the clock that plays them.
 
-    - A track's pattern is one bar of 16 steps. Synth tracks store a note per
-      step; drum tracks store 16 lanes (one per drum) of on/off steps.
+    - A track's pattern has its own length: 1 to 64 steps (up to four bars of
+      16), and loops on it, so tracks of different lengths drift against each
+      other until the scene changes. Synth tracks store a note per step; drum
+      tracks store 16 lanes (one per drum) of on/off steps.
+    - Any step can lock up to eight knobs of its track to values of its own
+      (parameter locks): they take over when the step plays, and the knobs go
+      back to where they were set at the next step.
     - A scene holds one pattern for each of the 16 tracks.
     - Scene mode loops the current scene. Choosing another scene while playing
       queues it; it starts at the next bar line.
@@ -24,7 +29,9 @@ class Song
 public:
     static constexpr int numTracks = 16;
     static constexpr int numScenes = 16;
-    static constexpr int numSteps = 16;
+    static constexpr int numSteps = 64;      // the longest pattern: four bars
+    static constexpr int stepsPerBar = 16;
+    static constexpr int maxLocks = 8;       // knobs one step can lock
     static constexpr int numDrums = 16;
     static constexpr int maxChain = 64;
     static constexpr int maxBars = 128;   // timeline length limit
@@ -124,10 +131,104 @@ public:
         }
     };
 
+    /** A knob locked to a value on one step: the knob's index among the ControlTargets,
+        and, for a drum's knob, which drum (-1 for the track's own knobs). */
+    struct Lock
+    {
+        std::atomic<int> target { -1 };   // -1 = free
+        std::atomic<int> drum { -1 };
+        std::atomic<float> value { 0.0f };   // 0..1
+    };
+    using StepLocks = std::array<Lock, maxLocks>;
+
     struct TrackPattern
     {
         std::array<Step, numSteps> steps;                     // synth tracks
-        std::array<std::atomic<std::uint16_t>, numDrums> drumLanes {};   // drum tracks: bit s = step s
+        std::array<std::atomic<std::uint64_t>, numDrums> drumLanes {};   // drum tracks: bit s = step s
+        std::atomic<int> length { stepsPerBar };              // steps it plays before it loops (1 .. 64)
+        std::array<StepLocks, numSteps> locks;
+
+        int getLength() const { return juce::jlimit (1, numSteps, length.load()); }
+
+        /** The lock of a knob on a step, or nullptr. */
+        const Lock* findLock (int at, int target, int drum) const
+        {
+            if (! juce::isPositiveAndBelow (at, numSteps))
+                return nullptr;
+            for (const auto& l : locks[(size_t) at])
+                if (l.target.load() == target && l.drum.load() == drum)
+                    return &l;
+            return nullptr;
+        }
+
+        /** Locks a knob on a step. False when the step already locks eight other knobs. */
+        bool setLock (int at, int target, int drum, float value01)
+        {
+            if (! juce::isPositiveAndBelow (at, numSteps) || target < 0)
+                return false;
+            auto& row = locks[(size_t) at];
+            Lock* slot = const_cast<Lock*> (findLock (at, target, drum));
+            if (slot == nullptr)
+                for (auto& l : row)
+                    if (l.target.load() < 0) { slot = &l; break; }
+            if (slot == nullptr)
+                return false;
+            slot->value.store (juce::jlimit (0.0f, 1.0f, value01));
+            slot->drum.store (drum);
+            slot->target.store (target);   // last: the audio thread reads the target first
+            return true;
+        }
+
+        void clearLock (int at, int target, int drum)
+        {
+            if (auto* l = const_cast<Lock*> (findLock (at, target, drum)))
+                l->target.store (-1);
+        }
+
+        void clearLocks (int at)
+        {
+            if (juce::isPositiveAndBelow (at, numSteps))
+                for (auto& l : locks[(size_t) at])
+                    l.target.store (-1);
+        }
+
+        int numLocks (int at) const
+        {
+            int n = 0;
+            if (juce::isPositiveAndBelow (at, numSteps))
+                for (const auto& l : locks[(size_t) at])
+                    n += l.target.load() >= 0 ? 1 : 0;
+            return n;
+        }
+
+        void copyFrom (const TrackPattern& o)
+        {
+            for (size_t i = 0; i < steps.size(); ++i)
+            {
+                steps[i].copyFrom (o.steps[i]);
+                for (size_t k = 0; k < (size_t) maxLocks; ++k)
+                {
+                    locks[i][k].value.store (o.locks[i][k].value.load());
+                    locks[i][k].drum.store (o.locks[i][k].drum.load());
+                    locks[i][k].target.store (o.locks[i][k].target.load());
+                }
+            }
+            for (size_t d = 0; d < drumLanes.size(); ++d)
+                drumLanes[d].store (o.drumLanes[d].load());
+            length.store (o.length.load());
+        }
+
+        void clear()
+        {
+            for (size_t i = 0; i < steps.size(); ++i)
+            {
+                steps[i].on.store (false);
+                clearLocks ((int) i);
+            }
+            for (auto& l : drumLanes)
+                l.store (0);
+            length.store (stepsPerBar);
+        }
     };
 
     struct Scene
@@ -183,7 +284,13 @@ public:
     std::array<std::atomic<float>, numTracks> swing {};
 
     // ---------------------------------------------------------- read-outs for the UI
-    std::atomic<int> playheadStep { -1 };
+    std::atomic<int> playheadStep { -1 };                     // the step of the bar (0 .. 15)
+    std::array<std::atomic<int>, numTracks> trackStep {};    // the step each track's pattern is on (-1 = stopped)
+
+    /** Audio thread, right after process(): the last step each track started in this block
+        (-1 = none), and the scene it came from, so its locks can be played. */
+    struct StepEvent { int step = -1; int scene = -1; };
+    const StepEvent& getStepEvent (int track) const { return stepEvents[(size_t) juce::jlimit (0, numTracks - 1, track)]; }
     std::atomic<int> chainPosition { 0 };
     std::atomic<int> chainRepeat { 0 };
 
@@ -250,6 +357,9 @@ private:
     int startOffset = 0;
 
     std::array<StepStart, 64> stepStarts {};
+    std::array<StepEvent, numTracks> stepEvents {};
+    std::array<int, numTracks> trackPos {};      // the step of its pattern each track is on
+    std::array<bool, numTracks> restart {};      // the track's scene changed: start its pattern again
     int numStepStarts = 0;
     std::array<int, numTracks> trackScene {};   // scene each track plays this bar (-1 = silent)
 };
