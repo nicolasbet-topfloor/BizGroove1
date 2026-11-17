@@ -1840,7 +1840,7 @@ static void testGranular()
     check (sources, "granular: every built-in source sounds, at a sensible level");
 
     tr.granularParams.source.store (GranularSources::recording);
-    check (play (20) == 0.0f, "granular: Your recording is silent until a recording is loaded");
+    check (play (20) > 0.02f, "granular: Your recording plays a choir until a recording is loaded");
     juce::AudioBuffer<float> rec (2, 48000);
     for (int i = 0; i < rec.getNumSamples(); ++i)
         rec.setSample (0, i, 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * 440.0 * i / 48000.0)), rec.setSample (1, i, rec.getSample (0, i));
@@ -2114,6 +2114,139 @@ static void testSequencer()
                && g.findLock (1, targetsF.indexOf ("poly.cutoff"), -1) != nullptr,
            "project: pattern lengths, steps past the first bar and locks are saved and opened");
     check (f.song.scene (1).tracks[0].getLength() == Song::stepsPerBar, "project: other patterns keep one bar");
+}
+
+// A Sampler's Grain mode: its recording (or the live input) as a cloud of grains, pads at spots of their own.
+static void testSamplerGrains()
+{
+    std::cout << "Sampler grains\n";
+    constexpr double sr = 48000.0;
+    AudioEngine e;
+    ControlTargets targets (e);
+    e.lfoTargets.store (&targets);
+    e.prepareToPlay (480, sr);
+    e.song.clearScene (0);
+    e.selectedTrack.store (3);
+    auto& tr = e.track (3);
+    tr.type.store (Track::sampler);
+
+    // A field recording: four seconds that rise from a low hum to a high whistle.
+    juce::AudioBuffer<float> rec (2, (int) (4 * sr));
+    double ph = 0.0;
+    for (int i = 0; i < rec.getNumSamples(); ++i)
+    {
+        ph += juce::MathConstants<double>::twoPi * (200.0 + 1800.0 * i / rec.getNumSamples()) / sr;
+        rec.setSample (0, i, 0.5f * (float) std::sin (ph));
+        rec.setSample (1, i, 0.5f * (float) std::sin (ph));
+    }
+    tr.samplerEngine.setSample (rec, sr, "field");
+
+    juce::AudioBuffer<float> buf (2, 480);
+    auto run = [&] (int blocks) {
+        double sum = 0.0;
+        for (int b = 0; b < blocks; ++b)
+        {
+            buf.clear();
+            e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 480));
+            sum += buf.getRMSLevel (0, 0, 480);
+        }
+        return sum / blocks;
+    };
+
+    check (targets.find ("sampler.grain") != nullptr && tr.soundType() == Track::sampler, "grains: a Sampler starts in Classic mode");
+    targets.applyButton ("sampler.grain", true);
+    check (tr.grainMode.load() && tr.soundType() == Track::granular, "grains: Grain mode makes the Sampler show the Granular's knobs");
+
+    // Hold note: the cloud sounds with no key down.
+    tr.grainHold.store (true);
+    const double held = run (40);
+    check (held > 0.005, "grains: Hold note keeps the cloud sounding");
+
+    // Dragging the position moves the cloud; Freeze keeps it there while Scan would move it.
+    targets.applyValue ("gran.position", 0.8f);
+    run (5);
+    check (std::abs (tr.granularParams.shownPosition.load() - 0.8f) < 0.02f, "grains: the cloud goes where the position is dragged");
+    tr.granularParams.scan.store (1.0f);
+    tr.granularParams.freeze.store (true);
+    run (5);
+    const float a = tr.granularParams.shownPosition.load();
+    run (50);
+    check (std::abs (tr.granularParams.shownPosition.load() - a) < 1.0e-4f, "grains: Freeze holds the cloud where it is");
+    tr.granularParams.freeze.store (false);
+    run (50);
+    check (std::abs (tr.granularParams.shownPosition.load() - a) > 0.01f, "grains: without Freeze, Scan moves it on");
+    tr.granularParams.scan.store (0.0f);
+    tr.grainHold.store (false);
+    run (60);
+
+    // A pad plays its own spot.
+    tr.granularParams.pads[5].position.store (0.25f);
+    e.keyboardState.noteOn (10, Sampler::padBase + 5, 0.9f);
+    const double pad = run (20);
+    check (pad > 0.003 && std::abs (tr.granularParams.shownPosition.load() - 0.25f) < 0.01f, "grains: pad 6 plays from its own spot");
+    e.keyboardState.noteOff (10, Sampler::padBase + 5, 0.0f);
+    run (60);
+
+    // Live input: grains of what comes in, which Keep turns into the recording.
+    tr.grainLive.store (true);
+    tr.grainHold.store (true);
+    juce::AudioBuffer<float> in (2, 480);
+    double inPh = 0.0, live = 0.0;
+    for (int b = 0; b < 100; ++b)
+    {
+        for (int i = 0; i < 480; ++i, inPh += juce::MathConstants<double>::twoPi * 440.0 / sr)
+            for (int ch = 0; ch < 2; ++ch)
+                in.setSample (ch, i, 0.4f * (float) std::sin (inPh));
+        e.setLiveInput (in, 0, 480);
+        buf.clear();
+        e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 480));
+        if (b >= 50) live += buf.getRMSLevel (0, 0, 480) / 50.0;
+    }
+    tr.granularParams.position.store (1.0f);   // the newest of the ten seconds: what just came in
+    juce::AudioBuffer<float> kept;
+    double keptRate = 0.0;
+    check (e.copyLiveRing (kept, keptRate) && kept.getNumSamples() == (int) (AudioEngine::liveRingSeconds * sr)
+               && kept.getMagnitude (0, kept.getNumSamples() - 48000, 48000) > 0.3f,
+           "grains: the live input's last ten seconds can be kept, the newest at the end");
+    tr.grainHold.store (false);
+    tr.grainLive.store (false);
+    run (60);
+
+    // A Granular sound that takes its grains from a recording, with none loaded, plays Choir meanwhile.
+    auto& g = e.track (6);
+    g.type.store (Track::granular);
+    g.granularParams.source.store (GranularSources::recording);
+    e.selectedTrack.store (6);
+    e.keyboardState.noteOn (1, 60, 0.9f);
+    juce::AudioBuffer<float> gb (2, 480);
+    double fallback = 0.0;
+    for (int b = 0; b < 40; ++b)
+    {
+        gb.clear();
+        e.getNextAudioBlock (juce::AudioSourceChannelInfo (&gb, 0, 480));
+        fallback += gb.getRMSLevel (0, 0, 480) / 40.0;
+    }
+    e.keyboardState.noteOff (1, 60, 0.0f);
+    check (fallback > 0.003, "grains: Your recording with nothing loaded plays a choir instead of silence");
+
+    // Saved and opened: Grain mode, the pads' spots and Freeze.
+    tr.granularParams.freeze.store (true);
+    tr.granularParams.pads[2].pitch.store (7.0f);
+    const auto v = granularParamsToVar (tr.granularParams);
+    GranularParams back;
+    applyGranularParams (back, v);
+    check (back.freeze.load() && std::abs (back.pads[5].position.load() - 0.25f) < 1.0e-4f && std::abs (back.pads[2].pitch.load() - 7.0f) < 1.0e-4f,
+           "grains: Freeze and the pads' spots are saved with the sound");
+    juce::String err;
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("bizgroove-grains.bizgroove");
+    const bool saved = Project::save (e, file, err);
+    AudioEngine f;
+    f.prepareToPlay (480, sr);
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    const bool opened = Project::open (f, file, formats, err);
+    file.deleteFile();
+    check (saved && opened && f.track (3).grainMode.load() && ! f.track (6).grainMode.load(), "grains: Grain mode is saved with the project");
 }
 
 // LFOs: two per track, moving any of its knobs around where it is set, on that track only.
@@ -3393,6 +3526,7 @@ int main (int argc, char* argv[])
     testWindowKnobs();
     testLfos();
     testSequencer();
+    testSamplerGrains();
     testRecoversFromBadNumbers();
     testKnobPage();
     testSoundSections();
