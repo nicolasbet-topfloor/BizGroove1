@@ -4,9 +4,221 @@
 #include "engine/AudioEngine.h"
 #include "engine/SynthLibrary.h"
 #include "LookAndFeel.h"
+#include "LfoPanel.h"
+#include "StepGrid.h"
 
 namespace bizgroove
 {
+
+
+/** Under the pattern: one knob's value on every step (a parameter-lock lane).
+    Choose the knob, then drag up and down over the steps to lock it; right-click
+    (or Alt-click) a step to take its lock off. The dashed line is where the knob
+    itself is set, which steps without a lock play. */
+class LockLane final : public juce::Component
+{
+public:
+    LockLane (AudioEngine& e, const ControlTargets& t) : engine (e), targets (t)
+    {
+        choose.setTooltip ("Which knob this lane locks, step by step");
+        choose.onClick = [this] { showMenu(); };
+        clearAll.setTooltip ("Take this knob's locks off every step of the pattern");
+        clearAll.onClick = [this] {
+            auto& p = pattern();
+            for (int s = 0; s < Song::numSteps; ++s)
+                p.clearLock (s, target, drumFor (target));
+            repaint();
+        };
+        for (auto* b : { &choose, &clearAll })
+        {
+            b->setWantsKeyboardFocus (false);
+            addAndMakeVisible (b);
+        }
+    }
+
+    void setLabelWidth (int w) { labelWidth = w; resized(); }
+
+    /** The track changed (or its instrument): a knob of its own, the first one with locks if there is one. */
+    void trackChanged()
+    {
+        target = -1;
+        const auto& all = targets.all();
+        const auto& p = pattern();
+        for (int s = 0; s < p.getLength() && target < 0; ++s)
+            for (const auto& l : p.locks[(size_t) s])
+                if (const int tg = l.target.load(); tg >= 0 && tg < (int) all.size())
+                {
+                    target = tg;
+                    break;
+                }
+        const auto instrument = Presets::instrumentName (engine.selected().type.load());
+        for (size_t i = 0; i < all.size() && target < 0; ++i)
+            if (ControlTargets::lockable (all[i]) && all[i].group == instrument)
+                target = (int) i;
+        for (size_t i = 0; i < all.size() && target < 0; ++i)
+            if (ControlTargets::lockable (all[i]) && LfoPanel::belongs (all[i].group, instrument))
+                target = (int) i;
+        refreshName();
+        repaint();
+    }
+
+    void resized() override
+    {
+        auto left = getLocalBounds().removeFromLeft (labelWidth).reduced (4, 4);
+        choose.setBounds (left.removeFromTop (juce::jmin (44, left.getHeight() / 2)));
+        left.removeFromTop (4);
+        clearAll.setBounds (left.removeFromTop (22));
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.setColour (Colours::panel);
+        g.fillRoundedRectangle (getLocalBounds().toFloat(), 6.0f);
+        const auto area = laneArea();
+        const auto& p = pattern();
+        const int cols = p.getLength();
+        const float w = (float) area.getWidth() / (float) cols;
+        const int drum = drumFor (target);
+        const auto* tg = targetInfo();
+        const int playhead = engine.transport.playing.load() ? engine.song.trackStep[(size_t) engine.selectedTrack.load()].load() : -1;
+
+        for (int s = 0; s < cols; ++s)
+        {
+            const auto cell = juce::Rectangle<float> ((float) area.getX() + (float) s * w, (float) area.getY(), w, (float) area.getHeight()).reduced (1.5f, 0.0f);
+            g.setColour (s == playhead ? Colours::playhead.withAlpha (0.18f) : juce::Colours::black.withAlpha (s / 4 % 2 == 0 ? 0.12f : 0.0f));
+            g.fillRect (cell);
+            if (const auto* l = p.findLock (s, target, drum))
+            {
+                const float v = l->value.load();
+                g.setColour (StepGrid::lockColour().withAlpha (0.9f));
+                g.fillRoundedRectangle (cell.withTop (cell.getBottom() - juce::jmax (3.0f, v * cell.getHeight())), 2.0f);
+            }
+            else if (p.numLocks (s) > 0)
+            {
+                g.setColour (StepGrid::lockColour().withAlpha (0.5f));   // other knobs are locked here
+                g.fillEllipse (cell.getCentreX() - 2.5f, cell.getY() + 3.0f, 5.0f, 5.0f);
+            }
+            if (s % Song::stepsPerBar == 0 && s > 0)
+            {
+                g.setColour (Colours::textDim.withAlpha (0.6f));
+                g.drawVerticalLine ((int) cell.getX() - 1, (float) area.getY(), (float) area.getBottom());
+            }
+        }
+
+        // Where the knob itself is set.
+        if (tg != nullptr && tg->get)
+        {
+            AudioEngine::drumOverride = drum;
+            const float v = tg->get();
+            AudioEngine::drumOverride = -1;
+            const float y = (float) area.getBottom() - v * (float) area.getHeight();
+            const float dashes[] = { 4.0f, 4.0f };
+            g.setColour (Colours::text.withAlpha (0.5f));
+            g.drawDashedLine ({ (float) area.getX(), y, (float) area.getRight(), y }, dashes, 2, 1.0f);
+        }
+
+        g.setColour (Colours::textDim);
+        g.setFont (juce::FontOptions (11.0f));
+        g.drawText (readout.isNotEmpty() ? readout : juce::String ("Drag over the steps to lock this knob; right-click a step to unlock it."),
+                    area.withHeight (16).translated (0, -16), juce::Justification::centredRight);
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override { edit (e); }
+    void mouseDrag (const juce::MouseEvent& e) override { edit (e); }
+    void mouseUp (const juce::MouseEvent&) override { readout.clear(); repaint(); }
+
+    int target = -1;
+
+private:
+    Song::TrackPattern& pattern() const
+    {
+        return engine.song.scene (engine.song.currentScene.load()).tracks[(size_t) engine.selectedTrack.load()];
+    }
+
+    juce::Rectangle<int> laneArea() const { return getLocalBounds().withTrimmedLeft (labelWidth).withTrimmedTop (18).reduced (0, 4); }
+
+    const ControlTargets::Target* targetInfo() const
+    {
+        return juce::isPositiveAndBelow (target, (int) targets.all().size()) ? &targets.all()[(size_t) target] : nullptr;
+    }
+
+    int drumFor (int tg) const
+    {
+        const auto& all = targets.all();
+        return juce::isPositiveAndBelow (tg, (int) all.size()) && all[(size_t) tg].id.startsWith ("drum.")
+                 ? engine.selected().selectedDrum.load() : -1;
+    }
+
+    void edit (const juce::MouseEvent& e)
+    {
+        const auto area = laneArea();
+        auto& p = pattern();
+        const int cols = p.getLength();
+        const int s = (int) ((float) (e.x - area.getX()) / ((float) area.getWidth() / (float) cols));
+        if (! juce::isPositiveAndBelow (s, cols) || targetInfo() == nullptr)
+            return;
+        const int drum = drumFor (target);
+        if (e.mods.isPopupMenu() || e.mods.isAltDown())
+        {
+            p.clearLock (s, target, drum);
+            readout = "Step " + juce::String (s + 1) + ": no lock";
+        }
+        else
+        {
+            const float v = juce::jlimit (0.0f, 1.0f, (float) (area.getBottom() - e.y) / (float) area.getHeight());
+            if (p.setLock (s, target, drum, v))
+                readout = "Step " + juce::String (s + 1) + ": " + (targetInfo()->show ? targetInfo()->show (v) : juce::String (juce::roundToInt (v * 100.0f)) + "%");
+            else
+                readout = "Step " + juce::String (s + 1) + " already locks " + juce::String (Song::maxLocks) + " knobs";
+        }
+        ++engine.lockEdits;
+        repaint();
+    }
+
+    void refreshName()
+    {
+        const auto* tg = targetInfo();
+        choose.setButtonText (tg != nullptr ? tg->name + juce::String::fromUTF8 (" \xe2\x96\xbe") : juce::String ("Lock lane..."));
+    }
+
+    void showMenu()
+    {
+        juce::PopupMenu menu;
+        const auto& all = targets.all();
+        const auto instrument = Presets::instrumentName (engine.selected().type.load());
+        const auto& p = pattern();
+        std::map<juce::String, juce::PopupMenu> sections;
+        std::vector<juce::String> order;
+        for (size_t i = 0; i < all.size(); ++i)
+        {
+            const auto& tg = all[i];
+            if (! ControlTargets::lockable (tg) || ! LfoPanel::belongs (tg.group, instrument))
+                continue;
+            bool used = false;
+            for (int s = 0; s < p.getLength() && ! used; ++s)
+                used = p.findLock (s, (int) i, drumFor ((int) i)) != nullptr;
+            if (sections.find (tg.group) == sections.end())
+                order.push_back (tg.group);
+            sections[tg.group].addItem ((int) i + 1, tg.name + (used ? juce::String::fromUTF8 ("  \xe2\x97\x8f") : juce::String()), true, (int) i == target);
+        }
+        for (const auto& g : order)
+            menu.addSubMenu (g, sections[g]);
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&choose), [this] (int r) {
+            if (r > 0)
+            {
+                target = r - 1;
+                refreshName();
+                repaint();
+            }
+        });
+    }
+
+    AudioEngine& engine;
+    const ControlTargets& targets;
+    juce::TextButton choose { "Lock lane..." }, clearAll { "Clear lane" };
+    juce::String readout;
+    int labelWidth = 92;
+};
 
 /** The whole pattern of the selected track, with a bar that runs across it
     while the song plays, so you can watch what you record land.
@@ -17,12 +229,21 @@ namespace bizgroove
       empty place to add a note there, click a note to take it out, drag a
       note sideways to make it longer or shorter. Scroll to see higher or
       lower notes.
+    - The pattern's length (1 to 64 steps, up to four bars) is set at the top;
+      the lock lane at the bottom locks a knob to its own value on each step.
 */
 class PatternView final : public juce::Component, private juce::Timer
 {
 public:
-    explicit PatternView (AudioEngine& e) : engine (e)
+    PatternView (AudioEngine& e, const ControlTargets& t) : engine (e), lockLane (e, t)
     {
+        lengthLabel.setText ("Length", juce::dontSendNotification);
+        lengthLabel.setFont (juce::FontOptions (12.0f));
+        lengthLabel.setColour (juce::Label::textColourId, Colours::textDim);
+        lengthLabel.setJustificationType (juce::Justification::centredRight);
+        addAndMakeVisible (lengthLabel);
+        addAndMakeVisible (lengthControl);
+        addAndMakeVisible (lockLane);
         for (auto* b : { &prevTrack, &nextTrack, &playButton, &recordButton })
         {
             b->setWantsKeyboardFocus (false);
@@ -57,11 +278,16 @@ public:
         prevTrack.setBounds (top.removeFromLeft (34).reduced (2, 4));
         nextTrack.setBounds (top.removeFromLeft (34).reduced (2, 4));
         top.removeFromLeft (8);
+        lengthControl.setBounds (top.removeFromRight (230).reduced (6, 6));
+        lengthLabel.setBounds (top.removeFromRight (52));
         recordButton.setBounds (top.removeFromRight (90).reduced (2, 4));
         playButton.setBounds (top.removeFromRight (80).reduced (2, 4));
         position.setBounds (top.removeFromRight (190));
         title.setBounds (top);
         help.setBounds (r.removeFromBottom (22));
+        r.removeFromBottom (4);
+        lockLane.setBounds (r.removeFromBottom (juce::jlimit (90, 140, r.getHeight() / 4)));
+        lockLane.setLabelWidth (labelWidth);
         r.removeFromBottom (4);
         grid = r.reduced (0, 4);
     }
@@ -74,8 +300,9 @@ public:
         const bool drums = engine.selected().playsDrums();
         const int rows = drums ? Song::numDrums : visibleNotes;
         const float rowH = (float) area.getHeight() / (float) rows;
-        const float stepW = (float) area.getWidth() / (float) Song::numSteps;
         auto& pattern = currentPattern();
+        const int cols = pattern.getLength();
+        const float stepW = (float) area.getWidth() / (float) cols;
 
         // Rows and their names.
         g.setFont (juce::FontOptions (juce::jmin (13.0f, rowH * 0.8f)));
@@ -107,16 +334,17 @@ public:
                         juce::Justification::centredLeft, false);
         }
 
-        // Step lines, stronger on each beat.
-        for (int s = 0; s <= Song::numSteps; ++s)
+        // Step lines, stronger on each beat, strongest on each bar.
+        for (int s = 0; s <= cols; ++s)
         {
             const float x = (float) area.getX() + (float) s * stepW;
-            g.setColour (s % 4 == 0 ? Colours::textDim.withAlpha (0.5f) : Colours::panelEdge);
+            g.setColour (s % Song::stepsPerBar == 0 ? Colours::text.withAlpha (0.55f)
+                                                     : (s % 4 == 0 ? Colours::textDim.withAlpha (0.5f) : Colours::panelEdge));
             g.drawVerticalLine ((int) x, (float) area.getY(), (float) area.getBottom());
         }
 
         // The step playing: a column that runs across.
-        const int playhead = engine.song.playheadStep.load();
+        const int playhead = engine.song.trackStep[(size_t) engine.selectedTrack.load()].load();
         if (playhead >= 0 && (engine.transport.playing.load()))
         {
             const auto col = juce::Rectangle<float> ((float) area.getX() + (float) playhead * stepW, (float) area.getY(), stepW, (float) area.getHeight());
@@ -130,8 +358,8 @@ public:
         if (drums)
         {
             for (int d = 0; d < Song::numDrums; ++d)
-                for (int s = 0; s < Song::numSteps; ++s)
-                    if ((pattern.drumLanes[(size_t) d].load() >> s) & 1u)
+                for (int s = 0; s < cols; ++s)
+                    if (((pattern.drumLanes[(size_t) d].load() >> s) & 1u) != 0)
                     {
                         const auto cell = juce::Rectangle<float> ((float) area.getX() + (float) s * stepW, (float) area.getY() + (float) d * rowH, stepW, rowH).reduced (2.0f, 1.5f);
                         g.setColour (s == playhead && engine.transport.playing.load() ? Colours::playhead : Colours::accent);
@@ -140,7 +368,7 @@ public:
         }
         else
         {
-            for (int s = 0; s < Song::numSteps; ++s)
+            for (int s = 0; s < cols; ++s)
             {
                 const auto& st = pattern.steps[(size_t) s];
                 if (! st.on.load())
@@ -198,7 +426,7 @@ public:
         if (engine.selected().playsDrums())
         {
             auto& lane = pattern.drumLanes[(size_t) row];
-            lane.store ((std::uint16_t) (lane.load() ^ (1u << s)));
+            lane.store (lane.load() ^ ((std::uint64_t) 1 << s));
             engine.selected().selectedDrum.store (row);
             repaint();
             return;
@@ -225,7 +453,7 @@ public:
     {
         if (dragNote < 0)
             return;
-        const float stepW = (float) gridArea().getWidth() / (float) Song::numSteps;
+        const float stepW = (float) gridArea().getWidth() / (float) currentPattern().getLength();
         if (std::abs (e.getDistanceFromDragStartX()) > 4)
             dragged = true;
         if (! dragged)
@@ -265,8 +493,9 @@ private:
     int stepAt (int x) const
     {
         const auto area = gridArea();
-        const int s = (int) ((float) (x - area.getX()) / ((float) area.getWidth() / (float) Song::numSteps));
-        return juce::isPositiveAndBelow (s, Song::numSteps) ? s : -1;
+        const int cols = engine.song.scene (engine.song.currentScene.load()).tracks[(size_t) engine.selectedTrack.load()].getLength();
+        const int s = (int) ((float) (x - area.getX()) / ((float) area.getWidth() / (float) cols));
+        return juce::isPositiveAndBelow (s, cols) ? s : -1;
     }
 
     int rowAt (int y) const
@@ -324,11 +553,13 @@ private:
     {
         const int t = engine.selectedTrack.load();
         const int type = engine.selected().type.load();
-        if (t != shownTrack || type != shownType)
+        if (t != shownTrack || type != shownType || engine.song.currentScene.load() != shownScene)
         {
             shownTrack = t;
             shownType = type;
+            shownScene = engine.song.currentScene.load();
             followNotes = true;
+            lockLane.trackChanged();
         }
         followPattern();
 
@@ -345,7 +576,11 @@ private:
         if (engine.countInBeatsLeft.load() > 0)
             where = "Count-in " + juce::String (engine.countInBeatsLeft.load());
         else if (engine.transport.playing.load() && step >= 0)
-            where = "Beat " + juce::String (step / 4 + 1) + "." + juce::String (step % 4 + 1);
+        {
+            const int own = juce::jmax (0, engine.song.trackStep[(size_t) t].load());   // where this track's pattern is
+            where = (currentPattern().getLength() > Song::stepsPerBar ? "Bar " + juce::String (own / Song::stepsPerBar + 1) + "  " : juce::String())
+                  + "Beat " + juce::String (own % Song::stepsPerBar / 4 + 1) + "." + juce::String (own % 4 + 1);
+        }
         else
             where = "Stopped";
         if (position.getText() != where)
@@ -362,12 +597,18 @@ private:
         recordButton.setColour (juce::TextButton::buttonColourId, recordingNotes() ? juce::Colour (0xffb3261e) : Colours::panelEdge);
 
         if (isShowing())
+        {
             repaint();
+            lockLane.repaint();
+        }
     }
 
     AudioEngine& engine;
     juce::TextButton prevTrack { "<" }, nextTrack { ">" }, playButton { "Play" }, recordButton { "Record" };
-    juce::Label title, position, help;
+    juce::Label title, position, help, lengthLabel;
+    LengthControl lengthControl { engine };
+    LockLane lockLane;
+    int shownScene = -1;
     juce::Rectangle<int> grid;
     int lowestNote = 36;
     bool followNotes = true;
