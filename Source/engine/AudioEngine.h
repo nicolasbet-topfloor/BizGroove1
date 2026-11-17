@@ -88,6 +88,14 @@ public:
     /** A step held down (on screen): knobs turned meanwhile lock their value on it. -1 = none. */
     std::atomic<int> heldStep { -1 };
 
+    /** Live grains: the last seconds of the sound card's input, kept while a Sampler grains it. */
+    static constexpr double liveRingSeconds = 10.0;
+    /** Message thread: the live ring, oldest sample first (to keep it as a Sampler's recording). */
+    bool copyLiveRing (juce::AudioBuffer<float>& out, double& rate) const;
+    /** Message thread: the live ring for the screen: the samples and where the next one goes. */
+    const juce::AudioBuffer<float>& getLiveRing() const { return liveRing; }
+    int getLiveRingHead() const { return liveRingHead.load(); }
+
     /** Bumped when a lock is written, so the screens redraw. */
     std::atomic<int> lockEdits { 0 };
 
@@ -193,6 +201,11 @@ private:
     const float* buildModulator (const VocoderSettings& s, int numSamples);
     void runLfos (int numSamples, bool playing, double bpm);
     void runLocks (bool playing);
+    void renderGrains (Track& tr, const juce::MidiBuffer& midi, int numSamples, bool& held);
+    juce::MidiBuffer grainMidi;
+    std::array<bool, numTracks> grainHeld {};   // the held note of each Sampler's Grain mode, sounding now
+    juce::AudioBuffer<float> liveRing;
+    std::atomic<int> liveRingHead { 0 };
 
     // The knobs the steps' locks moved, per track, and where they were before, to put them back.
     struct LockHeld { int target = -1, drum = -1; float base = 0.0f, written = 0.0f; };
