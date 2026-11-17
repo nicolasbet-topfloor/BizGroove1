@@ -12,20 +12,20 @@ Song::Song()
     auto& first = scene (0);
 
     // Track 1 (synth): a bass line.
-    constexpr int bassNotes[numSteps] = { 36, 36, 48, 36, 39, 36, 46, 36, 36, 36, 48, 36, 43, 41, 39, 34 };
-    constexpr bool bassOn[numSteps]   = { true, false, true, false, true, false, true, true,
+    constexpr int bassNotes[stepsPerBar] = { 36, 36, 48, 36, 39, 36, 46, 36, 36, 36, 48, 36, 43, 41, 39, 34 };
+    constexpr bool bassOn[stepsPerBar]   = { true, false, true, false, true, false, true, true,
                                           true, false, true, false, true, true, true, false };
-    for (int i = 0; i < numSteps; ++i)
+    for (int i = 0; i < stepsPerBar; ++i)
     {
         first.tracks[0].steps[(size_t) i].on.store (bassOn[i]);
         first.tracks[0].steps[(size_t) i].note.store (bassNotes[i]);
     }
 
     // Track 2 (drums): kick on the beats, snare on 2 and 4, closed hi-hat on the off-beats.
-    auto lane = [&first] (int drum, std::uint16_t bits) { first.tracks[1].drumLanes[(size_t) drum].store (bits); };
+    auto lane = [&first] (int drum, std::uint64_t bits) { first.tracks[1].drumLanes[(size_t) drum].store (bits); };
     auto bitsFor = [] (std::initializer_list<int> stepsOn) {
-        std::uint16_t b = 0;
-        for (int st : stepsOn) b = (std::uint16_t) (b | (1u << st));
+        std::uint64_t b = 0;
+        for (int st : stepsOn) b |= (std::uint64_t) 1 << st;
         return b;
     };
     lane (0, bitsFor ({ 0, 4, 8, 12 }));              // kick
@@ -92,24 +92,14 @@ void Song::copyScene (int from, int to)
     auto& a = scene (from);
     auto& b = scene (to);
     for (int t = 0; t < numTracks; ++t)
-    {
-        for (int i = 0; i < numSteps; ++i)
-            b.tracks[(size_t) t].steps[(size_t) i].copyFrom (a.tracks[(size_t) t].steps[(size_t) i]);
-        for (int d = 0; d < numDrums; ++d)
-            b.tracks[(size_t) t].drumLanes[(size_t) d].store (a.tracks[(size_t) t].drumLanes[(size_t) d].load());
-    }
+        b.tracks[(size_t) t].copyFrom (a.tracks[(size_t) t]);
 }
 
 void Song::clearScene (int index)
 {
     auto& s = scene (index);
     for (auto& t : s.tracks)
-    {
-        for (auto& st : t.steps)
-            st.on.store (false);
-        for (auto& l : t.drumLanes)
-            l.store (0);
-    }
+        t.clear();
 }
 
 bool Song::sceneIsEmpty (int index) const
@@ -151,6 +141,10 @@ void Song::reset()
     step = -1;
     samplesUntilNextStep = 0.0;
     playheadStep.store (-1);
+    for (auto& ts : trackStep) ts.store (-1);
+    trackPos.fill (-1);
+    restart.fill (true);
+    for (auto& ev : stepEvents) ev = {};
     for (auto& row : pending)
         for (auto& p : row) p.active = false;
     for (auto& d : delayed) d.active = false;
@@ -202,7 +196,12 @@ bool Song::startBar()
         }
         timelineBar.store (bar);
         for (int t = 0; t < numTracks; ++t)
-            trackScene[(size_t) t] = juce::jlimit (-1, numScenes - 1, timeline[(size_t) t][(size_t) bar].load());
+        {
+            const int sc = juce::jlimit (-1, numScenes - 1, timeline[(size_t) t][(size_t) bar].load());
+            if (sc != trackScene[(size_t) t])
+                restart[(size_t) t] = true;   // another scene: its pattern starts from its first step
+            trackScene[(size_t) t] = sc;
+        }
 
         // Show (and edit) the scene of the first track that plays this bar.
         for (int t = 0; t < numTracks; ++t)
@@ -248,7 +247,12 @@ bool Song::startBar()
 
     firstBar = false;
     playingScene = currentScene.load();
-    trackScene.fill (playingScene);
+    for (int t = 0; t < numTracks; ++t)
+    {
+        if (trackScene[(size_t) t] != playingScene)
+            restart[(size_t) t] = true;
+        trackScene[(size_t) t] = playingScene;
+    }
     return true;
 }
 
@@ -261,11 +265,12 @@ void Song::emit (std::array<juce::MidiBuffer, numTracks>& out, int track, int sc
     auto& buffer = out[(size_t) track];
     const std::uint16_t skip = skipOnce[(size_t) track][(size_t) stepIndex];   // played live just now
     skipOnce[(size_t) track][(size_t) stepIndex] = 0;
+    stepEvents[(size_t) track] = { stepIndex, sceneIndex };   // its locks, if any, are played now
 
     if (isDrum)
     {
         for (int d = 0; d < numDrums; ++d)
-            if (((pattern.drumLanes[(size_t) d].load() >> stepIndex) & 1u) && ((skip >> d) & 1u) == 0)
+            if (((pattern.drumLanes[(size_t) d].load() >> stepIndex) & 1u) != 0 && ((skip >> d) & 1u) == 0)
                 buffer.addEvent (juce::MidiMessage::noteOn (1, drumBaseNote + d, (juce::uint8) 100), position);
         return;
     }
@@ -301,6 +306,7 @@ bool Song::process (std::array<juce::MidiBuffer, numTracks>& out, int numSamples
 
     // Note-offs and swung hits carried over from the last block.
     numStepStarts = 0;
+    for (auto& ev : stepEvents) ev = {};
     for (int t = 0; t < numTracks; ++t)
     {
         for (auto& p : pending[(size_t) t])
@@ -352,7 +358,7 @@ bool Song::process (std::array<juce::MidiBuffer, numTracks>& out, int numSamples
         if (position >= numSamples)
             break;
 
-        step = (step + 1) % numSteps;
+        step = (step + 1) % stepsPerBar;
         if (step == 0 && ! startBar())
             return false;   // the song has ended
         playheadStep.store (step);
@@ -361,14 +367,21 @@ bool Song::process (std::array<juce::MidiBuffer, numTracks>& out, int numSamples
 
         for (int t = 0; t < numTracks; ++t)
         {
-            // Swing pushes every second 1/16 later, by up to half a step.
-            const double push = (step % 2 == 1) ? swing[(size_t) t].load() * 0.5 * samplesPerStep : 0.0;
-            const double at = position + push;
+            // Each track walks its own pattern, as long as it is, and loops on it.
             const int sc = trackScene[(size_t) t];
+            const int length = juce::isPositiveAndBelow (sc, numScenes) ? scenes[(size_t) sc]->tracks[(size_t) t].getLength() : stepsPerBar;
+            auto& pos = trackPos[(size_t) t];
+            pos = restart[(size_t) t] ? 0 : (pos + 1) % length;
+            restart[(size_t) t] = false;
+            trackStep[(size_t) t].store (pos);
+
+            // Swing pushes every second 1/16 later, by up to half a step.
+            const double push = (pos % 2 == 1) ? swing[(size_t) t].load() * 0.5 * samplesPerStep : 0.0;
+            const double at = position + push;
             if (at < numSamples)
-                emit (out, t, sc, step, (int) at, numSamples, samplesPerStep, isDrumTrack[(size_t) t]);
+                emit (out, t, sc, pos, (int) at, numSamples, samplesPerStep, isDrumTrack[(size_t) t]);
             else
-                delayed[(size_t) t] = { true, step, sc, at - numSamples };
+                delayed[(size_t) t] = { true, pos, sc, at - numSamples };
         }
 
         samplesUntilNextStep += samplesPerStep;
@@ -391,15 +404,16 @@ void Song::recordNote (int track, bool isDrum, int note, int drum, int position,
     const double offset = ((double) position - lastStepStart) / samplesPerStep;   // in steps from the last step
     const int whole = (int) std::floor (offset);
     const int nearest = whole + ((offset - whole) >= 0.5 ? 1 : 0);              // quantise to the nearest 1/16
-    const int target = ((step + nearest) % numSteps + numSteps) % numSteps;
     const bool ahead = nearest > 0;   // the playhead hasn't reached it yet
 
     const int sc = trackScene[(size_t) track] >= 0 ? trackScene[(size_t) track] : playingScene;
     auto& pattern = scenes[(size_t) juce::jlimit (0, numScenes - 1, sc)]->tracks[(size_t) track];
+    const int length = pattern.getLength();
+    const int target = ((juce::jmax (0, trackPos[(size_t) track]) + nearest) % length + length) % length;   // on the track's own pattern
     if (isDrum)
     {
         auto& lane = pattern.drumLanes[(size_t) drum];
-        lane.store ((std::uint16_t) (lane.load() | (1u << target)));
+        lane.store (lane.load() | ((std::uint64_t) 1 << target));
         if (ahead)
             skipOnce[(size_t) track][(size_t) target] = (std::uint16_t) (skipOnce[(size_t) track][(size_t) target] | (1u << drum));
     }
