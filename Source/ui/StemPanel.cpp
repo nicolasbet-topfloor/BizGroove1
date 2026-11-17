@@ -25,15 +25,23 @@ StemStrip::StemStrip (AudioEngine& e, int i, juce::AudioFormatManager& f)
     title.setColour (juce::Label::textColourId, Colours::textDim);
     addAndMakeVisible (title);
 
-    fileLabel.setText ("Drop an audio file", juce::dontSendNotification);
+    fileLabel.setText ("Empty", juce::dontSendNotification);
     fileLabel.setFont (juce::FontOptions (12.0f));
     fileLabel.setColour (juce::Label::textColourId, Colours::textDim);
     fileLabel.setMinimumHorizontalScale (0.7f);
     addAndMakeVisible (fileLabel);
 
     loadButton.setWantsKeyboardFocus (false);
+    loadButton.setTooltip ("Load another loop into this slot");
     loadButton.onClick = [this] { chooseFile(); };
     addAndMakeVisible (loadButton);
+
+    // An empty slot: one big button, so it is clear how a stem gets in.
+    addButton.setWantsKeyboardFocus (false);
+    addButton.setTooltip ("Choose a loop (WAV, AIFF, FLAC or OGG) for this slot. You can also drag one here from your files.");
+    addButton.setColour (juce::TextButton::buttonColourId, Colours::accentDim);
+    addButton.onClick = [this] { chooseFile(); };
+    addAndMakeVisible (addButton);
 
     clearButton.setWantsKeyboardFocus (false);
     clearButton.setTooltip ("Remove this stem");
@@ -131,7 +139,7 @@ void StemStrip::refresh()
 {
     // Show what is loaded (it may have been loaded by opening a project).
     const auto name = engine.stems.getStemName (index);
-    juce::String text = "Drop an audio file";
+    juce::String text = "Empty: add a loop, or drop one here";
     if (name.isNotEmpty())
     {
         const int bars = engine.stems.getStemBars (index);
@@ -150,6 +158,19 @@ void StemStrip::refresh()
         filter.setValue (stem.filter.load(), juce::dontSendNotification);
     muteButton.setToggleState (stem.mute.load(), juce::dontSendNotification);
     soloButton.setToggleState (stem.solo.load(), juce::dontSendNotification);
+
+    // Empty: the Add button takes the place of the volume and filter.
+    const bool empty = ! engine.stems.hasAudio (index);
+    if (empty != shownEmpty || addButton.isVisible() != empty)
+    {
+        shownEmpty = empty;
+        addButton.setVisible (empty);
+        for (juce::Component* c : { (juce::Component*) &volume, (juce::Component*) &filter, (juce::Component*) &filterLabel,
+                                    (juce::Component*) &loadButton, (juce::Component*) &muteButton, (juce::Component*) &soloButton,
+                                    (juce::Component*) &clearButton })
+            c->setVisible (! empty);
+        repaint();
+    }
 
     const float fraction = stem.playFraction.load();
     const float level = stem.level.load();
@@ -200,6 +221,7 @@ void StemStrip::resized()
     soloButton.setBounds (buttons);
     r.removeFromBottom (6);
 
+    addButton.setBounds (getLocalBounds().reduced (14).withTrimmedTop (58));
     volume.setBounds (r.removeFromLeft (36));
     auto knob = r.reduced (4, 0);
     filterLabel.setBounds (knob.removeFromTop (14));
@@ -213,7 +235,7 @@ StemPanel::StemPanel (AudioEngine& engine)
 {
     formats.registerBasicFormats();
 
-    header.setText (juce::String::fromUTF8 ("Stem deck  \xc2\xb7  loops follow the tempo"), juce::dontSendNotification);
+    header.setText (juce::String::fromUTF8 ("Stem deck  \xc2\xb7  up to four loops that play along with the song, in time"), juce::dontSendNotification);
     header.setFont (juce::FontOptions (15.0f, juce::Font::bold));
     addAndMakeVisible (header);
 
@@ -222,7 +244,8 @@ StemPanel::StemPanel (AudioEngine& engine)
 
     guide.setText (juce::String::fromUTF8 (
         "How it works\n"
-        "Drop a loop (WAV, AIFF, FLAC or OGG) on a slot, or press Load. Its length is rounded to 1, 2, 4, 8 or 16 bars "
+        "A stem is a recorded loop (a drum break, a bass line, a vocal, a whole mix) that plays under your tracks. "
+        "Press + Add stem in an empty slot and choose a WAV, AIFF, FLAC or OGG file, or drag one from your files onto a slot. Its length is rounded to 1, 2, 4, 8 or 16 bars "
         "and it is sped up or slowed down to stay in time with the tempo. Press Play and every loaded stem starts with the song.\n\n"
         "With a Native Instruments Traktor Kontrol F1 (in MIDI mode; teach it once in Controllers with Learn all):\n"
         "Faders: stem volume  \xc2\xb7  Knobs: filter (left muffles, right thins)  \xc2\xb7  Stop buttons: mute\n"
