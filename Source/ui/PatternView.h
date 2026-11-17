@@ -51,7 +51,7 @@ public:
                     target = tg;
                     break;
                 }
-        const auto instrument = Presets::instrumentName (engine.selected().type.load());
+        const auto instrument = Presets::instrumentName (engine.selected().soundType());
         for (size_t i = 0; i < all.size() && target < 0; ++i)
             if (ControlTargets::lockable (all[i]) && all[i].group == instrument)
                 target = (int) i;
@@ -185,7 +185,7 @@ private:
     {
         juce::PopupMenu menu;
         const auto& all = targets.all();
-        const auto instrument = Presets::instrumentName (engine.selected().type.load());
+        const auto instrument = Presets::instrumentName (engine.selected().soundType());
         const auto& p = pattern();
         std::map<juce::String, juce::PopupMenu> sections;
         std::vector<juce::String> order;
@@ -552,7 +552,7 @@ private:
     void timerCallback() override
     {
         const int t = engine.selectedTrack.load();
-        const int type = engine.selected().type.load();
+        const int type = engine.selected().soundType();
         if (t != shownTrack || type != shownType || engine.song.currentScene.load() != shownScene)
         {
             shownTrack = t;
