@@ -121,6 +121,19 @@ struct Track
         const int t = type.load();
         return t == drums || (t == external && ext.drums.load());
     }
+    /** A Sampler track's Grain mode: its recording plays as a cloud of grains (the Granular's
+        settings, its pads each at a spot of their own) instead of from start to end. */
+    std::atomic<bool> grainMode { false };
+    std::atomic<bool> grainHold { false };   // Grain mode: a note held on, so the cloud sounds while you edit
+    std::atomic<bool> grainLive { false };   // Grain mode: grains of the sound card's input, as it comes in
+
+    /** The instrument whose settings and knobs this track shows: a Sampler in Grain mode is a Granular. */
+    int soundType() const
+    {
+        const int t = type.load();
+        return t == sampler && grainMode.load() ? (int) granular : t;
+    }
+
     DrumKit kit;
     Sampler samplerEngine;
     ChannelSettings mix;
