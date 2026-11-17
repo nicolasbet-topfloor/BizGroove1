@@ -1,4 +1,5 @@
 #include "LaunchkeyPanel.h"
+#include "GrainEditor.h"
 #include "LookAndFeel.h"
 #include "engine/Project.h"
 #include "engine/Presets.h"
@@ -357,6 +358,10 @@ LaunchkeyPanel::LaunchkeyPanel (AudioEngine& e, const ControlTargets& t)
     editSampleButton.onClick = [this] { openSampleEditor(); };
     addChildComponent (editSampleButton);
 
+    styleHardwareButton (grainButton, "Grain mode: play this recording as a cloud of grains, scrub through it, freeze it, give each pad a spot of its own, or grain the microphone live.", true);
+    grainButton.onClick = [this] { openGrains(); };
+    addChildComponent (grainButton);
+
     engine.keyboardState.addListener (this);
     showTrack();
     startTimerHz (30);
@@ -377,7 +382,7 @@ void LaunchkeyPanel::loadSynth (const SynthDefinition& synth)
 
 void LaunchkeyPanel::showMore()
 {
-    if (! soundSections (engine.selected().type.load()).empty())
+    if (! soundSections (engine.selected().soundType()).empty())
     {
         juce::CallOutBox::launchAsynchronously (std::make_unique<SoundPanel> (engine, targets), moreButton.getBounds(), this);
         return;
@@ -484,10 +489,17 @@ void LaunchkeyPanel::showTrack()
     auto& tr = engine.track (t);
     const int type = juce::jlimit (0, (int) library.size() - 1, tr.type.load());
     const int drum = tr.selectedDrum.load();
+    const bool grain = type == Track::sampler && tr.grainMode.load();   // a Sampler in Grain mode has the Granular's knobs
 
-    if (type != shownType || t != shownTrack)
+    if (type != shownType || t != shownTrack || grain != shownGrain)
     {
-        loadSynth (library[(size_t) type]);
+        loadSynth (library[(size_t) (grain ? (int) Track::granular : type)]);
+        if (grain)   // the grains always come from the recording: the first knob scans it instead of choosing a source
+            knobs[0]->setKnob ({ "Scan", "gran.scan", "Moves the cloud through the recording by itself, forward or back." });
+        shownGrain = grain;
+        grainButton.setVisible (type == Track::sampler);
+        grainButton.setColour (juce::TextButton::buttonColourId, grain ? Colours::accent : juce::Colour (0xff2b2d33));
+        grainButton.setColour (juce::TextButton::textColourOffId, grain ? juce::Colours::black : Colours::text);
 
         // A Sampler track loads and edits its recording; a Drums track puts recordings on the selected pad.
         // A Granular track loads a recording to take its grains from.
@@ -544,7 +556,7 @@ void LaunchkeyPanel::showTrack()
         resized();   // the Text and Oscillators buttons share a row on a Voice track
 
     const auto dot = juce::String::fromUTF8 ("  \xc2\xb7  ");
-    juce::String text = "Track " + juce::String (t + 1) + dot + library[(size_t) type].name;
+    juce::String text = "Track " + juce::String (t + 1) + dot + library[(size_t) type].name + (grain ? " (Grain mode)" : "");
     if (type == Track::drums)
     {
         text << dot << "editing " << DrumKit::drumName (drum);
@@ -598,9 +610,9 @@ void LaunchkeyPanel::chooseSample()
     chooseRecording();
 }
 
-void LaunchkeyPanel::chooseRecording()
+void LaunchkeyPanel::chooseRecording (const juce::String& title)
 {
-    chooser = std::make_unique<juce::FileChooser> ("Load a recording into track " + juce::String (engine.selectedTrack.load() + 1),
+    chooser = std::make_unique<juce::FileChooser> (title.isNotEmpty() ? title : "Load a recording into track " + juce::String (engine.selectedTrack.load() + 1),
                                                    juce::File::getSpecialLocation (juce::File::userMusicDirectory),
                                                    formats.getWildcardForAllFormats());
     chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
@@ -703,6 +715,11 @@ void LaunchkeyPanel::openSampleEditor()
     }
 
     const int t = engine.selectedTrack.load();
+    if (engine.track (t).grainMode.load())
+    {
+        openGrains();   // in Grain mode, Edit opens the grains
+        return;
+    }
     if (engine.track (t).sampleFileData.getSize() == 0)
     {
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Sample editor",
@@ -821,6 +838,7 @@ void LaunchkeyPanel::timerCallback()
     {
         auto& tr = engine.selected();
         if (engine.selectedTrack.load() != shownTrack || tr.type.load() != shownType || tr.selectedDrum.load() != shownDrum
+            || (tr.type.load() == Track::sampler && tr.grainMode.load() != shownGrain)
             || (tr.type.load() == Track::sampler && tr.samplerEngine.getSampleName() != shownSample)
             || (tr.type.load() == Track::drums && tr.kit.getPadSampleName (tr.selectedDrum.load()) != shownSample)
             || (tr.type.load() == Track::external && externalState() != shownExternal)
@@ -953,6 +971,14 @@ void LaunchkeyPanel::resized()
     else
         oscButton.setBounds (right.getX() + 16, controls.getY() + 106, right.getWidth() - 16, 26);
     editSampleButton.setBounds (right.getX() + 22 + halfW, controls.getY() + 106, halfW, 26);
+    if (shownType == Track::sampler)
+    {
+        // Load, Edit and Grains share the row.
+        const int thirdW = (right.getWidth() - 16 - 8) / 3;
+        loadSampleButton.setBounds (right.getX() + 16, controls.getY() + 106, thirdW, 26);
+        editSampleButton.setBounds (right.getX() + 20 + thirdW, controls.getY() + 106, thirdW, 26);
+        grainButton.setBounds (right.getX() + 24 + 2 * thirdW, controls.getY() + 106, thirdW, 26);
+    }
     const bool recordRow = shownType == Track::sampler || shownType == Track::drums || shownType == Track::external;
     if (recordRow)
     {
@@ -995,6 +1021,27 @@ void LaunchkeyPanel::resized()
     keyboard.setBounds (keys);
     keyboard.setKeyWidth ((float) keys.getWidth() / 15.0f);   // 15 white keys in 25
     keyboard.setLowestVisibleKey (lowestKey);
+}
+
+} // namespace bizgroove
+
+namespace bizgroove
+{
+
+void LaunchkeyPanel::openGrains()
+{
+    const int t = engine.selectedTrack.load();
+    juce::DialogWindow::LaunchOptions o;
+    o.content.setOwned (new GrainEditor (engine, targets, t,
+                                         [safe = juce::Component::SafePointer<LaunchkeyPanel> (this)] {
+                                             if (safe != nullptr) safe->chooseRecording();
+                                         }));
+    o.dialogTitle = "Grains - track " + juce::String (t + 1);
+    o.dialogBackgroundColour = Colours::background;
+    o.escapeKeyTriggersCloseButton = true;
+    o.useNativeTitleBar = true;
+    o.resizable = true;
+    o.launchAsync();
 }
 
 } // namespace bizgroove
