@@ -79,6 +79,18 @@ public:
     /** While the LFOs move a track's knobs, "the selected track" means that track, on that thread only. */
     static inline thread_local int trackOverride = -1;
 
+    /** While a lock plays a drum's knob, "the selected drum" means that drum, on that thread only. */
+    static inline thread_local int drumOverride = -1;
+
+    /** Which bar of the selected track's pattern the step buttons and pads show and edit (0 .. 3). */
+    std::atomic<int> stepPage { 0 };
+
+    /** A step held down (on screen): knobs turned meanwhile lock their value on it. -1 = none. */
+    std::atomic<int> heldStep { -1 };
+
+    /** Bumped when a lock is written, so the screens redraw. */
+    std::atomic<int> lockEdits { 0 };
+
     /** The knobs the LFOs can move: set once by the app (and the tests). */
     std::atomic<const ControlTargets*> lfoTargets { nullptr };
 
@@ -180,6 +192,11 @@ private:
     int tapPrevSamples = 0;
     const float* buildModulator (const VocoderSettings& s, int numSamples);
     void runLfos (int numSamples, bool playing, double bpm);
+    void runLocks (bool playing);
+
+    // The knobs the steps' locks moved, per track, and where they were before, to put them back.
+    struct LockHeld { int target = -1, drum = -1; float base = 0.0f, written = 0.0f; };
+    std::array<std::array<LockHeld, Song::maxLocks>, numTracks> lockHeld {};
     double currentRate = 44100.0;
     PerformProcessor performFx;
     juce::int64 freeSamples = 0;   // always running, for effects that move with the beat while stopped
