@@ -1,6 +1,7 @@
 #include "ControlTargets.h"
 #include "AudioEngine.h"
 #include "SynthLibrary.h"
+#include <algorithm>
 
 namespace bizgroove
 {
@@ -26,7 +27,7 @@ namespace
     void toggle (std::atomic<bool>& flag) { flag.store (! flag.load()); }
 }
 
-ControlTargets::ControlTargets (AudioEngine& e)
+ControlTargets::ControlTargets (AudioEngine& e) : engine (&e)
 {
     // ---- Transport
     add ("transport.playstop", "Play / stop", "Transport", TargetKind::toggle,
@@ -485,7 +486,8 @@ ControlTargets::ControlTargets (AudioEngine& e)
     // ---- Drums: the selected drum of the selected track
     auto dp = [&e]() -> DrumKit::DrumParams& {
         auto& tr = e.selected();
-        return tr.kit.drums[(size_t) juce::jlimit (0, DrumKit::numDrums - 1, tr.selectedDrum.load())];
+        const int d = AudioEngine::drumOverride >= 0 ? AudioEngine::drumOverride : tr.selectedDrum.load();
+        return tr.kit.drums[(size_t) juce::jlimit (0, DrumKit::numDrums - 1, d)];
     };
     add ("drum.pitch", "Drum pitch", "Drums", TargetKind::continuous,
          [dp] (float v) { dp().pitch.store (std::round (linMap (v, -12.0f, 12.0f))); },
@@ -1017,9 +1019,21 @@ ControlTargets::ControlTargets (AudioEngine& e)
     }
 
     // ---- Steps
-    for (int i = 0; i < Song::numSteps; ++i)
-        add ("seq.step." + juce::String (i + 1), "Step " + juce::String (i + 1) + " on/off", "Steps", TargetKind::toggle,
-             [&e, i] (float) { e.toggleStep (i); });
+    for (int i = 0; i < Song::stepsPerBar; ++i)   // the bar shown: Bar 2 makes Step 1 the 17th step
+        add ("seq.step." + juce::String (i + 1), "Step " + juce::String (i + 1) + " on/off (hold it and turn knobs to lock them)", "Steps",
+             TargetKind::momentary,
+             [this, &e, i] (float v) {
+                 const int step = juce::jlimit (0, 3, e.stepPage.load()) * Song::stepsPerBar + i;
+                 if (v >= 0.5f)
+                     beginStepHold (step);   // held: knobs turned now lock on it
+                 else if (e.heldStep.load() == step && ! endStepHold())
+                     e.toggleStep (step);    // let go without turning a knob: it switches on or off
+             });
+    add ("seq.page.next", "Steps: next bar", "Steps", TargetKind::trigger,
+         [&e] (float) {
+             const int bars = (e.song.scene (e.song.currentScene.load()).tracks[(size_t) e.selectedTrack.load()].getLength() + Song::stepsPerBar - 1) / Song::stepsPerBar;
+             e.stepPage.store ((e.stepPage.load() + 1) % juce::jmax (1, bars));
+         });
     add ("pads.mode", "Pads: play drums / switch steps", "Steps", TargetKind::toggle,
          [&e] (float) { toggle (e.padsPlay); });
 
@@ -1063,8 +1077,90 @@ void ControlTargets::add (const juce::String& id, const juce::String& name, cons
                           TargetKind kind, std::function<void (float)> set,
                           std::function<float()> get, std::function<juce::String (float)> show)
 {
-    index[id] = targets.size();
+    const size_t i = targets.size();
+    index[id] = i;
+    if (kind == TargetKind::continuous && set)
+        set = [this, i, raw = std::move (set)] (float v) { noteKnob (i, v); raw (v); };   // a held step, or recording, locks it
     targets.push_back ({ id, name, group, kind, std::move (set), std::move (get), std::move (show) });
+}
+
+void ControlTargets::noteKnob (size_t i, float v) const
+{
+    if (AudioEngine::trackOverride >= 0 || restoring || engine == nullptr || i >= targets.size())
+        return;   // the audio thread's LFOs and locks, or a knob being put back
+    const auto& t = targets[i];
+    if (! lockable (t))
+        return;
+    auto& e = *engine;
+    const int held = e.heldStep.load();
+    const bool recording = e.recordNotes.load() && e.transport.playing.load();
+    if (held < 0 && ! recording)
+        return;
+    const int track = e.selectedTrack.load();
+    const int drum = t.id.startsWith ("drum.") ? e.track (track).selectedDrum.load() : -1;
+    auto& pattern = e.song.scene (e.song.currentScene.load()).tracks[(size_t) track];
+    if (held >= 0)
+    {
+        {
+            const juce::SpinLock::ScopedLockType sl (holdLock);
+            const bool known = std::any_of (touched.begin(), touched.end(),
+                                            [&] (const Touched& h) { return h.target == (int) i && h.drum == drum; });
+            if (! known && t.get)
+                touched.push_back ({ (int) i, drum, t.get() });
+        }
+        pattern.setLock (held, (int) i, drum, v);
+        lockWritten.store (true);
+    }
+    else if (const int st = e.song.trackStep[(size_t) track].load(); st >= 0)
+        pattern.setLock (st, (int) i, drum, v);
+    ++e.lockEdits;
+}
+
+void ControlTargets::beginStepHold (int step) const
+{
+    endStepHold();
+    if (! juce::isPositiveAndBelow (step, Song::numSteps))
+        return;
+    lockWritten.store (false);
+    engine->heldStep.store (step);
+
+    // The knobs show the step's locks while it is held.
+    const auto& pattern = engine->song.scene (engine->song.currentScene.load()).tracks[(size_t) engine->selectedTrack.load()];
+    restoring = true;
+    for (const auto& l : pattern.locks[(size_t) step])
+    {
+        const int tg = l.target.load();
+        if (! juce::isPositiveAndBelow (tg, (int) targets.size()) || ! lockable (targets[(size_t) tg]))
+            continue;
+        AudioEngine::drumOverride = l.drum.load();
+        {
+            const juce::SpinLock::ScopedLockType sl (holdLock);
+            touched.push_back ({ tg, l.drum.load(), targets[(size_t) tg].get() });
+        }
+        targets[(size_t) tg].set (l.value.load());
+        AudioEngine::drumOverride = -1;
+    }
+    restoring = false;
+}
+
+bool ControlTargets::endStepHold() const
+{
+    engine->heldStep.store (-1);
+    std::vector<Touched> list;
+    {
+        const juce::SpinLock::ScopedLockType sl (holdLock);
+        list.swap (touched);
+    }
+    restoring = true;
+    for (const auto& h : list)   // the knobs go back to where they were before the step was held
+        if (juce::isPositiveAndBelow (h.target, (int) targets.size()))
+        {
+            AudioEngine::drumOverride = h.drum;
+            targets[(size_t) h.target].set (h.base);
+            AudioEngine::drumOverride = -1;
+        }
+    restoring = false;
+    return lockWritten.exchange (false);
 }
 
 float ControlTargets::getValue (const juce::String& id) const
