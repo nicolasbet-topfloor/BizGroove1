@@ -35,6 +35,8 @@ private:
 
     juce::Label title, fileLabel;
     juce::TextButton loadButton { "Load" }, clearButton { "x" };
+    juce::TextButton addButton { "+ Add stem" };
+    bool shownEmpty = false;
     juce::TextButton muteButton { "M" }, soloButton { "S" };
     juce::Slider volume { juce::Slider::LinearVertical, juce::Slider::NoTextBox };
     juce::Slider filter { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
