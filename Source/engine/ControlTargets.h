@@ -58,13 +58,32 @@ public:
     float getValue (const juce::String& id) const;
     juce::String describe (const juce::String& id) const;
 
+    /** Parameter locks. While a step is held, the knobs of the selected track that are
+        turned (on screen or on a controller) lock their value on that step; letting go of
+        the step puts them back where they were. While recording, knobs turned lock their
+        value on the step playing. */
+    void beginStepHold (int step) const;
+    bool endStepHold() const;   // true if a knob was locked while the step was held
+
+    /** The knobs a step can lock: the same ones an LFO can move. */
+    static bool lockable (const Target& t) { return lfoCanMove (t); }
+
 private:
     void add (const juce::String& id, const juce::String& name, const juce::String& group,
               TargetKind kind, std::function<void (float)> set,
               std::function<float()> get = {}, std::function<juce::String (float)> show = {});
 
+    void noteKnob (size_t target, float value01) const;
+
     std::vector<Target> targets;
     std::map<juce::String, size_t> index;
+    AudioEngine* engine = nullptr;
+
+    struct Touched { int target = -1, drum = -1; float base = 0.0f; };
+    mutable juce::SpinLock holdLock;
+    mutable std::vector<Touched> touched;   // knobs turned while a step is held, and where they were
+    static inline thread_local bool restoring = false;
+    mutable std::atomic<bool> lockWritten { false };
 };
 
 } // namespace bizgroove
