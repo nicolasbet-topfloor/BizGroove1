@@ -368,3 +368,366 @@ public:
                 g.drawLine (juce::Line<float> (touch.trail[i - 1], touch.trail[i]), 3.0f);
             }
             g.setColour (Colours::accent.withAlpha (0.9f));
+            g.fillEllipse (juce::Rectangle<float> (44.0f, 44.0f).withCentre (touch.at));
+            g.setColour (Colours::accent.withAlpha (0.4f));
+            g.drawEllipse (juce::Rectangle<float> (70.0f, 70.0f).withCentre (touch.at), 2.0f);
+        }
+
+        g.setColour (Colours::textDim);
+        g.setFont (juce::FontOptions (12.0f));
+        const auto foot = r.reduced (12.0f, 8.0f).removeFromBottom (16.0f);
+        const juce::String across = m == Mode::grains ? "position" : m == Mode::drums ? "drum" : m == Mode::chops ? "slice" : "note";
+        g.drawText (across + juce::String::fromUTF8 (" \xe2\x86\x92"), foot, juce::Justification::centredLeft);
+        if (m != Mode::chops)
+            g.drawText (juce::String::fromUTF8 ("\xe2\x86\x91 ") + (m == Mode::grains ? "grain size" : "tone"), foot, juce::Justification::centredRight);
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        auto& touch = touches[e.source.getIndex()];
+        touch.at = e.position;
+        touch.trail.assign (1, e.position);
+        touch.cell = -1;
+        touch.first = touches.size() == 1;
+        move (touch, e.position);
+        repaint();
+    }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        const auto it = touches.find (e.source.getIndex());
+        if (it == touches.end())
+            return;
+        auto& touch = it->second;
+        touch.at = e.position;
+        touch.trail.push_back (e.position);
+        if (touch.trail.size() > 28)
+            touch.trail.erase (touch.trail.begin());
+        move (touch, e.position);
+        repaint();
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        const auto it = touches.find (e.source.getIndex());
+        if (it == touches.end())
+            return;
+        stop (it->second);
+        touches.erase (it);
+        if (touches.empty())
+            engine.track (track).grainHold.store (false);
+        repaint();
+    }
+
+private:
+    struct Touch
+    {
+        juce::Point<float> at;
+        std::vector<juce::Point<float>> trail;
+        int cell = -1, note = -1, channel = 1;
+        bool first = true;
+    };
+
+    // ---------------------------------------------------------------- cells
+    int cellCount() const
+    {
+        switch (mode())
+        {
+            case Mode::drums: return 4;
+            case Mode::chops: return 16;
+            default:          return role == Role::bass ? 8 : 10;
+        }
+    }
+
+    juce::Rectangle<float> cellBounds (int c) const
+    {
+        auto area = getLocalBounds().toFloat().reduced (8.0f).withTrimmedBottom (20.0f);
+        if (mode() == Mode::chops)
+        {
+            const float w = area.getWidth() / 4.0f, h = area.getHeight() / 4.0f;
+            return { area.getX() + (float) (c % 4) * w, area.getY() + (float) (c / 4) * h, w, h };
+        }
+        const int n = cellCount();
+        const float w = area.getWidth() / (float) n;
+        return juce::Rectangle<float> (area.getX() + (float) c * w, area.getY(), w, area.getHeight()).reduced (2.0f, 0.0f);
+    }
+
+    int cellAt (juce::Point<float> p) const
+    {
+        for (int c = 0; c < cellCount(); ++c)
+            if (cellBounds (c).expanded (2.0f, 0.0f).contains (p))
+                return c;
+        const auto area = getLocalBounds().toFloat();
+        if (mode() != Mode::chops)   // past the edges: the first or last column
+            return p.x < area.getCentreX() ? 0 : cellCount() - 1;
+        return -1;
+    }
+
+    int scaleNote (int degree, int octave) const
+    {
+        const int n = (int) style.scale.size();
+        const int oct = degree >= 0 ? degree / n : -((-degree + n - 1) / n);
+        return style.root + style.scale[(size_t) (degree - oct * n)] + 12 * (oct + octave);
+    }
+
+    int baseOctave() const
+    {
+        switch (role)
+        {
+            case Role::bass: return 0;
+            case Role::rap:  return 1;
+            default:         return 2;
+        }
+    }
+
+    /** The drum a lane plays: one the part already uses, or the lane's first. */
+    int laneDrum (int l) const
+    {
+        for (int b = 0; b < numBars; ++b)
+            for (int d : lanes()[(size_t) l].drums)
+                if (engine.song.scene (b).tracks[(size_t) track].drumLanes[(size_t) d].load() != 0)
+                    return d;
+        return lanes()[(size_t) l].drums.front();
+    }
+
+    int noteFor (int c) const
+    {
+        switch (mode())
+        {
+            case Mode::drums: return Song::drumBaseNote + laneDrum (c);
+            case Mode::chops: return Sampler::rootNote + c;
+            default:          return scaleNote (c, baseOctave());
+        }
+    }
+
+    juce::String cellName (int c) const
+    {
+        switch (mode())
+        {
+            case Mode::drums: return lanes()[(size_t) c].name;
+            case Mode::chops: return juce::String (c + 1);
+            default:          return juce::MidiMessage::getMidiNoteName (noteFor (c), true, false, 3);
+        }
+    }
+
+    /** The cells the loop is playing right now, lit in teal. */
+    std::vector<bool> soundingCells() const
+    {
+        std::vector<bool> on ((size_t) cellCount(), false);
+        const int step = engine.song.trackStep[(size_t) track].load();
+        if (! engine.transport.playing.load() || step < 0)
+            return on;
+        const auto& p = engine.song.scene (engine.song.chainPosition.load()).tracks[(size_t) track];
+        if (mode() == Mode::drums)
+        {
+            for (int l = 0; l < 4; ++l)
+                for (int d : lanes()[(size_t) l].drums)
+                    if (((p.drumLanes[(size_t) d].load() >> step) & 1u) != 0)
+                        on[(size_t) l] = true;
+            return on;
+        }
+        // A held note keeps its column lit.
+        for (int s = 0; s <= step; ++s)
+        {
+            const auto& st = p.steps[(size_t) s];
+            if (! st.on.load()) continue;
+            const float len = st.length.load() > 0.0f ? st.length.load() : 0.5f;
+            if ((float) s + len <= (float) step) continue;
+            for (int c = 0; c < cellCount(); ++c)
+                if (noteFor (c) == st.note.load())
+                    on[(size_t) c] = true;
+        }
+        return on;
+    }
+
+    // ---------------------------------------------------------------- playing
+    void move (Touch& touch, juce::Point<float> p)
+    {
+        const auto area = getLocalBounds().toFloat();
+        const float x = juce::jlimit (0.0f, 1.0f, (p.x - area.getX()) / area.getWidth());
+        const float y = juce::jlimit (0.0f, 1.0f, 1.0f - (p.y - area.getY()) / area.getHeight());
+        const auto m = mode();
+
+        if (m == Mode::grains)
+        {
+            if (touch.first)
+            {
+                // The cloud follows the finger, through the knobs' targets: with Rec on, the moves are recorded.
+                if (auto* pos = targets.find ("gran.position")) pos->set (x);
+                if (auto* size = targets.find ("gran.size")) size->set (0.15f + 0.8f * y);
+                engine.track (track).grainHold.store (true);
+            }
+            else
+            {
+                // Another finger: the pad spot nearest it.
+                const auto& pads = engine.track (track).granularParams.pads;
+                int best = 0;
+                for (int i = 1; i < GranularParams::numPads; ++i)
+                    if (std::abs (pads[(size_t) i].position.load() - x) < std::abs (pads[(size_t) best].position.load() - x))
+                        best = i;
+                if (best != touch.cell)
+                {
+                    stop (touch);
+                    touch.cell = best;
+                    start (touch, Sampler::padBase + best, 10, 0.85f);
+                }
+            }
+            return;
+        }
+
+        const int c = cellAt (p);
+        if (c != touch.cell)
+        {
+            stop (touch);
+            touch.cell = c;
+            if (c >= 0)
+                start (touch, noteFor (c), m == Mode::drums ? 10 : 1, 0.6f + 0.4f * y);
+        }
+        if (touch.first && m != Mode::chops && onTone)
+            onTone (y);
+    }
+
+    void start (Touch& touch, int note, int channel, float velocity)
+    {
+        touch.note = note;
+        touch.channel = channel;
+        engine.keyboardState.noteOn (channel, note, velocity);
+        lastRollStep = engine.song.trackStep[(size_t) track].load();
+    }
+
+    void stop (Touch& touch)
+    {
+        if (touch.note >= 0)
+            engine.keyboardState.noteOff (touch.channel, touch.note, 0.0f);
+        touch.note = -1;
+    }
+
+    void timerCallback() override
+    {
+        // Drums held while the loop plays: a roll, one hit per 1/16.
+        if (mode() == Mode::drums && engine.transport.playing.load() && ! touches.empty())
+        {
+            const int step = engine.song.trackStep[(size_t) track].load();
+            if (step != lastRollStep)
+            {
+                lastRollStep = step;
+                for (auto& [index, touch] : touches)
+                    if (touch.note >= 0)
+                    {
+                        engine.keyboardState.noteOff (touch.channel, touch.note, 0.0f);
+                        engine.keyboardState.noteOn (touch.channel, touch.note, 0.85f);
+                    }
+            }
+        }
+        if (mode() == Mode::grains)
+            updatePeaks();
+        if (isShowing())
+            repaint();
+    }
+
+    // ---------------------------------------------------------------- grains
+    void updatePeaks()
+    {
+        constexpr int bins = 600;
+        auto& tr = engine.track (track);
+        if (tr.grainLive.load())
+        {
+            const auto& ring = engine.getLiveRing();
+            const int len = ring.getNumSamples(), head = engine.getLiveRingHead();
+            if (len < bins) return;
+            peaks.assign ((size_t) bins, 0.0f);
+            const float* l = ring.getReadPointer (0);
+            for (int b = 0; b < bins; ++b)
+                for (int i = b * len / bins; i < (b + 1) * len / bins; i += 16)
+                    peaks[(size_t) b] = juce::jmax (peaks[(size_t) b], std::abs (l[(head + i) % len]));
+            shownSample = "(live)";
+            return;
+        }
+        const auto name = tr.samplerEngine.getSampleName() + juce::String (tr.samplerEngine.getSampleSeconds());
+        if (name == shownSample) return;
+        shownSample = name;
+        peaks.clear();
+        tr.samplerEngine.useSample ([this] (const juce::AudioBuffer<float>& audio, double) {
+            const int len = audio.getNumSamples();
+            if (len < bins) return;
+            peaks.assign ((size_t) bins, 0.0f);
+            const float* l = audio.getReadPointer (0);
+            const int stride = juce::jmax (1, len / bins / 48);
+            for (int b = 0; b < bins; ++b)
+                for (int i = b * len / bins; i < (b + 1) * len / bins; i += stride)
+                    peaks[(size_t) b] = juce::jmax (peaks[(size_t) b], std::abs (l[i]));
+        });
+    }
+
+    void paintGrains (juce::Graphics& g, juce::Rectangle<float> r)
+    {
+        auto area = r.reduced (10.0f).withTrimmedBottom (20.0f);
+        auto& tr = engine.track (track);
+        const auto& gp = tr.granularParams;
+        const float mid = area.getCentreY() + 8.0f, half = (area.getHeight() - 24.0f) * 0.48f;
+        g.setColour (tr.grainLive.load() ? Colours::playhead.withAlpha (0.6f) : Colours::textDim.withAlpha (0.75f));
+        const int bins = (int) peaks.size();
+        for (int x = 0; x < (int) area.getWidth() && bins > 0; x += 2)
+        {
+            const float v = peaks[(size_t) juce::jlimit (0, bins - 1, x * bins / (int) area.getWidth())];
+            g.fillRect (area.getX() + (float) x, mid - v * half, 1.5f, juce::jmax (1.0f, 2.0f * v * half));
+        }
+        // The pads' spots, numbered along the top.
+        g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+        for (int i = 0; i < GranularParams::numPads; ++i)
+        {
+            const float px = area.getX() + gp.pads[(size_t) i].position.load() * area.getWidth();
+            const auto tag = juce::Rectangle<float> (px - 9.0f, area.getY(), 18.0f, 14.0f);
+            g.setColour (Colours::panelEdge.brighter (0.2f));
+            g.fillRoundedRectangle (tag, 3.0f);
+            g.setColour (Colours::text);
+            g.drawText (juce::String (i + 1), tag, juce::Justification::centred);
+        }
+        // The cloud: where it is, and how wide.
+        const float pos = tr.grainHold.load() && gp.shownPosition.load() >= 0.0f ? gp.shownPosition.load() : gp.position.load();
+        const float w = juce::jmax (4.0f, gp.spread.load() * area.getWidth());
+        g.setColour (Colours::accent.withAlpha (0.16f));
+        g.fillRect (juce::Rectangle<float> (area.getX() + pos * area.getWidth() - w * 0.5f, area.getY() + 18.0f, w, area.getHeight() - 18.0f));
+        g.setColour (Colours::accent);
+        g.fillRect (juce::Rectangle<float> (area.getX() + gp.position.load() * area.getWidth() - 1.5f, area.getY() + 18.0f, 3.0f, area.getHeight() - 18.0f));
+        if (gp.freeze.load())
+        {
+            g.setColour (Colours::playhead);
+            g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+            g.drawText ("FROZEN", area.withTrimmedTop (20.0f).withHeight (18.0f), juce::Justification::centredRight);
+        }
+        if (bins == 0)
+        {
+            g.setColour (Colours::textDim);
+            g.setFont (juce::FontOptions (14.0f));
+            g.drawText ("Load a recording, or switch on Live input", area, juce::Justification::centred);
+        }
+    }
+
+    AudioEngine& engine;
+    const ControlTargets& targets;
+    const Style& style;
+    const int track;
+    const Role role;
+    std::map<int, Touch> touches;
+    int lastRollStep = -1;
+    std::vector<float> peaks;
+    juce::String shownSample;
+};
+
+// ============================================================================ a track's tile, sideways
+/** Sideways, for playing live: one tile per track. A tap mutes it or brings it back;
+    the bar along the bottom shows how loud it plays. */
+class LiveTile final : public juce::Component
+{
+public:
+    LiveTile (AudioEngine& e, const Style& s, int t) : engine (e), style (s), track (t) {}
+
+    std::function<juce::String()> soundName;
+    std::function<void()> onChange;
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto& tr = engine.track (track);
+        const bool muted = tr.mute.load();
+        auto r = getLocalBounds().toFloat().reduced (3.0f);
