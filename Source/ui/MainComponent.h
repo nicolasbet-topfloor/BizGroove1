@@ -133,7 +133,7 @@ private:
     LaunchkeyPanel panel { engine, controlTargets };
     StemPanel stemPanel { engine };
     SongView songView { engine };
-    PatternView patternView { engine };
+    PatternView patternView { engine, controlTargets };
     MixerView mixerView { engine };
     SessionBar sessionBar { engine };
     int shownSoundTrack = -1, shownSoundType = -1;
