@@ -120,9 +120,12 @@ public:
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
     void filesDropped (const juce::StringArray& files, int, int) override;
 
+    /** Asks for a recording for the selected track (a sound that takes its grains from one, with none loaded). */
+    void chooseRecording (const juce::String& title = {});
+
 private:
     void chooseSample();
-    void chooseRecording();
+    void openGrains();
     void showPadMenu();
     void loadSample (const juce::File& file);
     void timerCallback() override;
@@ -155,6 +158,8 @@ private:
     juce::TextButton lfoButton { "LFO" };
     juce::String shownVoiceText;
     juce::TextButton loadSampleButton { "Load sample..." };
+    juce::TextButton grainButton { "Grains" };
+    bool shownGrain = false;
     juce::TextButton editSampleButton { "Edit..." }, recSourceButton { "Rec: mic / line in" }, padsModeButton { "Pads: play" };
     juce::TextButton holdButton { "Hold" };
     bool shownRecording = false;
