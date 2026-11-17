@@ -44,6 +44,14 @@ jobs:
           # Ad-hoc signature so Apple Silicon will launch it; not notarised.
           codesign --force --deep --sign - dist/BizGroove.app
           ditto -c -k --keepParent dist/BizGroove.app dist/BizGroove-macOS.zip
+          # The light apps, in one folder.
+          LITE="dist/BizGroove Light Apps"
+          mkdir -p "$LITE"
+          for app in BizHop BizWave BizTechno BizNoise BizSampler; do
+            cp -R "build/${app}_artefacts/Release/${app}.app" "$LITE/"
+            codesign --force --deep --sign - "$LITE/${app}.app"
+          done
+          ditto -c -k --keepParent "$LITE" dist/BizLiteApps-macOS.zip
       - name: Verify universal binary and macOS 10.13 target
         if: runner.os == 'macOS'
         run: |
@@ -70,11 +78,58 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Compress-Archive -Path build/BizGroove_artefacts/Release/BizGroove.exe -DestinationPath dist/BizGroove-Windows.zip
+          $lite = 'BizHop','BizWave','BizTechno','BizNoise','BizSampler' | ForEach-Object { "build/$($_)_artefacts/Release/$($_).exe" }
+          Compress-Archive -Path $lite -DestinationPath dist/BizLiteApps-Windows.zip
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artefact }}
-          path: dist/*.zip
+          path: dist/${{ matrix.artefact }}.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BizLiteApps-${{ matrix.name }}
+          path: dist/BizLiteApps-${{ matrix.name }}.zip
+
+  ios:
+    # The light apps for iPhone and iPad (iOS 15 and later: every iPhone from the 11 on).
+    # Unsigned: Sideloadly (Windows or Mac) signs them with a free Apple ID when it installs them.
+    name: iPhone and iPad
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (iOS)
+        run: >
+          cmake -B build-ios -G Xcode
+          -DCMAKE_SYSTEM_NAME=iOS
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
+          -DCMAKE_OSX_ARCHITECTURES=arm64
+          -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
+          -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO
+
+      - name: Build
+        run: |
+          for app in BizHop BizWave BizTechno BizNoise BizSampler; do
+            cmake --build build-ios --config Release --target "$app" -- -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+          done
+
+      - name: Package (unsigned .ipa files)
+        run: |
+          mkdir -p dist
+          for app in BizHop BizWave BizTechno BizNoise BizSampler; do
+            APP=$(find build-ios -type d -name "${app}.app" -path "*Release*" | head -1)
+            echo "$app: $APP"
+            if [ -z "$APP" ]; then echo "::error::${app}.app was not built"; exit 1; fi
+            rm -rf Payload && mkdir Payload && cp -R "$APP" Payload/
+            zip -qry "dist/${app}.ipa" Payload
+          done
+          cd dist && zip -q BizLiteApps-iOS.zip *.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BizLiteApps-iOS
+          path: dist/BizLiteApps-iOS.zip
 
   publish:
     # Attach the zips to the release (published in the browser, or a pushed v* tag).
