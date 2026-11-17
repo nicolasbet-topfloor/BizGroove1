@@ -41,6 +41,8 @@ set(ENGINE_SOURCES
 set(COMMON_DEFS JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 BIZGROOVE_VERSION="${PROJECT_VERSION}")
 
 # ---------------------------------------------------------------- app
+# BizGroove itself is for computers; an iPhone or iPad build (CMAKE_SYSTEM_NAME iOS) makes the light apps only.
+if(NOT IOS)
 juce_add_gui_app(BizGroove
     PRODUCT_NAME "BizGroove"
     COMPANY_NAME "BizGroove"
@@ -76,8 +78,49 @@ target_link_libraries(BizGroove
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+endif()
+
+# ---------------------------------------------------------------- light apps
+# BizHop, BizWave, BizTechno, BizNoise and BizSampler: the same engine, one window with a few
+# tracks and a Generate button. BIZ_LITE_STYLE picks the app (Source/lite/LiteStyle.h).
+function(add_lite_app target style bundle)
+    juce_add_gui_app(${target}
+        PRODUCT_NAME "${target}"
+        COMPANY_NAME "BizGroove"
+        BUNDLE_ID "org.bizgroove.${bundle}"
+        VERSION ${PROJECT_VERSION}
+        MICROPHONE_PERMISSION_ENABLED TRUE
+        MICROPHONE_PERMISSION_TEXT "${target} uses the microphone or line in for live grains."
+        # iPhone and iPad: the whole screen, upright or sideways, and its songs in the Files app.
+        TARGETED_DEVICE_FAMILY "1,2"
+        STATUS_BAR_HIDDEN TRUE
+        REQUIRES_FULL_SCREEN TRUE
+        FILE_SHARING_ENABLED TRUE
+        IPHONE_SCREEN_ORIENTATIONS UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        IPAD_SCREEN_ORIENTATIONS UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight)
+    target_sources(${target} PRIVATE ${ENGINE_SOURCES} Source/lite/LiteApp.cpp Source/ui/LookAndFeel.cpp)
+    target_include_directories(${target} PRIVATE Source)
+    target_compile_definitions(${target} PRIVATE ${COMMON_DEFS} BIZ_LITE_STYLE=${style})
+    target_link_libraries(${target}
+        PRIVATE
+            juce::juce_gui_extra
+            juce::juce_audio_utils
+            juce::juce_audio_devices
+            juce::juce_dsp
+        PUBLIC
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_lto_flags
+            juce::juce_recommended_warning_flags)
+endfunction()
+
+add_lite_app(BizHop 0 bizhop)
+add_lite_app(BizWave 1 bizwave)
+add_lite_app(BizTechno 2 biztechno)
+add_lite_app(BizNoise 3 biznoise)
+add_lite_app(BizSampler 4 bizsampler)
 
 # ---------------------------------------------------------------- tests
+if(NOT IOS)
 juce_add_console_app(BizGrooveTests PRODUCT_NAME "BizGrooveTests")
 target_sources(BizGrooveTests PRIVATE ${ENGINE_SOURCES} Tests/EngineTests.cpp)
 target_include_directories(BizGrooveTests PRIVATE Source)
@@ -94,3 +137,4 @@ target_link_libraries(BizGrooveTests
 
 enable_testing()
 add_test(NAME EngineTests COMMAND BizGrooveTests)
+endif()
