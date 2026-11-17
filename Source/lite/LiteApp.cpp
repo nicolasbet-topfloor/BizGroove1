@@ -1028,3 +1028,353 @@ public:
         {
             pads[t]->setBounds (padArea);
             stepRows[t]->setBounds (stepsArea);
+        }
+        soundButtons[0].setBounds (soundArea.withWidth (soundArea.getWidth() / 2).reduced (2, 2));
+        soundButtons[1].setBounds (soundArea.withTrimmedLeft (soundArea.getWidth() / 2).reduced (2, 2));
+
+        // The Sampler's row.
+        auto ex = extraArea;
+        const int ew = ex.getWidth() / 4;
+        for (auto* b : { &freezeButton, &liveButton, &spotsButton, &loadButton })
+            b->setBounds (ex.removeFromLeft (ew).reduced (2, 2));
+
+        // The rap: the lyrics take the pad's place, the controls the row under it.
+        if (rapTrack() >= 0)
+        {
+            auto lyricArea = padArea;
+            rapInfo.setBounds (lyricArea.removeFromBottom (20));
+            lyrics.setBounds (lyricArea.withTrimmedBottom (4));
+            auto line = extraArea;
+            languageButtons[0].setBounds (line.removeFromLeft (46).reduced (2, 2));
+            languageButtons[1].setBounds (line.removeFromLeft (46).reduced (2, 2));
+            rapButton.setBounds (line.removeFromRight (80).reduced (2, 2));
+            bySyllable.setBounds (line.removeFromRight (100).reduced (2, 2));
+            flowBox.setBounds (line.reduced (2, 2));
+        }
+    }
+
+private:
+    static constexpr int topHeight = 58;
+
+    Role role (int t) const { return style.tracks[(size_t) juce::jlimit (0, (int) style.tracks.size() - 1, t)].role; }
+
+    void button (juce::TextButton& b, const juce::String& text, std::function<void()> click)
+    {
+        b.setButtonText (text);
+        b.setWantsKeyboardFocus (false);
+        b.onClick = std::move (click);
+        addAndMakeVisible (b);
+    }
+
+    // ------------------------------------------------------------------ pages
+    /** Upright: the track's screen (pad, steps, dials, A / B). Sideways: the tiles of every
+        track and the selected track's pad, for playing live. */
+    void updateVisibility (bool wide)
+    {
+        const bool rap = role (current) == Role::rap, smp = role (current) == Role::sampler;
+        for (int i = 0; i < pads.size(); ++i)
+        {
+            pads[i]->setVisible (i == current && ! rap);
+            stepRows[i]->setVisible (i == current && ! wide);
+            tiles[i]->setVisible (wide);
+        }
+        for (auto* b : { &freezeButton, &liveButton, &spotsButton, &loadButton })
+            b->setVisible (smp && ! wide);
+        for (int k = 0; k < 4; ++k)
+        {
+            knobs[(size_t) k].setVisible (! wide);
+            knobLabels[(size_t) k].setVisible (! wide);
+        }
+        for (auto& b : soundButtons)
+            b.setVisible (! wide);
+        if (rapTrack() >= 0)
+        {
+            lyrics.setVisible (rap);
+            rapInfo.setVisible (rap);
+            for (juce::Component* c : { (juce::Component*) &flowBox, (juce::Component*) &bySyllable, (juce::Component*) &rapButton,
+                                        (juce::Component*) &languageButtons[0], (juce::Component*) &languageButtons[1] })
+                c->setVisible (rap && ! wide);
+        }
+    }
+
+    /** Sideways: the tiles on the left with the bars and tempo under them; the pad (or the lyrics) on the right. */
+    void layoutWide (juce::Rectangle<int> r)
+    {
+        auto left = r.removeFromLeft (r.getWidth() * 2 / 5);
+        r.removeFromLeft (12);
+        auto barRow = left.removeFromBottom (36);
+        tempo.setBounds (barRow.removeFromRight (juce::jmin (120, barRow.getWidth() / 3)).reduced (2, 2));
+        barRow.removeFromRight (6);
+        const int bw = barRow.getWidth() / numBars;
+        for (auto* b : barButtons)
+            b->setBounds (barRow.removeFromLeft (bw).reduced (2, 2));
+        left.removeFromBottom (6);
+        const int cols = 2, rows = (tiles.size() + cols - 1) / cols;
+        const int th = left.getHeight() / juce::jmax (1, rows), tw = left.getWidth() / cols;
+        for (int i = 0; i < tiles.size(); ++i)
+            tiles[i]->setBounds (left.getX() + (i % cols) * tw, left.getY() + (i / cols) * th, tw, th);
+        for (auto* p : pads)
+            p->setBounds (r);
+        if (rapTrack() >= 0)
+        {
+            auto lyricArea = r;
+            rapInfo.setBounds (lyricArea.removeFromBottom (20));
+            lyrics.setBounds (lyricArea.withTrimmedBottom (4));
+        }
+    }
+
+    void showTrack (int t)
+    {
+        if (juce::isPositiveAndBelow (current, pads.size()))
+            pads[current]->releaseAll();
+        current = juce::jlimit (0, (int) style.tracks.size() - 1, t);
+        engine.selectedTrack.store (current);   // the pad's notes, the knobs' targets and recording go to this track
+        updateVisibility (getWidth() > getHeight());
+        const auto& def = style.tracks[(size_t) current];
+        for (int i = 0; i < 2; ++i)
+            soundButtons[(size_t) i].setButtonText (juce::String (i == 0 ? "A  " : "B  ") + def.sounds[(size_t) i].name);
+        readKnobs();
+        resized();
+        refresh();
+    }
+
+    void showBar (int b)
+    {
+        bar = b;
+        for (auto* row : stepRows)
+        {
+            row->bar = b;
+            row->repaint();
+        }
+        refresh();
+    }
+
+    void readKnobs()
+    {
+        auto& tr = engine.track (current);
+        knobs[0].setValue (states[(size_t) current].rhythm, juce::dontSendNotification);
+        knobs[1].setValue ((double) (seeds[(size_t) current] % 1000) / 1000.0, juce::dontSendNotification);
+        knobs[2].setValue (juce::jlimit (0.0, 1.0, (tr.mix.eqHigh.load() + 12.0) / 18.0), juce::dontSendNotification);
+        knobs[3].setValue (tr.volume.load(), juce::dontSendNotification);
+    }
+
+    void knobMoved (int k, bool released)
+    {
+        auto& tr = engine.track (current);
+        const float v = (float) knobs[(size_t) k].getValue();
+        if (k == 0)
+        {
+            states[(size_t) current].rhythm = v;
+            if (released) regenerate (current);
+        }
+        else if (k == 1 && released)
+        {
+            seeds[(size_t) current] = juce::roundToInt (v * 999.0f) + 1000 * (1 + rng.nextInt (50));
+            regenerate (current);
+        }
+        else if (k == 2)
+            setTone (current, v);
+        else if (k == 3)
+            tr.volume.store (v);
+    }
+
+    /** The track's tone: a tilt, from dark (0) to bright (1). */
+    void setTone (int t, float v)
+    {
+        auto& tr = engine.track (t);
+        tr.mix.eqHigh.store (-12.0f + 18.0f * v);
+        tr.mix.eqLow.store (3.0f - 6.0f * v);
+        if (t == current && ! knobs[2].isMouseButtonDown())
+            knobs[2].setValue (v, juce::dontSendNotification);
+    }
+
+    // ------------------------------------------------------------------ actions
+    int rapTrack() const
+    {
+        for (int t = 0; t < (int) style.tracks.size(); ++t)
+            if (style.tracks[(size_t) t].role == Role::rap)
+                return t;
+        return -1;
+    }
+
+    Flow flow() const { return (Flow) juce::jlimit (0, (int) Flow::numFlows - 1, flowBox.getSelectedId() - 1); }
+
+    juce::String defaultLyrics() const
+    {
+        return juce::String::fromUTF8 ("Bajo el puente suena el bajo, la ciudad no duerme y yo tampoco, "
+                                       "BizHop en la pared, el beat sigue y no se va");
+    }
+
+    void regenerate (int t)
+    {
+        juce::Random seeded (seeds[(size_t) t]);
+        Generator::generate (engine, style, states, t, seeded, lyrics.getText(), flow(), bySyllable.getToggleState());
+        afterRap();
+        refresh();
+    }
+
+    void generateAll()
+    {
+        for (auto& s : seeds) s = rng.nextInt (100000);
+        Generator::generateAll (engine, style, states, rng, lyrics.getText(), flow(), bySyllable.getToggleState());
+        afterRap();
+        refresh();
+    }
+
+    void rapIt()
+    {
+        if (rapTrack() < 0) return;
+        regenerate (rapTrack());
+    }
+
+    void afterRap()
+    {
+        const int t = rapTrack();
+        if (t < 0) return;
+        juce::StringArray all, used;
+        all.addTokens (lyrics.getText().replaceCharacters (",.;:!?\"", "       "), " \n\t", "");
+        all.removeEmptyStrings();
+        used.addTokens (engine.track (t).voiceParams.getText(), " ", "");
+        used.removeEmptyStrings();
+        rapInfo.setText (juce::String (used.size()) + " of " + juce::String (all.size()) + " words fit in the four bars"
+                             + (used.size() < all.size() ? ": try Double time, or fewer words." : "."),
+                         juce::dontSendNotification);
+    }
+
+    void chooseSound (int t, int which)
+    {
+        pads[t]->releaseAll();
+        Generator::chooseSound (engine, style, states, t, which);
+        if (role (t) == Role::sampler)
+            regenerate (t);   // grains hold long notes; chops play slices: a part that fits the sound
+        refresh();
+    }
+
+    void toggleRecord()
+    {
+        const bool on = ! engine.recordNotes.load();
+        engine.recordNotes.store (on);
+        if (on && ! engine.transport.playing.load())
+            engine.transport.playing.store (true);
+        refresh();
+    }
+
+    void toggleLive()
+    {
+        auto& tr = engine.track (current);
+        const bool on = ! tr.grainLive.load();
+        if (on)
+        {
+            // The sound card's input, the first time it is needed.
+            auto setup = deviceManager.getAudioDeviceSetup();
+            if (setup.inputChannels.countNumberOfSetBits() == 0)
+            {
+                setup.useDefaultInputChannels = true;
+                setup.inputChannels.setRange (0, 2, true);
+                deviceManager.setAudioDeviceSetup (setup, true);
+            }
+            if (! tr.grainMode.load())
+                chooseSound (current, 0);
+        }
+        tr.grainLive.store (on);
+        refresh();
+    }
+
+    void openSpots()
+    {
+        juce::DialogWindow::LaunchOptions o;
+        o.content.setOwned (new GrainEditor (engine, targets, current, [safe = juce::Component::SafePointer<LiteComponent> (this)] {
+            if (safe != nullptr) safe->loadRecording();
+        }));
+        o.dialogTitle = "Grains - " + style.tracks[(size_t) current].label;
+        o.dialogBackgroundColour = Colours::background;
+        o.escapeKeyTriggersCloseButton = true;
+        o.useNativeTitleBar = true;
+        o.resizable = true;
+        o.launchAsync();
+    }
+
+    void loadRecording()
+    {
+        const int t = current;
+        chooser = std::make_unique<juce::FileChooser> ("Load a field recording", juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+                                                       formats.getWildcardForAllFormats());
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [this, t] (const juce::FileChooser& fc) {
+                                  const auto file = chosenFile (fc);
+                                  juce::MemoryBlock data;
+                                  if (file == juce::File() || ! file.loadFileAsData (data))
+                                      return;
+                                  juce::String error;
+                                  const bool wasGrain = engine.track (t).grainMode.load();
+                                  if (! Project::loadSampleIntoTrack (engine, t, file.getFileName(), data, formats, error))
+                                  {
+                                      juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Couldn't load", error);
+                                      return;
+                                  }
+                                  engine.track (t).type.store (Track::sampler);
+                                  engine.track (t).grainMode.store (wasGrain);
+                                  engine.track (t).grainLive.store (false);
+                              });
+    }
+
+    void showMenu()
+    {
+        juce::PopupMenu m;
+        m.addItem (1, "Open...");
+        m.addItem (2, "Save...");
+        m.addItem (3, "Export WAV...");
+        m.addSeparator();
+        m.addItem (4, "Audio settings...");
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&menuButton), [this] (int r) {
+            if (r == 1) openProject();
+            if (r == 2) saveProject();
+            if (r == 3) exportWav();
+            if (r == 4) showAudioSettings();
+        });
+    }
+
+    void refresh()
+    {
+        auto colourIt = [] (juce::TextButton& b, bool on, juce::Colour onColour = Colours::accent) {
+            b.setColour (juce::TextButton::buttonColourId, on ? onColour : Colours::panelEdge);
+            b.setColour (juce::TextButton::textColourOffId, on ? juce::Colours::black : Colours::text);
+        };
+        for (int t = 0; t < tabs.size(); ++t)
+        {
+            tabs[t]->setColour (juce::TextButton::buttonColourId, t == current ? Colours::accentDim : Colours::panel);
+            tabs[t]->setColour (juce::TextButton::textColourOffId, t == current ? Colours::text : Colours::textDim);
+        }
+        for (int b = 0; b < barButtons.size(); ++b)
+            colourIt (*barButtons[b], b == bar);
+        for (int i = 0; i < 2; ++i)
+            colourIt (soundButtons[(size_t) i], states[(size_t) current].sound == i);
+        auto& tr = engine.track (current);
+        colourIt (freezeButton, tr.granularParams.freeze.load(), Colours::playhead);
+        colourIt (liveButton, tr.grainLive.load(), Colours::playhead);
+        colourIt (recButton, engine.recordNotes.load(), juce::Colour (0xffe0453b));
+        if (! engine.recordNotes.load())
+            recButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff6b1d18));
+        if (rapTrack() >= 0)
+            for (int l = 0; l < speech::numLanguages; ++l)
+                colourIt (languageButtons[(size_t) l], engine.track (rapTrack()).voiceParams.language.load() == l);
+        for (auto* row : stepRows)
+            row->repaint();
+        for (auto* tile : tiles)
+            tile->repaint();
+    }
+
+    void timerCallback() override
+    {
+        if (getWidth() > getHeight())
+            for (auto* tile : tiles)
+                tile->repaint();   // the level bars
+        const bool playing = engine.transport.playing.load();
+        const auto playText = juce::String::fromUTF8 (playing ? "\xe2\x96\xa0" : "\xe2\x96\xb6");
+        if (playButton.getButtonText() != playText)
+            playButton.setButtonText (playText);
+        if (engine.recordNotes.load() != shownRecording)
+        {
+            shownRecording = engine.recordNotes.load();
+            refresh();
+        }
