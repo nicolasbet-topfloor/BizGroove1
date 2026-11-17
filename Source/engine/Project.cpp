@@ -1,4 +1,5 @@
 #include "Project.h"
+#include "ControlTargets.h"
 
 namespace bizgroove
 {
@@ -146,12 +147,28 @@ juce::var Project::toVar (AudioEngine& e)
         {
             const auto& p = e.song.scene (s).tracks[(size_t) t];
             int mask = 0;
+            std::uint64_t mask64 = 0;
             bool extras = false;
-            juce::Array<juce::var> notes, lanes, chords, lengths, velocities;
-            for (int i = 0; i < Song::numSteps; ++i)
+            juce::Array<juce::var> notes, lanes, chords, lengths, velocities, locks;
+
+            // Steps past the first bar are saved only when the pattern uses them.
+            bool longer = p.getLength() > Song::stepsPerBar;
+            for (int i = Song::stepsPerBar; i < Song::numSteps && ! longer; ++i)
+                longer = p.steps[(size_t) i].on.load() || p.numLocks (i) > 0;
+            for (const auto& l : p.drumLanes)
+                longer = longer || (l.load() >> Song::stepsPerBar) != 0;
+            const int saved = longer ? Song::numSteps : Song::stepsPerBar;
+
+            const auto* targets = e.lfoTargets.load();
+            for (int i = 0; i < Song::numSteps && targets != nullptr; ++i)
+                for (const auto& l : p.locks[(size_t) i])
+                    if (const int tg = l.target.load(); tg >= 0 && tg < (int) targets->all().size())
+                        locks.add (juce::Array<juce::var> { i, targets->all()[(size_t) tg].id, l.drum.load(), l.value.load() });
+
+            for (int i = 0; i < saved; ++i)
             {
                 const auto& st = p.steps[(size_t) i];
-                if (st.on.load()) mask |= (1 << i);
+                if (st.on.load()) { mask64 |= (std::uint64_t) 1 << i; if (i < 16) mask |= (1 << i); }
                 notes.add (st.note.load());
                 juce::Array<juce::var> chord;
                 for (const auto& c : st.chord)
@@ -163,9 +180,21 @@ juce::var Project::toVar (AudioEngine& e)
                 extras = extras || ! chord.isEmpty() || st.length.load() > 0.0f || st.velocity.load() != 100;
             }
             for (int d = 0; d < Song::numDrums; ++d)
-                lanes.add ((int) p.drumLanes[(size_t) d].load());
+            {
+                const auto bits = p.drumLanes[(size_t) d].load();
+                if (bits > 0xffffu)
+                    lanes.add (juce::String::toHexString ((juce::int64) bits));   // past the first bar: as hex, so no bit is lost
+                else
+                    lanes.add ((int) bits);
+            }
             auto* o = new Obj();
             o->setProperty ("on", mask);
+            if (longer)
+                o->setProperty ("onAll", juce::String::toHexString ((juce::int64) mask64));
+            if (p.getLength() != Song::stepsPerBar)
+                o->setProperty ("length", p.getLength());
+            if (! locks.isEmpty())
+                o->setProperty ("locks", locks);
             o->setProperty ("notes", notes);
             o->setProperty ("drums", lanes);
             if (extras)   // chords, lengths and how hard: only when some step has them
@@ -344,7 +373,9 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
             {
                 const auto o = (*perTrack)[t];
                 auto& p = e.song.scene (s).tracks[(size_t) t];
-                const int mask = getI (o, "on", 0);
+                const std::uint64_t mask = o.hasProperty ("onAll") ? (std::uint64_t) o["onAll"].toString().getHexValue64()
+                                                                    : (std::uint64_t) (std::uint32_t) getI (o, "on", 0);
+                p.length.store (juce::jlimit (1, Song::numSteps, getI (o, "length", Song::stepsPerBar)));
                 const auto* notes = o["notes"].getArray();
                 const auto* lanes = o["drums"].getArray();
                 const auto* chords = o["chords"].getArray();
@@ -361,10 +392,24 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
                                 st.addNote ((int) n);
                     if (lengths != nullptr && i < lengths->size())
                         st.length.store (juce::jlimit (0.0f, 16.0f, (float) (double) (*lengths)[i]));
-                    st.on.store ((mask >> i) & 1);
+                    st.on.store (((mask >> i) & 1u) != 0);
+                    p.clearLocks (i);
                 }
                 for (int d = 0; d < Song::numDrums; ++d)
-                    p.drumLanes[(size_t) d].store ((std::uint16_t) (lanes != nullptr && d < lanes->size() ? (int) (*lanes)[d] : 0));
+                {
+                    std::uint64_t bits = 0;
+                    if (lanes != nullptr && d < lanes->size())
+                    {
+                        const auto& lane = (*lanes)[d];
+                        bits = lane.isString() ? (std::uint64_t) lane.toString().getHexValue64() : (std::uint64_t) (std::uint32_t) (int) lane;
+                    }
+                    p.drumLanes[(size_t) d].store (bits);
+                }
+                if (const auto* locks = o["locks"].getArray())
+                    if (const auto* targets = e.lfoTargets.load())
+                        for (const auto& l : *locks)
+                            if (const auto* a = l.getArray(); a != nullptr && a->size() >= 4)
+                                p.setLock ((int) (*a)[0], targets->indexOf ((*a)[1].toString()), (int) (*a)[2], (float) (double) (*a)[3]);
             }
         }
     }
@@ -706,20 +751,25 @@ bool Exporter::writeMidi (AudioEngine& e, bool playSong, int bars, const juce::F
         juce::MidiMessageSequence seq;
         seq.addEvent (juce::MidiMessage::textMetaEvent (3, "Track " + juce::String (t + 1)), 0);
 
+        int pos = -1, lastScene = -2;   // the track walks its own pattern, as it plays
         for (int bar = 0; bar < bars; ++bar)
         {
             const int scene = e.song.sceneAt (t, bar, playSong);
+            if (scene != lastScene) pos = -1;   // another scene: its pattern starts again
+            lastScene = scene;
             if (scene < 0) continue;
             const auto& p = e.song.scene (scene).tracks[(size_t) t];
-            for (int st = 0; st < Song::numSteps; ++st)
+            for (int barStep = 0; barStep < Song::stepsPerBar; ++barStep)
             {
+                pos = (pos + 1) % p.getLength();
+                const int st = pos;
                 const double push = (st % 2 == 1) ? swing * 0.5 * ticksPerStep : 0.0;
-                const double tick = (bar * Song::numSteps + st) * ticksPerStep + push;
+                const double tick = (bar * Song::stepsPerBar + barStep) * ticksPerStep + push;
                 if (isDrum)
                 {
                     for (int d = 0; d < Song::numDrums; ++d)
                     {
-                        if ((p.drumLanes[(size_t) d].load() >> st) & 1u)
+                        if (((p.drumLanes[(size_t) d].load() >> st) & 1u) != 0)
                         {
                             seq.addEvent (juce::MidiMessage::noteOn (channel, Song::drumBaseNote + d, (juce::uint8) 100), tick);
                             seq.addEvent (juce::MidiMessage::noteOff (channel, Song::drumBaseNote + d), tick + ticksPerStep / 2);
