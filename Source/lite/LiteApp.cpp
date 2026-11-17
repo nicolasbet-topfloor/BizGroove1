@@ -1378,3 +1378,257 @@ private:
             shownRecording = engine.recordNotes.load();
             refresh();
         }
+        // The steps follow the bar playing, while it plays.
+        if (playing)
+        {
+            const int pos = engine.song.chainPosition.load();
+            if (pos != bar && juce::isPositiveAndBelow (pos, numBars))
+                showBar (pos);
+            stepRows[current]->repaint();
+        }
+    }
+
+    // ------------------------------------------------------------------ files
+    juce::var appState() const
+    {
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("app", style.appName);
+        o->setProperty ("style", (int) style.id);
+        juce::Array<juce::var> sounds;
+        for (const auto& s : states) sounds.add (s.sound);
+        o->setProperty ("sounds", sounds);
+        juce::Array<juce::var> rhythm;
+        for (const auto& s : states) rhythm.add (s.rhythm);
+        o->setProperty ("rhythm", rhythm);
+        o->setProperty ("lyrics", lyrics.getText());
+        o->setProperty ("flow", (int) flow());
+        o->setProperty ("bySyllable", bySyllable.getToggleState());
+        return juce::var (o);
+    }
+
+    /** What a chooser picked, as a file this app can read: on an iPhone or iPad a pick from the
+        Files app may come as a link, so it is copied in first. */
+    static juce::File chosenFile (const juce::FileChooser& fc)
+    {
+        const auto url = fc.getURLResult();
+        if (url.isEmpty())
+            return {};
+        if (url.isLocalFile() && url.getLocalFile().existsAsFile())
+            return url.getLocalFile();
+        auto in = url.createInputStream (juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress));
+        if (in == nullptr)
+            return {};
+        auto copy = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile (url.getFileName());
+        copy.deleteFile();
+        {
+            juce::FileOutputStream out (copy);
+            if (! out.openedOk())
+                return {};
+            out.writeFromInputStream (*in, -1);
+        }
+        return copy;
+    }
+
+    /** On an iPhone or iPad: a new file in the app's folder, which the Files app shows
+        (Files > On My iPhone > the app). */
+    juce::File appFolderFile (const juce::String& extension) const
+    {
+        const auto name = style.appName.upToFirstOccurrenceOf (" ", false, false) + " song "
+                        + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H.%M.%S");
+        return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile (name).withFileExtension (extension);
+    }
+
+    void savedInFiles (const juce::File& file)
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Saved",
+                                                file.getFileName() + "\n\nFind it in the Files app: On My iPhone (or iPad) > "
+                                                    + style.appName.upToFirstOccurrenceOf (" ", false, false) + ".");
+    }
+
+    void saveTo (juce::File file)
+    {
+        file = file.withFileExtension ("bizgroove");
+        engine.appState = appState();
+        juce::String error;
+        if (! Project::save (engine, file, error))
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Couldn't save", error);
+       #if JUCE_IOS
+        else
+            savedInFiles (file);
+       #endif
+    }
+
+    void saveProject()
+    {
+       #if JUCE_IOS
+        saveTo (appFolderFile ("bizgroove"));
+        return;
+       #endif
+        chooser = std::make_unique<juce::FileChooser> ("Save", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                                                                   .getChildFile (style.appName.upToFirstOccurrenceOf (" ", false, false) + " song.bizgroove"),
+                                                       "*.bizgroove");
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [this] (const juce::FileChooser& fc) {
+                                  const auto file = fc.getResult();
+                                  if (file != juce::File())
+                                      saveTo (file);
+                              });
+    }
+
+    void openProject()
+    {
+        chooser = std::make_unique<juce::FileChooser> ("Open", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.bizgroove");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [this] (const juce::FileChooser& fc) {
+                                  const auto file = chosenFile (fc);
+                                  if (file == juce::File()) return;
+                                  engine.transport.playing.store (false);
+                                  juce::String error;
+                                  if (! Project::open (engine, file, formats, error))
+                                  {
+                                      juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Couldn't open", error);
+                                      return;
+                                  }
+                                  const auto a = engine.appState;
+                                  if (const auto* sounds = a["sounds"].getArray())
+                                      for (int t = 0; t < juce::jmin (sounds->size(), (int) states.size()); ++t)
+                                          states[(size_t) t].sound = juce::jlimit (0, 1, (int) (*sounds)[t]);
+                                  if (a.hasProperty ("lyrics"))
+                                      lyrics.setText (a["lyrics"].toString(), juce::dontSendNotification);
+                                  if (a.hasProperty ("flow"))
+                                      flowBox.setSelectedId ((int) a["flow"] + 1, juce::dontSendNotification);
+                                  bySyllable.setToggleState ((bool) a["bySyllable"], juce::dontSendNotification);
+                                  tempo.setValue (engine.transport.bpm.load(), juce::dontSendNotification);
+                                  if (const auto* rh = a["rhythm"].getArray())
+                                      for (int t = 0; t < juce::jmin (rh->size(), (int) states.size()); ++t)
+                                          states[(size_t) t].rhythm = (float) (double) (*rh)[t];
+                                  readKnobs();
+                                  afterRap();
+                                  refresh();
+                              });
+    }
+
+    void exportTo (juce::File file)
+    {
+        file = file.withFileExtension ("wav");
+        engine.transport.playing.store (false);
+        deviceManager.removeAudioCallback (&sourcePlayer);
+        AudioEngine::RenderJob job;
+        job.bars = numBars * 2;   // the loop, twice
+        job.playSong = true;
+        job.tailSeconds = 2.0;
+        juce::AudioBuffer<float> audio;
+        juce::String error;
+        const bool ok = engine.renderOffline (job, audio) && Exporter::writeWav (audio, job.sampleRate, 24, file, error);
+        deviceManager.addAudioCallback (&sourcePlayer);
+        if (! ok)
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Couldn't export", error);
+        else
+        {
+           #if JUCE_IOS
+            savedInFiles (file);
+           #else
+            file.revealToUser();
+           #endif
+        }
+    }
+
+    void exportWav()
+    {
+       #if JUCE_IOS
+        exportTo (appFolderFile ("wav"));
+        return;
+       #endif
+        chooser = std::make_unique<juce::FileChooser> ("Export WAV", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                                                                         .getChildFile (style.appName.upToFirstOccurrenceOf (" ", false, false) + " song.wav"),
+                                                       "*.wav");
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [this] (const juce::FileChooser& fc) {
+                                  const auto file = fc.getResult();
+                                  if (file != juce::File())
+                                      exportTo (file);
+                              });
+    }
+
+    void showAudioSettings()
+    {
+        auto selector = std::make_unique<juce::AudioDeviceSelectorComponent> (deviceManager, 0, 0, 2, 2, false, false, true, false);
+        selector->setSize (520, 360);
+        juce::DialogWindow::LaunchOptions o;
+        o.content.setOwned (selector.release());
+        o.dialogTitle = "Audio";
+        o.dialogBackgroundColour = Colours::background;
+        o.useNativeTitleBar = true;
+        o.launchAsync();
+    }
+
+    BizLookAndFeel lookAndFeel;
+    const Style& style;
+    AudioEngine engine;
+    ControlTargets targets { engine };
+    LiteAudio liteAudio { engine };
+    juce::AudioDeviceManager deviceManager;
+    juce::AudioSourcePlayer sourcePlayer;
+    juce::AudioFormatManager formats;
+    std::vector<LiteTrackState> states;
+    std::vector<int> seeds;
+    juce::Random rng;
+    std::unique_ptr<juce::FileChooser> chooser;
+
+    juce::Label title, rapInfo;
+    juce::TextButton playButton, recButton, generateButton, menuButton, rapButton;
+    juce::TextButton freezeButton, liveButton, spotsButton, loadButton;
+    juce::OwnedArray<juce::TextButton> tabs, barButtons;
+    juce::OwnedArray<TouchPad> pads;
+    juce::OwnedArray<StepRow> stepRows;
+    juce::OwnedArray<LiveTile> tiles;
+    juce::Slider tempo;
+    std::array<juce::Slider, 4> knobs;
+    std::array<juce::Label, 4> knobLabels;
+    std::array<juce::TextButton, 2> soundButtons;
+    juce::TextEditor lyrics;
+    juce::ComboBox flowBox;
+    juce::TextButton bySyllable;
+    std::array<juce::TextButton, speech::numLanguages> languageButtons;
+    juce::Rectangle<int> soundArea, stepsArea, extraArea;
+    int current = 0, bar = 0;
+    bool shownRecording = false;
+};
+
+// ============================================================================ the application
+class LiteApplication final : public juce::JUCEApplication
+{
+public:
+    const juce::String getApplicationName() override    { return style (BIZ_LITE_STYLE).appName; }
+    const juce::String getApplicationVersion() override { return BIZGROOVE_VERSION; }
+    bool moreThanOneInstanceAllowed() override          { return false; }
+
+    void initialise (const juce::String&) override { window = std::make_unique<Window> (getApplicationName()); }
+    void shutdown() override { window = nullptr; }
+    void systemRequestedQuit() override { quit(); }
+
+private:
+    struct Window final : public juce::DocumentWindow
+    {
+        explicit Window (const juce::String& name) : DocumentWindow (name, Colours::background, DocumentWindow::allButtons)
+        {
+            setUsingNativeTitleBar (true);
+            setContentOwned (new LiteComponent(), true);
+           #if JUCE_IOS || JUCE_ANDROID
+            setFullScreen (true);   // the whole screen of the phone or tablet, turned either way
+           #else
+            setResizable (true, true);
+            setResizeLimits (360, 620, 2600, 1600);   // a phone upright, up to a big screen sideways
+            centreWithSize (getWidth(), getHeight());
+           #endif
+            setVisible (true);
+        }
+        void closeButtonPressed() override { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
+    };
+
+    std::unique_ptr<Window> window;
+};
+
+} // namespace bizgroove::lite
+
+START_JUCE_APPLICATION (bizgroove::lite::LiteApplication)
