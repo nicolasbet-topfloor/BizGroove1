@@ -1955,6 +1955,167 @@ static void testWindowKnobs()
     check (e.scopeWrite.load() == 5120 && peak > 0.01f, "scope: it holds the selected track's sound");
 }
 
+// The sequencer: patterns of their own length (up to four bars) and parameter locks.
+static void testSequencer()
+{
+    std::cout << "Sequencer\n";
+    constexpr double sr = 48000.0;   // 120 BPM: a 1/16 step is 6000 samples
+
+    // Each track loops on its own length: 3 steps against the bar's 16.
+    {
+        Song song;
+        song.clearScene (0);
+        auto& p = song.scene (0).tracks[0];
+        p.steps[0].on.store (true);
+        p.length.store (3);
+        auto& q = song.scene (0).tracks[2];
+        q.length.store (32);
+        q.steps[20].on.store (true);
+        song.prepare (sr);
+        std::array<juce::MidiBuffer, Song::numTracks> out;
+        std::array<bool, Song::numTracks> drums {};
+        std::vector<juce::int64> onsA, onsB;
+        for (juce::int64 pos = 0; pos < 32 * 6000; pos += 500)
+        {
+            for (auto& m : out) m.clear();
+            song.process (out, 500, 120.0, true, drums);
+            for (const auto meta : out[0]) if (meta.getMessage().isNoteOn()) onsA.push_back (pos + meta.samplePosition);
+            for (const auto meta : out[2]) if (meta.getMessage().isNoteOn()) onsB.push_back (pos + meta.samplePosition);
+        }
+        check (onsA.size() == 11 && onsA[1] == 3 * 6000 && onsA[6] == 18 * 6000,
+               "sequencer: a 3-step pattern loops on its own length, across the bar lines");
+        check (onsB.size() == 1 && onsB[0] == 20 * 6000, "sequencer: a 2-bar pattern plays its second bar");
+    }
+
+    // A drum lane past the first bar, and the length menu's "twice as long".
+    {
+        Song song;
+        song.clearScene (0);
+        auto& p = song.scene (0).tracks[1];
+        p.length.store (64);
+        p.drumLanes[0].store ((std::uint64_t) 1 << 50);
+        song.prepare (sr);
+        std::array<juce::MidiBuffer, Song::numTracks> out;
+        std::array<bool, Song::numTracks> drums {};
+        drums[1] = true;
+        std::vector<juce::int64> hits;
+        for (juce::int64 pos = 0; pos < 64 * 6000; pos += 500)
+        {
+            for (auto& m : out) m.clear();
+            song.process (out, 500, 120.0, true, drums);
+            for (const auto meta : out[1]) hits.push_back (pos + meta.samplePosition);
+        }
+        check (hits.size() == 1 && hits[0] == 50 * 6000, "sequencer: drums play in the fourth bar of a 4-bar pattern");
+    }
+
+    AudioEngine e;
+    ControlTargets targets (e);
+    e.lfoTargets.store (&targets);
+    e.prepareToPlay (480, sr);
+    e.song.clearScene (0);
+    e.selectedTrack.store (0);
+    auto& tr = e.track (0);
+    tr.type.store (Track::poly);
+    tr.polyParams.cutoffHz.store (1000.0f);
+    auto& pattern = e.song.scene (0).tracks[0];
+    const int cutoff = targets.indexOf ("poly.cutoff");
+
+    // Holding a step and turning a knob locks it on the step; letting go puts the knob back.
+    targets.beginStepHold (5);
+    targets.applyValue ("poly.cutoff", 0.2f);
+    const bool heard = std::abs (targets.getValue ("poly.cutoff") - 0.2f) < 0.01f;
+    const bool wrote = targets.endStepHold();
+    const auto* lock = pattern.findLock (5, cutoff, -1);
+    check (heard && wrote && lock != nullptr && std::abs (lock->value.load() - 0.2f) < 1.0e-4f,
+           "locks: a knob turned while a step is held locks its value on that step");
+    check (std::abs (tr.polyParams.cutoffHz.load() - 1000.0f) < 1.0f, "locks: letting go of the step puts the knob back");
+    targets.applyValue ("poly.cutoff", 0.5f);
+    check (pattern.numLocks (6) == 0 && pattern.numLocks (5) == 1, "locks: turning a knob with no step held changes the knob, not the steps");
+    tr.polyParams.cutoffHz.store (1000.0f);
+
+    // A pad (held and let go without a knob) switches its step; Bar 2 makes pad 3 step 19.
+    targets.applyButton ("seq.step.3", true);
+    targets.applyButton ("seq.step.3", false);
+    e.stepPage.store (1);
+    targets.applyButton ("seq.step.3", true);
+    targets.applyButton ("seq.step.3", false);
+    e.stepPage.store (0);
+    check (pattern.steps[2].on.load() && pattern.steps[18].on.load(), "steps: a pad switches the step of the bar shown");
+    pattern.steps[2].on.store (false);
+    pattern.steps[18].on.store (false);
+
+    // Playing: the lock takes over on its step and the knob goes back on the next one.
+    pattern.setLock (1, cutoff, -1, 0.9f);
+    pattern.steps[1].on.store (true);
+    juce::AudioBuffer<float> buf (2, 480);
+    std::vector<float> seen;
+    e.transport.playing.store (true);
+    for (int b = 0; b < 40; ++b)
+    {
+        buf.clear();
+        e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 480));
+        seen.push_back (tr.polyParams.cutoffHz.load());
+    }
+    // Step 2 (index 1) starts at 6000 (block 12), step 3 at 12000 (block 25).
+    check (std::abs (seen[5] - 1000.0f) < 1.0f && seen[14] > 5000.0f && std::abs (seen[27] - 1000.0f) < 1.0f,
+           "locks: the step plays its locked value, then the knob goes back");
+
+    // Recording: knobs turned while the song plays lock on the step playing.
+    e.recordNotes.store (true);
+    targets.applyValue ("poly.resonance", 0.7f);
+    const int now = e.song.trackStep[0].load();
+    check (now >= 0 && pattern.findLock (now, targets.indexOf ("poly.resonance"), -1) != nullptr,
+           "locks: knob moves are recorded onto the step playing");
+    e.recordNotes.store (false);
+    e.transport.playing.store (false);
+    buf.clear();
+    e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, 480));
+
+    // A drum's knob locks for that drum.
+    e.track (1).type.store (Track::drums);
+    e.selectedTrack.store (1);
+    e.track (1).selectedDrum.store (2);
+    targets.beginStepHold (4);
+    targets.applyValue ("drum.pitch", 1.0f);
+    targets.endStepHold();
+    check (e.song.scene (0).tracks[1].findLock (4, targets.indexOf ("drum.pitch"), 2) != nullptr
+               && std::abs (e.track (1).kit.drums[2].pitch.load()) < 0.01f,
+           "locks: a drum's knob locks for the drum that was selected");
+
+    // Eight knobs per step at most.
+    for (int k = 0; k < Song::maxLocks; ++k)
+        pattern.setLock (10, 1000 + k, -1, 0.5f);
+    check (! pattern.setLock (10, 2000, -1, 0.5f) && pattern.numLocks (10) == Song::maxLocks, "locks: a step locks eight knobs at most");
+    pattern.clearLocks (10);
+
+    // Saved and opened: the length, steps past the first bar, and the locks.
+    pattern.length.store (40);
+    pattern.steps[33].on.store (true);
+    pattern.steps[33].note.store (61);
+    e.song.scene (0).tracks[1].drumLanes[3].store ((std::uint64_t) 1 << 37);
+    e.song.scene (0).tracks[1].length.store (48);
+    pattern.setLock (33, targets.indexOf ("poly.resonance"), -1, 0.33f);
+    juce::String err;
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("bizgroove-seq.bizgroove");
+    const bool saved = Project::save (e, file, err);
+    AudioEngine f;
+    ControlTargets targetsF (f);
+    f.lfoTargets.store (&targetsF);
+    f.prepareToPlay (480, sr);
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    const bool opened = Project::open (f, file, formats, err);
+    file.deleteFile();
+    const auto& g = f.song.scene (0).tracks[0];
+    const auto* l2 = g.findLock (33, targetsF.indexOf ("poly.resonance"), -1);
+    check (saved && opened && g.getLength() == 40 && g.steps[33].on.load() && g.steps[33].note.load() == 61
+               && f.song.scene (0).tracks[1].getLength() == 48 && f.song.scene (0).tracks[1].drumLanes[3].load() == ((std::uint64_t) 1 << 37)
+               && l2 != nullptr && std::abs (l2->value.load() - 0.33f) < 1.0e-4f
+               && g.findLock (1, targetsF.indexOf ("poly.cutoff"), -1) != nullptr,
+           "project: pattern lengths, steps past the first bar and locks are saved and opened");
+    check (f.song.scene (1).tracks[0].getLength() == Song::stepsPerBar, "project: other patterns keep one bar");
+}
+
 // LFOs: two per track, moving any of its knobs around where it is set, on that track only.
 static void testLfos()
 {
@@ -3149,9 +3310,9 @@ static void testLiveRecord()
     e.keyboardState.noteOff (1, 64, 0.0f);
     block();
     const auto found = stepsWith (64);
-    const int distance = found.size() == 1 ? (found[0] - playhead + Song::numSteps) % Song::numSteps : 99;
+    const int distance = found.size() == 1 ? (found[0] - playhead + Song::stepsPerBar) % Song::stepsPerBar : 99;
     std::cout << "  info  playhead " << playhead << " recorded on " << (found.empty() ? -1 : found[0]) << "\n";
-    check (found.size() == 1 && (distance <= 1 || distance == Song::numSteps - 1),
+    check (found.size() == 1 && (distance <= 1 || distance == Song::stepsPerBar - 1),
            "record: a played note lands on the nearest step, once");
 
     e.selectedTrack.store (1);   // track 2 is the drums
@@ -3231,6 +3392,7 @@ int main (int argc, char* argv[])
     testOwnReverbDelay();
     testWindowKnobs();
     testLfos();
+    testSequencer();
     testRecoversFromBadNumbers();
     testKnobPage();
     testSoundSections();
