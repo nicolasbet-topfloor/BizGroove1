@@ -136,7 +136,7 @@ private:
     sound, at the note's pitch. Shared between the UI and the voices. */
 struct GranularParams
 {
-    GranularParams() { GranularSources::table (0); }   // the built-in sounds are made here, never on the audio thread
+    GranularParams() { GranularSources::table (0); spreadPads(); }   // the built-in sounds are made here, never on the audio thread
 
     std::atomic<int>   source     { GranularSources::choir };
     std::atomic<float> position   { 0.3f };    // 0..1: where in the sound the grains are read
@@ -158,11 +158,44 @@ struct GranularParams
     std::atomic<float> velocity   { 0.5f };    // 0..1
     std::atomic<float> glide      { 0.0f };
     std::atomic<int>   glideMode  { Glide::fixedTime };
+    std::atomic<bool>  freeze     { false };   // the grains stay where they are: Scan stops
+
+    /** The pads in a Sampler's Grain mode: each plays the sound from a spot of its own. */
+    static constexpr int numPads = 16;
+    struct PadSpot
+    {
+        std::atomic<float> position { 0.0f };   // 0..1
+        std::atomic<float> size     { 0.0f };   // seconds; 0 = the main Size
+        std::atomic<float> pitch    { 0.0f };   // semitones, on top of the main Pitch
+    };
+    std::array<PadSpot, numPads> pads;
+    /** Notes below this are the pads' spots (the engine moves pad notes there in Grain mode). */
+    static constexpr int padNoteBase = 0;
+    void spreadPads()
+    {
+        for (int i = 0; i < numPads; ++i)
+        {
+            pads[(size_t) i].position.store (((float) i + 0.5f) / (float) numPads);
+            pads[(size_t) i].size.store (0.0f);
+            pads[(size_t) i].pitch.store (0.0f);
+        }
+    }
+
+    // Read-outs for the screen (written by the voices): where the cloud is, and the last grains.
+    mutable std::atomic<float> shownPosition { -1.0f };
+    static constexpr int numShownGrains = 32;
+    mutable std::array<std::atomic<float>, numShownGrains> shownGrains {};
+    mutable std::atomic<int> shownGrainCount { 0 };
 
     mutable double lastNoteHz = 0.0;   // audio thread only: where a glide starts
 
     /** Audio thread: the track's recording for this block (set around rendering; none otherwise). */
-    struct View { const float* left = nullptr; const float* right = nullptr; int length = 0; double rate = 48000.0; };
+    struct View
+    {
+        const float* left = nullptr; const float* right = nullptr; int length = 0; double rate = 48000.0;
+        int offset = 0;        // a ring being written (live input): where position 0 is (its oldest sample)
+        bool forced = false;   // a Sampler in Grain mode: always its recording, whatever the Source
+    };
     View recording;
 };
 
@@ -184,7 +217,10 @@ public:
 
     void startNote (int midiNote, float vel, juce::SynthesiserSound*, int) override
     {
-        noteHz = juce::MidiMessage::getMidiNoteInHertz (midiNote);
+        // A pad (in a Sampler's Grain mode): its own spot, at the sound's own pitch plus the pad's.
+        padSpot = midiNote < GranularParams::padNoteBase + GranularParams::numPads ? midiNote - GranularParams::padNoteBase : -1;
+        noteHz = padSpot >= 0 ? GranularSources::baseHz * std::pow (2.0, params.pads[(size_t) padSpot].pitch.load() / 12.0)
+                              : juce::MidiMessage::getMidiNoteInHertz (midiNote);
         glide.start (params.lastNoteHz, noteHz, params.glide.load(), params.glideMode.load(), getSampleRate());
         params.lastNoteHz = noteHz;
         if (! ampEnv.isActive())
@@ -225,14 +261,17 @@ public:
         const float* srcR = nullptr;
         int srcLen = 0;
         double srcRate = GranularSources::rate;
-        if (src == GranularSources::recording)
+        const auto& view = params.recording;
+        ringOffset = 0;
+        if ((src == GranularSources::recording || view.forced) && view.length > 64)
         {
-            const auto& v = params.recording;
-            srcL = v.left; srcR = v.right != nullptr ? v.right : v.left; srcLen = v.length; srcRate = v.rate;
+            srcL = view.left; srcR = view.right != nullptr ? view.right : view.left; srcLen = view.length; srcRate = view.rate;
+            ringOffset = view.offset;
         }
         else
         {
-            const auto& t = GranularSources::table (src);
+            // No recording yet: Choir, until one is loaded.
+            const auto& t = GranularSources::table (src == GranularSources::recording ? (int) GranularSources::choir : src);
             srcL = srcR = t.data();
             srcLen = (int) t.size();
         }
@@ -251,8 +290,11 @@ public:
         // Overlapping grains add up: keep the cloud about as loud however thick it is.
         const float norm = 1.0f / std::sqrt ((float) juce::jmax (1.0, density * sizeSec * 1.5));
         const int numChannels = output.getNumChannels();
-        scanOffset += (double) juce::jlimit (-1.0f, 1.0f, params.scan.load()) * 0.1 * numSamples / sr;   // a full sweep in ten seconds
+        if (! params.freeze.load() && padSpot < 0)
+            scanOffset += (double) juce::jlimit (-1.0f, 1.0f, params.scan.load()) * 0.1 * numSamples / sr;   // a full sweep in ten seconds
         scanOffset -= std::floor (scanOffset);
+        params.shownPosition.store ((float) (padSpot >= 0 ? params.pads[(size_t) padSpot].position.load()
+                                                           : std::fmod ((double) params.position.load() + scanOffset, 1.0)));
         const double bend = std::pow (2.0, (performance.pitchBend.load() * TestSynthParams::bendRangeSemitones
                                             + juce::jlimit (-24.0f, 24.0f, params.pitch.load())) / 12.0);
 
@@ -267,7 +309,11 @@ public:
             if (countdown <= 0.0 && srcLen > 64)
             {
                 countdown += sr / density * (0.7 + 0.6 * rng.nextDouble());
-                startGrain (srcLen, srcRate, sr, sizeSec, spread, detune, reverse, spray);
+                double grainSize = sizeSec;
+                if (padSpot >= 0)
+                    if (const float ps = params.pads[(size_t) padSpot].size.load(); ps > 0.0f)
+                        grainSize = juce::jlimit (0.01, 0.5, (double) ps);
+                startGrain (srcLen, srcRate, sr, grainSize, spread, detune, reverse, spray);
             }
 
             float l = 0.0f, r = 0.0f;
@@ -328,7 +374,8 @@ private:
         if (free == nullptr)
             return;   // the cloud is full: skip this grain
         auto& gr = *free;
-        const double centre = std::fmod ((double) juce::jlimit (0.0f, 1.0f, params.position.load()) + scanOffset, 1.0);
+        const double centre = padSpot >= 0 ? (double) juce::jlimit (0.0f, 1.0f, params.pads[(size_t) padSpot].position.load())
+                                           : std::fmod ((double) juce::jlimit (0.0f, 1.0f, params.position.load()) + scanOffset, 1.0);
         double where = centre + spread * 0.5 * (rng.nextDouble() * 2.0 - 1.0);
         where -= std::floor (where);
         const double cents = (rng.nextDouble() * 2.0 - 1.0) * 50.0 * detune;
@@ -336,7 +383,9 @@ private:
         const bool backwards = rng.nextFloat() < reverse;
         gr.length = juce::jmax (16, (int) (sizeSec * sr));
         gr.step = backwards ? -ratio : ratio;
-        gr.pos = where * (srcLen - 1);
+        gr.pos = where * (srcLen - 1) + ringOffset;   // a live ring: counted from its oldest sample
+        const int shown = params.shownGrainCount.fetch_add (1) % GranularParams::numShownGrains;
+        params.shownGrains[(size_t) juce::jmax (0, shown)].store ((float) where);
         gr.age = 0;
         const float pan = 0.5f + 0.5f * spray * (rng.nextFloat() * 2.0f - 1.0f);
         gr.left = std::cos (pan * juce::MathConstants<float>::halfPi) * 1.41f;
@@ -352,6 +401,7 @@ private:
     std::array<Grain, 48> grains;
     std::array<float, 2> ic1 {}, ic2 {};
     double noteHz = 261.6, hz = 261.6, countdown = 0.0, scanOffset = 0.0;
+    int padSpot = -1, ringOffset = 0;
     float level = 0.5f;
 };
 
@@ -369,6 +419,11 @@ inline juce::var granularParamsToVar (const GranularParams& p)
     o->setProperty ("sustain", p.sustain.load());     o->setProperty ("release", p.release.load());
     o->setProperty ("level", p.level.load());         o->setProperty ("velocity", p.velocity.load());
     o->setProperty ("glide", p.glide.load());         o->setProperty ("glideMode", p.glideMode.load());
+    o->setProperty ("freeze", p.freeze.load());
+    juce::Array<juce::var> pads;
+    for (const auto& pad : p.pads)
+        pads.add (juce::Array<juce::var> { pad.position.load(), pad.size.load(), pad.pitch.load() });
+    o->setProperty ("pads", pads);
     return juce::var (o);
 }
 
@@ -388,6 +443,17 @@ inline void applyGranularParams (GranularParams& p, const juce::var& v)
     p.release.store (f ("release", 0.9f));     p.level.store (f ("level", 1.0f));
     p.velocity.store (f ("velocity", 0.5f));   p.glide.store (f ("glide", 0.0f));
     p.glideMode.store (juce::jlimit (0, Glide::numModes - 1, i ("glideMode", 0)));
+    p.freeze.store (v.hasProperty ("freeze") && (bool) v["freeze"]);
+    p.spreadPads();
+    if (const auto* pads = v["pads"].getArray())
+        for (int k = 0; k < juce::jmin (GranularParams::numPads, pads->size()); ++k)
+            if (const auto* a = (*pads)[k].getArray(); a != nullptr && a->size() >= 3)
+            {
+                auto& pad = p.pads[(size_t) k];
+                pad.position.store (juce::jlimit (0.0f, 1.0f, (float) (double) (*a)[0]));
+                pad.size.store (juce::jlimit (0.0f, 0.5f, (float) (double) (*a)[1]));
+                pad.pitch.store (juce::jlimit (-24.0f, 24.0f, (float) (double) (*a)[2]));
+            }
 }
 
 } // namespace bizgroove
