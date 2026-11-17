@@ -456,6 +456,11 @@ void MainComponent::showSoundsMenu()
             const auto& f = sounds[(size_t) (result - factoryBase)];
             Presets::applySoundVar (engine.track (t), f.sound);
             setCurrentSound (t, f.name, {});
+            // A sound that takes its grains from a recording, with none loaded: ask for one (Choir plays meanwhile).
+            auto& tr = engine.track (t);
+            if (tr.type.load() == Track::granular && tr.granularParams.source.load() == GranularSources::recording
+                && ! tr.samplerEngine.hasSample() && t == engine.selectedTrack.load())
+                panel.chooseRecording ("Load a recording first: this sound takes its grains from it (a choir plays until then)");
         }
         else if (result >= mineBase && result < mineBase + mine.size())
         {
@@ -1012,6 +1017,16 @@ void MainComponent::timerCallback()
         updateExternalOutputs();
 
     // A vocoder listening to the microphone needs the sound card's input: switch it on once.
+    // Live grains need the sound card's input: switch it on once.
+    if (! grainInputAsked)
+        for (int t = 0; t < AudioEngine::numTracks; ++t)
+            if (engine.track (t).grainLive.load())
+            {
+                grainInputAsked = true;
+                ensureAudioInput();
+                break;
+            }
+
     if (! vocoderInputAsked)
         for (int t = 0; t < AudioEngine::numTracks; ++t)
         {
