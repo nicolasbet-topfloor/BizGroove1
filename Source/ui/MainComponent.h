@@ -55,7 +55,7 @@ private:
     void updateClockOutputs();
     void updateExternalOutputs();
     int externalTicks = 0;
-    bool externalInputAsked = false, vocoderInputAsked = false;
+    bool externalInputAsked = false, vocoderInputAsked = false, grainInputAsked = false;
 
     // Recording into the Sampler
     void handleRecorder();
