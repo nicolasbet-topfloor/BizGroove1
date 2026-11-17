@@ -150,7 +150,7 @@ private:
         juce::PopupMenu menu;
         menu.addItem (1, "Nothing (LFO off)", true, lfo (n).destId.isEmpty());
         const auto& all = targets.all();
-        const auto instrument = Presets::instrumentName (engine.track (track).type.load());
+        const auto instrument = Presets::instrumentName (engine.track (track).soundType());
         std::map<juce::String, juce::PopupMenu> sections;
         std::vector<juce::String> order;
         for (size_t i = 0; i < all.size(); ++i)
