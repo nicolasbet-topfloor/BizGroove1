@@ -71,7 +71,7 @@ class SoundPanel final : public juce::Component, private juce::Timer
 {
 public:
     SoundPanel (AudioEngine& e, const ControlTargets& t)
-        : engine (e), targets (t), track (e.selectedTrack.load()), type (e.selected().type.load()),
+        : engine (e), targets (t), track (e.selectedTrack.load()), type (e.selected().soundType()),
           sections (soundSections (type))
     {
         const auto& library = synthLibrary();
@@ -188,7 +188,7 @@ private:
     void timerCallback() override
     {
         // Another track or instrument: these knobs no longer apply.
-        if (engine.selectedTrack.load() != track || engine.selected().type.load() != type)
+        if (engine.selectedTrack.load() != track || engine.selected().soundType() != type)
         {
             stopTimer();
             if (auto* box = findParentComponentOfClass<juce::CallOutBox>())
