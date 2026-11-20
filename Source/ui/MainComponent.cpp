@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "BizarLogo.h"
 
 namespace bizgroove
 {
@@ -157,6 +158,13 @@ MainComponent::MainComponent()
 
     savedFingerprint = Project::fingerprint (engine);
     setSize (1320, 820);
+
+    // The name and the maker's mark for a moment at start-up.
+    auto start = std::make_unique<StartScreen>();
+    start->onFinished = [this] { startScreen.reset(); };
+    startScreen = std::move (start);
+    addAndMakeVisible (*startScreen);
+    startScreen->setBounds (getLocalBounds());
     startTimerHz (30);
 }
 
@@ -257,6 +265,7 @@ void MainComponent::handleRecorder()
         // the metronome counts in first. (A sound onto a drum pad: the Pad menu.)
         if (type != Track::sampler && ! padPressed)
         {
+            engine.history.remember (engine.song, engine.song.currentScene.load(), t);
             engine.recordNotes.store (true);
             if (! playing)
                 engine.startWithCountIn();
@@ -668,6 +677,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         if (c == 'o') { openProject(); return true; }
         if (c == 'n') { newProject(); return true; }
         if (c == 'e') { showExport(); return true; }
+        if (c == 'z') { engine.history.undo (engine.song); return true; }
     }
     return false;
 }
@@ -687,6 +697,19 @@ void MainComponent::updateTitle()
         w->setName ("BizGroove - " + projectName() + (modified ? " (not saved)" : ""));
 }
 
+void MainComponent::showAbout()
+{
+    juce::DialogWindow::LaunchOptions o;
+    o.content.setOwned (new AboutComponent());
+    o.dialogTitle = "About BizGroove";
+    o.dialogBackgroundColour = juce::Colours::black;
+    o.escapeKeyTriggersCloseButton = true;
+    o.useNativeTitleBar = true;
+    o.resizable = false;
+    o.componentToCentreAround = this;
+    o.launchAsync();
+}
+
 void MainComponent::showFileMenu()
 {
     juce::PopupMenu m;
@@ -704,6 +727,8 @@ void MainComponent::showFileMenu()
     m.addItem (4, "Save as...\t" + cmd + "+Shift+S");
     m.addSeparator();
     m.addItem (5, "Export audio or MIDI...\t" + cmd + "+E");
+    m.addSeparator();
+    m.addItem (6, "About BizGroove...");
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&fileButton), [this] (int result) {
         switch (result)
         {
@@ -711,6 +736,7 @@ void MainComponent::showFileMenu()
             case 2: openProject(); break;
             case 3: saveProject (false); break;
             case 4: saveProject (true); break;
+            case 6: showAbout(); break;
             case 5: showExport(); break;
             default: break;
         }
@@ -757,6 +783,7 @@ void MainComponent::newProject()
             engine.stemFiles[(size_t) i] = {};
         }
         currentFile = juce::File();
+        engine.history.clear();
         savedFingerprint = Project::fingerprint (engine);
         updateTitle();
     });
@@ -788,6 +815,7 @@ void MainComponent::openFile (const juce::File& file)
     if (error.isNotEmpty())
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Opened with a problem", error);
     currentFile = file;
+    engine.history.clear();
     savedFingerprint = Project::fingerprint (engine);
     updateTitle();
 }
@@ -1149,6 +1177,11 @@ void MainComponent::showMasterVolume()
 
 void MainComponent::resized()
 {
+    if (startScreen != nullptr)
+    {
+        startScreen->setBounds (getLocalBounds());
+        startScreen->toFront (false);
+    }
     auto r = getLocalBounds().reduced (16, 12);
 
     // Top bar
