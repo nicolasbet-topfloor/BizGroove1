@@ -3,6 +3,7 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "engine/AudioEngine.h"
+#include "engine/PatternHistory.h"
 #include "engine/ControlTargets.h"
 #include "engine/MidiRouter.h"
 #include "engine/Project.h"
@@ -3407,6 +3408,63 @@ static void testCopyDrum()
            "kit: a sound that is not a kit is refused");
 }
 
+// Editing a pattern: moving it a step either way, clearing some steps, and undo.
+static void testPatternEditing()
+{
+    Song song;
+    auto& p = song.scene (0).tracks[0];
+    p.length.store (16);
+    p.steps[0].setSingle (60); p.steps[0].on.store (true);
+    p.steps[0].addNote (64);
+    p.steps[0].length.store (2.0f);
+    p.steps[5].setSingle (67); p.steps[5].on.store (true);
+    p.steps[15].setSingle (48); p.steps[15].on.store (true);
+    p.setLock (5, 3, -1, 0.75f);
+    p.drumLanes[0].store ((1u << 0) | (1u << 15));
+    p.drumLanes[1].store (1u << 20);   // past the length: must not move
+
+    PatternHistory history;
+    history.remember (song, 0, 0);
+    p.rotate (1);
+    check (p.steps[1].on.load() && p.steps[1].note.load() == 60 && p.steps[1].length.load() == 2.0f, "moving later takes a step's note and length along");
+    std::array<int, Song::maxChord> notes {};
+    check (p.steps[1].getNotes (notes) == 2 && notes[1] == 64, "moving takes the chord along");
+    check (p.steps[6].on.load() && p.steps[6].note.load() == 67 && p.findLock (6, 3, -1) != nullptr, "moving takes the locks along");
+    check (p.findLock (5, 3, -1) == nullptr, "the lock left its old step");
+    check (p.steps[0].on.load() && p.steps[0].note.load() == 48, "the last step comes back at the start");
+    check (p.drumLanes[0].load() == ((1u << 1) | (1u << 0)), "drum hits move later and wrap round");
+    check (p.drumLanes[1].load() == (1u << 20), "steps past the length stay where they are");
+    p.rotate (-1);
+    check (p.steps[0].note.load() == 60 && p.steps[15].note.load() == 48 && p.findLock (5, 3, -1) != nullptr
+           && p.drumLanes[0].load() == ((1u << 0) | (1u << 15)), "moving earlier undoes moving later");
+
+    history.remember (song, 0, 0);
+    p.clearSteps (4, 8);
+    check (! p.steps[5].on.load() && p.findLock (5, 3, -1) == nullptr, "clearing a range takes its notes and locks off");
+    check (p.steps[0].on.load() && p.steps[15].on.load(), "clearing a range leaves the other steps");
+    check (p.length.load() == 16, "clearing a range keeps the length");
+    history.undo (song);
+    check (p.steps[5].on.load() && p.findLock (5, 3, -1) != nullptr, "undo puts the cleared steps back");
+
+    song.scene (0).tracks[1].steps[2].on.store (true);
+    history.rememberScene (song, 0);
+    song.clearScene (0);
+    check (! song.scene (0).tracks[1].steps[2].on.load(), "clearing the scene clears it");
+    history.undo (song);
+    check (song.scene (0).tracks[1].steps[2].on.load() && p.steps[5].on.load(), "one undo brings the whole scene back");
+    history.undo (song);
+    check (p.steps[0].note.load() == 60, "undo goes further back");
+
+    // Quick repeats of the same kind of edit are one undo step.
+    history.clear();
+    history.remember (song, 0, 0, 1);
+    p.steps[0].note.store (61);
+    history.remember (song, 0, 0, 1);
+    p.steps[0].note.store (62);
+    history.undo (song);
+    check (p.steps[0].note.load() == 60 && ! history.canUndo(), "a run of the same edit is one undo step");
+}
+
 // Live recording: notes played while the song plays land on the nearest step, on synth and drum tracks.
 static void testLiveRecord()
 {
@@ -3513,6 +3571,7 @@ int main (int argc, char* argv[])
     testPerform();
     testLiveRecord();
     testCopyDrum();
+    testPatternEditing();
     testNoise();
     testHold();
     testGlide();
