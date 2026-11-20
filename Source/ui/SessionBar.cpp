@@ -20,8 +20,8 @@ SessionBar::SessionBar (AudioEngine& e) : engine (e)
     pasteButton.setTooltip ("Paste the copied scene over the current scene");
     clearButton.setTooltip ("Empty the current scene (all 16 tracks)");
     copyButton.onClick = [this] { copiedScene = engine.song.currentScene.load(); pasteButton.setEnabled (true); };
-    pasteButton.onClick = [this] { if (copiedScene >= 0) engine.song.copyScene (copiedScene, engine.song.currentScene.load()); };
-    clearButton.onClick = [this] { engine.song.clearScene (engine.song.currentScene.load()); };
+    pasteButton.onClick = [this] { if (copiedScene >= 0) { engine.history.rememberScene (engine.song, engine.song.currentScene.load()); engine.song.copyScene (copiedScene, engine.song.currentScene.load()); } };
+    clearButton.onClick = [this] { engine.history.rememberScene (engine.song, engine.song.currentScene.load()); engine.song.clearScene (engine.song.currentScene.load()); };
     pasteButton.setEnabled (false);
 
     songModeButton.setTooltip ("On: play the song (the chain of scenes in the Song view). Off: loop the current scene.");
