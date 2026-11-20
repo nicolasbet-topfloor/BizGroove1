@@ -24,6 +24,7 @@ public:
         choose.onClick = [this] { showMenu(); };
         clearAll.setTooltip ("Take this knob's locks off every step of the pattern");
         clearAll.onClick = [this] {
+            engine.rememberPattern();
             auto& p = pattern();
             for (int s = 0; s < Song::numSteps; ++s)
                 p.clearLock (s, target, drumFor (target));
@@ -123,7 +124,7 @@ public:
                     area.withHeight (16).translated (0, -16), juce::Justification::centredRight);
     }
 
-    void mouseDown (const juce::MouseEvent& e) override { edit (e); }
+    void mouseDown (const juce::MouseEvent& e) override { engine.rememberPattern(); edit (e); }
     void mouseDrag (const juce::MouseEvent& e) override { edit (e); }
     void mouseUp (const juce::MouseEvent&) override { readout.clear(); repaint(); }
 
@@ -258,6 +259,38 @@ public:
         recordButton.setTooltip ("Record what you play into this pattern, onto the nearest 1/16. From a stop, the metronome counts in first.");
         recordButton.onClick = [this] { engine.recorder.toggleRequested.store (true); };
 
+        // Editing the whole pattern: move it, clear part or all of it, undo.
+        const auto left = juce::String::fromUTF8 ("\xe2\x97\x80 Move"), right = juce::String::fromUTF8 ("Move \xe2\x96\xb6");
+        moveEarlier.setButtonText (left);
+        moveLater.setButtonText (right);
+        moveEarlier.setTooltip ("Move this track's pattern one step earlier. The first step comes back at the end, with its notes and locks.");
+        moveLater.setTooltip ("Move this track's pattern one step later. The last step comes back at the start, with its notes and locks.");
+        clearSelection.setTooltip ("Take everything off the selected steps of this track: notes, drum hits and locks. Drag along the numbers above the grid to select steps.");
+        clearTrack.setTooltip ("Take everything off this track's pattern in this scene. The other tracks stay as they are.");
+        undoButton.setTooltip ("Undo the last change to a pattern (Ctrl+Z, or Cmd+Z on a Mac)");
+        moveEarlier.onClick = [this] { engine.rememberPattern(); currentPattern().rotate (-1); shiftSelection (-1); repaint(); };
+        moveLater.onClick   = [this] { engine.rememberPattern(); currentPattern().rotate (1);  shiftSelection (1);  repaint(); };
+        clearSelection.onClick = [this] {
+            if (selFrom < 0)
+                return;
+            engine.rememberPattern();
+            currentPattern().clearSteps (selFrom, selTo);
+            repaint();
+        };
+        clearTrack.onClick = [this] {
+            engine.rememberPattern();
+            auto& p = currentPattern();
+            p.clearSteps (0, Song::numSteps - 1);
+            selFrom = selTo = -1;
+            repaint();
+        };
+        undoButton.onClick = [this] { engine.history.undo (engine.song); repaint(); };
+        for (auto* b : { &moveEarlier, &moveLater, &clearSelection, &clearTrack, &undoButton })
+        {
+            b->setWantsKeyboardFocus (false);
+            addAndMakeVisible (b);
+        }
+
         title.setFont (juce::FontOptions (15.0f, juce::Font::bold));
         title.setColour (juce::Label::textColourId, Colours::text);
         addAndMakeVisible (title);
@@ -284,11 +317,22 @@ public:
         playButton.setBounds (top.removeFromRight (80).reduced (2, 4));
         position.setBounds (top.removeFromRight (190));
         title.setBounds (top);
+        auto tools = r.removeFromTop (34).reduced (0, 3);
+        moveEarlier.setBounds (tools.removeFromLeft (84));
+        tools.removeFromLeft (4);
+        moveLater.setBounds (tools.removeFromLeft (84));
+        tools.removeFromLeft (16);
+        clearSelection.setBounds (tools.removeFromLeft (120));
+        tools.removeFromLeft (4);
+        clearTrack.setBounds (tools.removeFromLeft (100));
+        tools.removeFromLeft (16);
+        undoButton.setBounds (tools.removeFromLeft (70));
         help.setBounds (r.removeFromBottom (22));
         r.removeFromBottom (4);
         lockLane.setBounds (r.removeFromBottom (juce::jlimit (90, 140, r.getHeight() / 4)));
         lockLane.setLabelWidth (labelWidth);
         r.removeFromBottom (4);
+        ruler = r.removeFromTop (18);
         grid = r.reduced (0, 4);
     }
 
@@ -395,6 +439,36 @@ public:
             }
         }
 
+        // The ruler: step numbers, and the selection (drag along it to select steps).
+        {
+            const auto ra = rulerArea();
+            g.setColour (Colours::panel);
+            g.fillRect (ruler);
+            g.setColour (Colours::textDim);
+            g.setFont (juce::FontOptions (11.0f));
+            g.drawText ("Select", ruler.withWidth (labelWidth).reduced (6, 0), juce::Justification::centredLeft, false);
+            for (int st = 0; st < cols; st += (stepW < 14.0f ? 4 : 1))
+            {
+                const auto cell = juce::Rectangle<float> ((float) ra.getX() + (float) st * stepW, (float) ra.getY(), stepW * (stepW < 14.0f ? 4.0f : 1.0f), (float) ra.getHeight());
+                g.setColour (st % Song::stepsPerBar == 0 ? Colours::text : Colours::textDim);
+                g.drawText (juce::String (st + 1), cell.toNearestInt(), juce::Justification::centredLeft, false);
+            }
+            if (selFrom >= 0)
+            {
+                const int a = juce::jmin (selFrom, selTo), b = juce::jmin (juce::jmax (selFrom, selTo), cols - 1);
+                if (a < cols)
+                {
+                    const float x0 = (float) area.getX() + (float) a * stepW, w = (float) (b - a + 1) * stepW;
+                    g.setColour (StepGrid::lockColour().withAlpha (0.35f));
+                    g.fillRect (juce::Rectangle<float> (x0, (float) ra.getY(), w, (float) ra.getHeight()));
+                    g.setColour (StepGrid::lockColour().withAlpha (0.10f));
+                    g.fillRect (juce::Rectangle<float> (x0, (float) area.getY(), w, (float) area.getHeight()));
+                    g.setColour (StepGrid::lockColour().withAlpha (0.8f));
+                    g.drawRect (juce::Rectangle<float> (x0, (float) area.getY(), w, (float) area.getHeight()), 1.5f);
+                }
+            }
+        }
+
         if (recordingNotes())
         {
             g.setColour (juce::Colours::red.withAlpha (0.8f));
@@ -406,6 +480,15 @@ public:
     {
         dragNote = -1;
         dragged = false;
+        selecting = false;
+        if (rulerArea().contains (e.getPosition()))
+        {
+            const int st = stepAt (e.x);
+            selecting = st >= 0;
+            selFrom = selTo = st;
+            repaint();
+            return;
+        }
         const auto area = gridArea();
         if (! area.contains (e.getPosition()))
         {
@@ -421,6 +504,7 @@ public:
         const int s = stepAt (e.x), row = rowAt (e.y);
         if (s < 0 || row < 0)
             return;
+        engine.rememberPattern();
         auto& pattern = currentPattern();
 
         if (engine.selected().playsDrums())
@@ -451,6 +535,19 @@ public:
 
     void mouseDrag (const juce::MouseEvent& e) override
     {
+        if (selecting)
+        {
+            const auto area = gridArea();
+            const int cols = currentPattern().getLength();
+            const int x = juce::jlimit (area.getX(), area.getRight() - 1, e.x);
+            const int st = juce::jlimit (0, cols - 1, (int) ((float) (x - area.getX()) / ((float) area.getWidth() / (float) cols)));
+            if (st != selTo)
+            {
+                selTo = st;
+                repaint();
+            }
+            return;
+        }
         if (dragNote < 0)
             return;
         const float stepW = (float) gridArea().getWidth() / (float) currentPattern().getLength();
@@ -489,6 +586,25 @@ private:
     }
 
     juce::Rectangle<int> gridArea() const { return grid.withTrimmedLeft (labelWidth).reduced (0, 2); }
+    juce::Rectangle<int> rulerArea() const { return ruler.withTrimmedLeft (labelWidth); }
+
+    /** Moving the pattern takes the selection along, so it still marks the same notes. */
+    void shiftSelection (int direction)
+    {
+        if (selFrom < 0)
+            return;
+        const int len = currentPattern().getLength();
+        const int a = juce::jmin (selFrom, selTo), b = juce::jmax (selFrom, selTo);
+        if (b - a + 1 >= len)
+            return;
+        if (a + direction < 0 || b + direction >= len)
+        {
+            selFrom = selTo = -1;   // it would wrap round the end: let it go
+            return;
+        }
+        selFrom = a + direction;
+        selTo = b + direction;
+    }
 
     int stepAt (int x) const
     {
@@ -559,6 +675,7 @@ private:
             shownType = type;
             shownScene = engine.song.currentScene.load();
             followNotes = true;
+            selFrom = selTo = -1;
             lockLane.trackChanged();
         }
         followPattern();
@@ -587,12 +704,14 @@ private:
             position.setText (where, juce::dontSendNotification);
 
         const bool drums = engine.selected().playsDrums();
-        const juce::String helpText = drums ? "Click a cell to switch that drum on that step. Click a drum's name to pick it for the knobs and pads."
-                                            : "Click to add a note, click a note to take it out, drag a note sideways to change how long it plays. Scroll for higher or lower notes.";
+        const juce::String helpText = drums ? "Click a cell to switch that drum on that step. Click a drum's name to pick it for the knobs and pads. Drag along the numbers to select steps."
+                                            : "Click to add a note, click a note to take it out, drag a note sideways to change how long it plays. Scroll for higher or lower notes. Drag along the numbers to select steps.";
         if (help.getText() != helpText)
             help.setText (helpText, juce::dontSendNotification);
 
         playButton.setButtonText (engine.transport.playing.load() ? "Stop" : "Play");
+        clearSelection.setEnabled (selFrom >= 0);
+        undoButton.setEnabled (engine.history.canUndo());
         recordButton.setButtonText (recordingNotes() || engine.countInBeatsLeft.load() > 0 ? "Recording" : "Record");
         recordButton.setColour (juce::TextButton::buttonColourId, recordingNotes() ? juce::Colour (0xffb3261e) : Colours::panelEdge);
 
@@ -605,6 +724,10 @@ private:
 
     AudioEngine& engine;
     juce::TextButton prevTrack { "<" }, nextTrack { ">" }, playButton { "Play" }, recordButton { "Record" };
+    juce::TextButton moveEarlier, moveLater, clearSelection { "Clear selection" }, clearTrack { "Clear track" }, undoButton { "Undo" };
+    juce::Rectangle<int> ruler;
+    int selFrom = -1, selTo = -1;
+    bool selecting = false;
     juce::Label title, position, help, lengthLabel;
     LengthControl lengthControl { engine };
     LockLane lockLane;
