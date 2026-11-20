@@ -23,6 +23,8 @@ jobs:
             artefact: BizGroove-Windows
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    # A healthy build takes about 15-20 minutes; a stuck one fails here with a clear message.
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -31,7 +33,14 @@ jobs:
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # The Mac builds BizGroove and its tests only (both Intel and Apple Silicon); no light apps for now.
+            cmake --build build --config Release --parallel --target BizGroove BizGrooveTests
+          else
+            cmake --build build --config Release --parallel
+          fi
 
       - name: Test engine
         run: ctest --test-dir build -C Release --output-on-failure -V
@@ -44,14 +53,6 @@ jobs:
           # Ad-hoc signature so Apple Silicon will launch it; not notarised.
           codesign --force --deep --sign - dist/BizGroove.app
           ditto -c -k --keepParent dist/BizGroove.app dist/BizGroove-macOS.zip
-          # The light apps, in one folder.
-          LITE="dist/BizGroove Light Apps"
-          mkdir -p "$LITE"
-          for app in BizHop BizWave BizTechno BizNoise BizSampler; do
-            cp -R "build/${app}_artefacts/Release/${app}.app" "$LITE/"
-            codesign --force --deep --sign - "$LITE/${app}.app"
-          done
-          ditto -c -k --keepParent "$LITE" dist/BizLiteApps-macOS.zip
       - name: Verify universal binary and macOS 10.13 target
         if: runner.os == 'macOS'
         run: |
@@ -87,6 +88,7 @@ jobs:
           path: dist/${{ matrix.artefact }}.zip
 
       - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
         with:
           name: BizLiteApps-${{ matrix.name }}
           path: dist/BizLiteApps-${{ matrix.name }}.zip
