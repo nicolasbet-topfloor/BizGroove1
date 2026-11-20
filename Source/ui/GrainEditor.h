@@ -89,9 +89,11 @@ public:
         padSizeLabel.setText ("Pad size", juce::dontSendNotification);
         padPitchLabel.setText ("Pad pitch", juce::dontSendNotification);
 
-        static const char* ids[8] = { "gran.position", "gran.size", "gran.density", "gran.spread", "gran.scan", "gran.pitch", "gran.reverse", "gran.spray" };
-        static const char* names[8] = { "Position", "Size", "Density", "Spread", "Scan", "Pitch", "Reverse", "Spray" };
-        for (int k = 0; k < 8; ++k)
+        // The first eight in the order of the controller's knobs 1-8 (as on the panel); two more below.
+        static const char* ids[numKnobs] = { "gran.scan", "gran.position", "gran.size", "gran.density", "gran.spread", "gran.pitch", "gran.attack", "gran.release",
+                                             "gran.reverse", "gran.spray" };
+        static const char* names[numKnobs] = { "Scan", "Position", "Size", "Density", "Spread", "Pitch", "Attack", "Release", "Reverse", "Spray" };
+        for (int k = 0; k < numKnobs; ++k)
         {
             auto& knob = knobs[(size_t) k];
             knob.target = targets.find (ids[k]);
@@ -108,7 +110,7 @@ public:
         }
 
         refreshPad();
-        setSize (1000, 560);
+        setSize (1000, 670);
         startTimerHz (30);
     }
 
@@ -208,10 +210,15 @@ public:
         }
         r.removeFromTop (6);
         info.setBounds (r.removeFromBottom (20));
+        auto moreRow = r.removeFromBottom (106);
         auto knobRow = r.removeFromBottom (110);
         const int kw = knobRow.getWidth() / 8;
-        for (int k = 0; k < 8; ++k)
-            knobs[(size_t) k].slider.setBounds (knobRow.getX() + k * kw + (kw - 70) / 2, knobRow.getY() + 4, 70, 70);
+        for (int k = 0; k < numKnobs; ++k)
+        {
+            const auto& row = k < 8 ? knobRow : moreRow;
+            const int col = k < 8 ? k : k - 8;
+            knobs[(size_t) k].slider.setBounds (row.getX() + col * kw + (kw - 70) / 2, row.getY() + 4, 70, 70);
+        }
         r.removeFromBottom (6);
         auto padRow = r.removeFromBottom (58);
         auto padButtonsRow = padRow.removeFromTop (26);
@@ -427,7 +434,8 @@ private:
     std::array<juce::TextButton, GranularParams::numPads> padButtons;
     juce::Slider padSize, padPitch;
     juce::Label padSizeLabel, padPitchLabel, info;
-    std::array<Knob, 8> knobs;
+    static constexpr int numKnobs = 10;
+    std::array<Knob, numKnobs> knobs;
     juce::Rectangle<int> wave;
     std::vector<float> peaks;
     juce::String shownSample;
