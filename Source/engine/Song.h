@@ -3,6 +3,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <array>
 #include <atomic>
+#include <memory>
 
 namespace bizgroove
 {
@@ -228,6 +229,60 @@ public:
             for (auto& l : drumLanes)
                 l.store (0);
             length.store (stepsPerBar);
+        }
+
+        /** Takes everything off steps `from` to `to` (both included): notes, drum hits
+            and locks. The length and the other steps stay as they are. */
+        void clearSteps (int from, int to)
+        {
+            from = juce::jlimit (0, numSteps - 1, from);
+            to = juce::jlimit (0, numSteps - 1, to);
+            if (to < from)
+                std::swap (from, to);
+            std::uint64_t mask = 0;
+            for (int i = from; i <= to; ++i)
+            {
+                steps[(size_t) i].on.store (false);
+                clearLocks (i);
+                mask |= (std::uint64_t) 1 << i;
+            }
+            for (auto& l : drumLanes)
+                l.store (l.load() & ~mask);
+        }
+
+        /** Moves the whole pattern one step later (+1) or earlier (-1) within its
+            length; the step that falls off one end comes back at the other, with its
+            notes, chord, length, velocity, drum hits and locks. */
+        void rotate (int direction)
+        {
+            const int len = getLength();
+            if (len < 2 || direction == 0)
+                return;
+            direction = direction > 0 ? 1 : -1;
+            auto old = std::make_unique<TrackPattern>();
+            old->copyFrom (*this);
+            for (int i = 0; i < len; ++i)
+            {
+                const auto j = (size_t) ((i + direction + len) % len);
+                steps[j].copyFrom (old->steps[(size_t) i]);
+                for (size_t k = 0; k < (size_t) maxLocks; ++k)
+                {
+                    const auto& from = old->locks[(size_t) i][k];
+                    locks[j][k].value.store (from.value.load());
+                    locks[j][k].drum.store (from.drum.load());
+                    locks[j][k].target.store (from.target.load());
+                }
+            }
+            const std::uint64_t lenMask = len >= 64 ? ~(std::uint64_t) 0 : (((std::uint64_t) 1 << len) - 1);
+            for (auto& lane : drumLanes)
+            {
+                const auto all = lane.load();
+                const auto bits = all & lenMask;
+                const auto top = (std::uint64_t) 1 << (len - 1);
+                const auto turned = direction > 0 ? (((bits << 1) & lenMask) | ((bits & top) != 0 ? 1u : 0u))
+                                                  : ((bits >> 1) | ((bits & 1u) != 0 ? top : 0u));
+                lane.store ((all & ~lenMask) | turned);
+            }
         }
     };
 
