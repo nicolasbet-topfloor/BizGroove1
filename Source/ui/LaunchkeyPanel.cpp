@@ -1,5 +1,6 @@
 #include "LaunchkeyPanel.h"
 #include "GrainEditor.h"
+#include "BizarLogo.h"
 #include "LookAndFeel.h"
 #include "engine/Project.h"
 #include "engine/Presets.h"
@@ -919,6 +920,9 @@ void LaunchkeyPanel::paint (juce::Graphics& g)
     g.setColour (Colours::text);
     g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
     g.drawText ("BizGroove", wordmarkArea, juce::Justification::centredRight);
+    // The maker's mark under the name, as printed on hardware.
+    BizarLogo::draw (g, wordmarkArea.translated (0, wordmarkArea.getHeight() + 1).withHeight (14).toFloat(),
+                     juce::RectanglePlacement::xRight | juce::RectanglePlacement::yMid);
 }
 
 void LaunchkeyPanel::resized()
@@ -987,7 +991,7 @@ void LaunchkeyPanel::resized()
     }
     else
         lfoButton.setBounds (right.getX() + 16, controls.getY() + 136, right.getWidth() - 16, 24);
-    trackInfo.setBounds (right.getX() - 120, controls.getY() + 34, right.getWidth() + 120, 22);
+    trackInfo.setBounds (right.getX() - 120, controls.getY() + 44, right.getWidth() + 120, 22);
     const int bw = (right.getWidth() - 10) / 2;
     arpButton.setBounds (right.getX(), padTop, bw, rowH);
     fixedChordButton.setBounds (right.getX() + bw + 10, padTop, bw, rowH);
