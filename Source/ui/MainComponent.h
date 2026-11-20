@@ -91,6 +91,8 @@ private:
     juce::String savedFingerprint;
     juce::var defaultState;
     std::unique_ptr<juce::FileChooser> chooser;
+    std::unique_ptr<juce::Component> startScreen;
+    void showAbout();
     bool lastModified = false;
 
     BizLookAndFeel lookAndFeel;
