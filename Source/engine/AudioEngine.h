@@ -3,6 +3,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_devices/juce_audio_devices.h>
 #include "Song.h"
+#include "PatternHistory.h"
 #include "Track.h"
 #include "StemDeck.h"
 #include "Mixer.h"
@@ -43,6 +44,10 @@ public:
 
     Transport transport;
     Song song;
+    /** Undo for pattern edits (message thread only). */
+    PatternHistory history;
+    /** Message thread: remember the selected track's pattern in the current scene before changing it. */
+    void rememberPattern (int kind = 0) { history.remember (song, song.currentScene.load(), selectedTrack.load(), kind); }
     Performance performance;
     StemDeck stems;
     MasterEffects effects;
