@@ -182,7 +182,7 @@ void StepGrid::mouseDown (const juce::MouseEvent& e)
     if (e.mods.isPopupMenu())
     {
         if (lockStep == step) endLockEdit();
-        else                  beginLockEdit (step);
+        else                  { engine.rememberPattern(); beginLockEdit (step); }
         pressBecameLock = true;
         return;
     }
@@ -190,10 +190,11 @@ void StepGrid::mouseDown (const juce::MouseEvent& e)
     if (lockStep >= 0)
     {
         if (lockStep == step) endLockEdit();
-        else                  beginLockEdit (step);
+        else                  { engine.rememberPattern(); beginLockEdit (step); }
         pressBecameLock = true;
         return;
     }
+    engine.rememberPattern();   // a click toggles the step, a drag changes its note, a hold locks it
     pressTime = juce::Time::getMillisecondCounter();
     dragStartNote = engine.getStepNote (step);
 }
@@ -231,6 +232,7 @@ void StepGrid::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheel
         return;
 
     const int direction = wheel.deltaY > 0 ? 1 : -1;
+    engine.rememberPattern (1);   // a run of scrolls is one undo step
     nudgeNote (index, direction * (e.mods.isShiftDown() ? 12 : 1));
 }
 
@@ -356,6 +358,7 @@ Song::TrackPattern& LengthControl::pattern()
 
 void LengthControl::setLength (int steps)
 {
+    engine.rememberPattern (2);
     pattern().length.store (juce::jlimit (1, Song::numSteps, steps));
     timerCallback();
     if (onChange)
