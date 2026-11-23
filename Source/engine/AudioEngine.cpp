@@ -56,6 +56,10 @@ void AudioEngine::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
         for (int i = 0; i < t->voiceSynth.getNumVoices(); ++i)
             if (auto* v = dynamic_cast<SpeechVoice*> (t->voiceSynth.getVoice (i)))
                 v->prepare (sampleRate);
+        t->macroSynth.setCurrentPlaybackSampleRate (sampleRate);
+        for (int i = 0; i < t->macroSynth.getNumVoices(); ++i)
+            if (auto* v = dynamic_cast<MacroVoice*> (t->macroSynth.getVoice (i)))
+                v->prepare (sampleRate);
         t->kit.prepare (sampleRate);
         t->samplerEngine.prepare (sampleRate, maxBlock);
         t->strip.prepare (sampleRate);
@@ -163,6 +167,7 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
         tracks[(size_t) lastSelected]->voiceSynth.allNotesOff (0, true);
         tracks[(size_t) lastSelected]->vocoderSynth.allNotesOff (0, true);
         tracks[(size_t) lastSelected]->granularSynth.allNotesOff (0, true);
+        tracks[(size_t) lastSelected]->macroSynth.allNotesOff (0, true);
         latched.fill (false);   // Hold: the old track's held notes went with it
         arpScratch.clear();
         arpeggiator.reset (arpScratch, 0);   // and the arpeggiator's (all notes off above)
@@ -244,6 +249,7 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
             tracks[(size_t) t]->voiceSynth.allNotesOff (0, false);
             tracks[(size_t) t]->vocoderSynth.allNotesOff (0, false);
             tracks[(size_t) t]->granularSynth.allNotesOff (0, false);
+            tracks[(size_t) t]->macroSynth.allNotesOff (0, false);
             if (lastType[(size_t) t] == Track::external)
                 tracks[(size_t) t]->ext.panic.store (true);
             lastType[(size_t) t] = type;
@@ -435,6 +441,8 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
                 tr.fmSynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
             else if (type == Track::noise)
                 tr.noiseSynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
+            else if (type == Track::macro)
+                tr.macroSynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
             else if (type == Track::voice)
             {
                 tr.voiceSynth.renderNextBlock (trackBuffer, trackMidi[(size_t) t], 0, numSamples);
@@ -523,7 +531,7 @@ void AudioEngine::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
             trackBuffer.clear (0, numSamples);
             for (auto& fx : tr.insertFx) fx.reset();
             tr.vocoderCore.reset();
-            for (auto* s : { &tr.synth, &tr.polySynth, &tr.waveSynth, &tr.fmSynth, &tr.noiseSynth, &tr.voiceSynth, &tr.vocoderSynth, &tr.granularSynth })
+            for (auto* s : { &tr.synth, &tr.polySynth, &tr.waveSynth, &tr.fmSynth, &tr.noiseSynth, &tr.voiceSynth, &tr.vocoderSynth, &tr.granularSynth, &tr.macroSynth })
                 s->allNotesOff (0, false);
         }
 

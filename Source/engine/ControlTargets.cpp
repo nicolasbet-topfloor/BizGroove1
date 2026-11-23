@@ -782,6 +782,56 @@ ControlTargets::ControlTargets (AudioEngine& e) : engine (&e)
     add ("vocoder.velocity", "Vocoder velocity to volume", "Vocoder", TargetKind::continuous,
          [vc] (float v) { vc().velocity.store (v); }, [vc] { return vc().velocity.load(); }, percent);
 
+    // ---- Macro Synth
+    auto mp = [&e]() -> MacroParams& { return e.selected().macroParams; };
+    auto pickOf = [] (float v, int n) { return juce::jlimit (0, n - 1, (int) (v * ((float) n - 0.001f))); };
+    auto bipolar = [] (float v) { const int p = juce::roundToInt ((v * 2.0f - 1.0f) * 100.0f); return p == 0 ? juce::String ("None") : (p > 0 ? "+" : "") + juce::String (p) + "%"; };
+    add ("macro.model", "Macro Synth model", "Macro Synth", TargetKind::continuous,
+         [mp, pickOf] (float v) { mp().model.store (pickOf (v, MacroCore::numModels)); },
+         [mp] { return ((float) mp().model.load() + 0.5f) / (float) MacroCore::numModels; },
+         [pickOf] (float v) { return juce::String (MacroCore::modelName (pickOf (v, MacroCore::numModels))); });
+    add ("macro.harmonics", "Macro Synth harmonics", "Macro Synth", TargetKind::continuous,
+         [mp] (float v) { mp().harmonics.store (v); }, [mp] { return mp().harmonics.load(); }, percent);
+    add ("macro.timbre", "Macro Synth timbre", "Macro Synth", TargetKind::continuous,
+         [mp] (float v) { mp().timbre.store (v); }, [mp] { return mp().timbre.load(); }, percent);
+    add ("macro.morph", "Macro Synth morph", "Macro Synth", TargetKind::continuous,
+         [mp] (float v) { mp().morph.store (v); }, [mp] { return mp().morph.load(); }, percent);
+    add ("macro.decay", "Macro Synth decay", "Macro Synth", TargetKind::continuous,
+         [mp] (float v) { mp().decay.store (v); }, [mp] { return mp().decay.load(); }, percent);
+    add ("macro.colour", "Macro Synth gate colour", "Macro Synth", TargetKind::continuous,
+         [mp] (float v) { mp().colour.store (v); }, [mp] { return mp().colour.load(); },
+         [] (float v) { return v < 0.05f ? juce::String ("Volume only") : (v > 0.95f ? juce::String ("Filter") : percent (v)); });
+    add ("macro.attack", "Macro Synth attack", "Macro Synth", TargetKind::continuous,
+         [mp] (float v) { mp().attack.store (expMap (v, 0.001f, 4.0f)); },
+         [mp] { return expInv (mp().attack.load(), 0.001f, 4.0f); },
+         [] (float v) { return seconds (expMap (v, 0.001f, 4.0f)); });
+    add ("macro.release", "Macro Synth release", "Macro Synth", TargetKind::continuous,
+         [mp] (float v) { mp().release.store (expMap (v, 0.005f, 8.0f)); },
+         [mp] { return expInv (mp().release.load(), 0.005f, 8.0f); },
+         [] (float v) { return seconds (expMap (v, 0.005f, 8.0f)); });
+    add ("macro.timbreenv", "Macro Synth envelope to timbre", "Macro Synth", TargetKind::continuous,
+         [mp] (float v) { mp().timbreEnv.store (v * 2.0f - 1.0f); }, [mp] { return (mp().timbreEnv.load() + 1.0f) * 0.5f; }, bipolar);
+    add ("macro.morphenv", "Macro Synth envelope to morph", "Macro Synth", TargetKind::continuous,
+         [mp] (float v) { mp().morphEnv.store (v * 2.0f - 1.0f); }, [mp] { return (mp().morphEnv.load() + 1.0f) * 0.5f; }, bipolar);
+    add ("macro.pitchenv", "Macro Synth envelope to pitch", "Macro Synth", TargetKind::continuous,
+         [mp] (float v) { mp().pitchEnv.store (v * 2.0f - 1.0f); }, [mp] { return (mp().pitchEnv.load() + 1.0f) * 0.5f; }, bipolar);
+    add ("macro.dxbank", "Macro Synth DX bank", "Macro Synth", TargetKind::continuous,
+         [mp, pickOf] (float v) { mp().dxBank.store (pickOf (v, 3)); },
+         [mp] { return ((float) mp().dxBank.load() + 0.5f) / 3.0f; },
+         [pickOf] (float v) { return "Bank " + juce::String (pickOf (v, 3) + 1); });
+    add ("macro.aux", "Macro Synth output", "Macro Synth", TargetKind::continuous,
+         [mp] (float v) { mp().aux.store (v); }, [mp] { return mp().aux.load(); },
+         [] (float v) { return v < 0.02f ? juce::String ("Main") : (v > 0.98f ? juce::String ("Second") : "Mix " + percent (v)); });
+    add ("macro.width", "Macro Synth width", "Macro Synth", TargetKind::continuous,
+         [mp] (float v) { mp().width.store (v); }, [mp] { return mp().width.load(); },
+         [] (float v) { return v < 0.01f ? juce::String ("Mono") : percent (v); });
+    add ("macro.velocity", "Macro Synth velocity", "Macro Synth", TargetKind::continuous,
+         [mp] (float v) { mp().velocity.store (v); }, [mp] { return mp().velocity.load(); }, percent);
+    add ("macro.level", "Macro Synth level", "Macro Synth", TargetKind::continuous,
+         [mp] (float v) { mp().level.store (expMap (v, 0.25f, 4.0f)); },
+         [mp] { return expInv (mp().level.load(), 0.25f, 4.0f); },
+         [] (float v) { const float db = juce::Decibels::gainToDecibels (expMap (v, 0.25f, 4.0f)); return (db >= 0.0f ? "+" : "") + juce::String (db, 1) + " dB"; });
+
     // ---- Arpeggiator
     auto pick = [] (float v, int count) { return juce::jlimit (0, count - 1, (int) (v * ((float) count - 0.001f))); };
     add ("arp.on", "Arpeggiator on / off", "Arpeggiator", TargetKind::toggle,
@@ -826,6 +876,9 @@ ControlTargets::ControlTargets (AudioEngine& e) : engine (&e)
     add ("vocoder.glide", "Vocoder glide", "Vocoder", TargetKind::continuous,
          [&e, glideSet] (float v) { glideSet (e.selected().vocoderParams.glide, v); },
          [&e, glideGet] { return glideGet (e.selected().vocoderParams.glide); }, glideShow);
+    add ("macro.glide", "Macro Synth glide", "Macro Synth", TargetKind::continuous,
+         [&e, glideSet] (float v) { glideSet (e.selected().macroParams.glide, v); },
+         [&e, glideGet] { return glideGet (e.selected().macroParams.glide); }, glideShow);
     add ("voice.glide", "Voice glide", "Voice", TargetKind::continuous,
          [&e, glideSet] (float v) { glideSet (e.selected().voiceParams.glide, v); },
          [&e, glideGet] { return glideGet (e.selected().voiceParams.glide); }, glideShow);
@@ -841,6 +894,7 @@ ControlTargets::ControlTargets (AudioEngine& e) : engine (&e)
             case Track::voice:     return &tr.voiceParams.glide;
             case Track::vocoder:   return &tr.vocoderParams.glide;
             case Track::granular:  return &tr.granularParams.glide;
+            case Track::macro:     return &tr.macroParams.glide;
             default:               return nullptr;
         }
     };
@@ -856,13 +910,14 @@ ControlTargets::ControlTargets (AudioEngine& e) : engine (&e)
             case Track::voice:     return &tr.voiceParams.glideMode;
             case Track::vocoder:   return &tr.vocoderParams.glideMode;
             case Track::granular:  return &tr.granularParams.glideMode;
+            case Track::macro:     return &tr.macroParams.glideMode;
             default:               return nullptr;
         }
     };
     add ("track.glide", "Glide time (selected track's synth)", "Tracks", TargetKind::continuous,
          [glideOf, glideSet] (float v) { if (auto* g = glideOf()) glideSet (*g, v); },
          [glideOf, glideGet] { auto* g = glideOf(); return g != nullptr ? glideGet (*g) : 0.0f; }, glideShow);
-    for (const char* id : { "synth.glidemode", "poly.glidemode", "wave.glidemode", "fm.glidemode", "noise.glidemode", "voice.glidemode", "vocoder.glidemode", "gran.glidemode", "track.glidemode" })
+    for (const char* id : { "synth.glidemode", "poly.glidemode", "wave.glidemode", "fm.glidemode", "noise.glidemode", "voice.glidemode", "vocoder.glidemode", "gran.glidemode", "macro.glidemode", "track.glidemode" })
         add (id, "Glide: fixed time or by distance", "Tracks", TargetKind::continuous,
              [glideModeOf, modeSet] (float v) { if (auto* m = glideModeOf()) modeSet (*m, v); },
              [glideModeOf] { auto* m = glideModeOf(); return m != nullptr && m->load() == Glide::byDistance ? 0.75f : 0.25f; }, modeShow);

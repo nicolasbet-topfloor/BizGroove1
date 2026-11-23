@@ -29,7 +29,7 @@ struct SynthDefinition
     std::vector<SynthKnob> more;
 };
 
-/** Every synth BizGroove can load. For now: the test synth only. */
+/** Every synth BizGroove can load, in the order of Track::Type. */
 inline const std::vector<SynthDefinition>& synthLibrary()
 {
     static const std::vector<SynthDefinition> library {
@@ -331,6 +331,34 @@ inline const std::vector<SynthDefinition>& synthLibrary()
                 { "Glide mode",             "gran.glidemode", "Fixed time: every slide takes the glide time. By distance: wider jumps slide for longer, the glide time per octave." },
                 { "Volume",                 "track.volume",   "How loud this track is." }
             }
+        },
+        {
+            "macro",
+            "Macro Synth",
+            "Thirteen kinds of sound on one instrument, each played with the same three knobs: Harmonics, Timbre and Morph. Waveshaper, phase distortion, additive, formant, wave terrain, chords, string machine, swarm, DX-style FM, chiptune, plucked string, modal bells and particles, through a low-pass gate that closes like a plucked note.",
+            { {
+                { "Model",     "macro.model",     "The kind of sound: Waveshaper, Phase distortion, Additive, Formant, Wave terrain, Chords, String machine, Swarm, DX FM, Chiptune, Plucked string, Modal or Particles. Harmonics, Timbre and Morph do something of their own on each." },
+                { "Harmonics", "macro.harmonics", "The first of the model's three knobs: usually its overall character (which chord, which sound, which material)." },
+                { "Timbre",    "macro.timbre",    "The second knob: usually how bright or rich the sound is." },
+                { "Morph",     "macro.morph",     "The third knob: changes the sound's shape, in a way of its own on each model." },
+                { "Decay",     "macro.decay",     "How long the gate takes to close after each note, and how long struck sounds ring." },
+                { "Colour",    "macro.colour",    "The gate: at the left only the volume falls; to the right a filter closes too, as on a plucked note." },
+                { "Attack",    "macro.attack",    "How long a note takes to reach full volume after you press a key. At the left, it starts at once." },
+                { "Release",   "macro.release",   "How long a note keeps sounding after you let go of the key." }
+            } },
+            {
+                { "Timbre env",  "macro.timbreenv", "How much each note's own envelope moves Timbre: right opens it, left closes it." },
+                { "Morph env",   "macro.morphenv",  "How much each note's own envelope moves Morph." },
+                { "Pitch env",   "macro.pitchenv",  "How much each note's own envelope bends the pitch: a quick drop or rise at the start, for drums and zaps." },
+                { "DX bank",     "macro.dxbank",    "DX FM only: which of the three banks of 32 sounds Harmonics chooses from." },
+                { "Output",      "macro.aux",       "Each model has a second version of its sound: the main one, the second, or a mix." },
+                { "Width",       "macro.width",     "Mono, or the main sound on the left and the second on the right." },
+                { "Velocity",    "macro.velocity",  "How much harder hits are louder." },
+                { "Level",       "macro.level",     "The sound's own level." },
+                { "Glide",       "macro.glide",     "Slides from one note to the next instead of jumping: how long the slide takes (per octave, when it glides by distance)." },
+                { "Glide mode",  "macro.glidemode", "Fixed time: every slide takes the glide time. By distance: wider jumps slide for longer, the glide time per octave." },
+                { "Volume",      "track.volume",    "How loud this track is." }
+            }
         }
     };
     return library;
@@ -412,7 +440,12 @@ inline const std::vector<SoundSection>& soundSections (int type)
             { "Pitch",      { "gran.pitch", "gran.detune", "gran.reverse", "gran.spray" } },
             { "Filter",     { "gran.cutoff", "gran.resonance" } },
             { "Envelope",   { "gran.attack", "gran.decay", "gran.sustain", "gran.release" }, true },
-            { "Output",     { "gran.level", "gran.velocity", "gran.glide", "gran.glidemode", "track.volume" } } } }
+            { "Output",     { "gran.level", "gran.velocity", "gran.glide", "gran.glidemode", "track.volume" } } } },
+        { "macro", {
+            { "Model",      { "macro.model", "macro.harmonics", "macro.timbre", "macro.morph", "macro.dxbank" } },
+            { "Gate",       { "macro.decay", "macro.colour", "macro.attack", "macro.release" } },
+            { "Envelope",   { "macro.timbreenv", "macro.morphenv", "macro.pitchenv" } },
+            { "Output",     { "macro.aux", "macro.width", "macro.level", "macro.velocity", "macro.glide", "macro.glidemode", "track.volume" } } } }
     };
 
     static const std::vector<std::vector<SoundSection>> all = [] {

@@ -205,6 +205,14 @@ namespace
     }
 
     template <typename Tweak>
+    Presets::FactorySound macroPreset (const char* name, Tweak&& tweak)
+    {
+        MacroParams p;   // starts from the Macro Synth's own settings
+        tweak (p);
+        return { name, soundOf (Track::macro, "macro", macroParamsToVar (p)) };
+    }
+
+    template <typename Tweak>
     Presets::FactorySound noisePreset (const char* name, Tweak&& tweak)
     {
         NoiseParams p;   // starts from the Noise synth's own settings
@@ -805,9 +813,31 @@ const std::vector<Presets::FactorySound>& Presets::factorySounds (int type)
         externalPreset ("Channel 1, hearing the input", [] (ExternalParams& p) { p.monitor.store (true); })
     };
 
+    // One or two per model; the knobs are the models' own Harmonics, Timbre and Morph.
+    auto knobs = [] (MacroParams& p, int model, float h, float t, float m) {
+        p.model.store (model); p.harmonics.store (h); p.timbre.store (t); p.morph.store (m);
+    };
+    static const std::vector<FactorySound> macros {
+        macroPreset ("Waveshaper lead", [&] (MacroParams& p) { knobs (p, MacroCore::waveshaper, 0.6f, 0.55f, 0.3f); p.decay.store (0.6f); p.colour.store (0.4f); p.glide.store (0.05f); }),
+        macroPreset ("Waveshaper bass", [&] (MacroParams& p) { knobs (p, MacroCore::waveshaper, 0.5f, 0.2f, 0.2f); p.decay.store (0.4f); p.colour.store (0.7f); }),
+        macroPreset ("Phase distortion", [&] (MacroParams& p) { knobs (p, MacroCore::phaseDistortion, 0.4f, 0.5f, 0.3f); p.attack.store (0.02f); p.decay.store (0.7f); }),
+        macroPreset ("Additive organ", [&] (MacroParams& p) { knobs (p, MacroCore::additive, 0.3f, 0.4f, 0.4f); p.decay.store (0.8f); p.colour.store (0.0f); p.release.store (0.15f); p.level.store (0.6f); }),
+        macroPreset ("Formant vowels", [&] (MacroParams& p) { knobs (p, MacroCore::formant, 0.5f, 0.4f, 0.3f); p.attack.store (0.08f); p.release.store (0.8f); p.decay.store (0.8f); p.level.store (0.8f); }),
+        macroPreset ("Wave terrain pad", [&] (MacroParams& p) { knobs (p, MacroCore::waveTerrain, 0.4f, 0.5f, 0.6f); p.attack.store (0.3f); p.release.store (1.5f); p.decay.store (0.9f); p.aux.store (0.5f); p.width.store (0.7f); p.level.store (0.65f); }),
+        macroPreset ("Chord stabs", [&] (MacroParams& p) { knobs (p, MacroCore::chords, 0.3f, 0.5f, 0.3f); p.decay.store (0.35f); p.colour.store (0.6f); p.level.store (2.0f); }),
+        macroPreset ("String machine", [&] (MacroParams& p) { knobs (p, MacroCore::stringMachine, 0.0f, 0.5f, 0.5f); p.attack.store (0.25f); p.release.store (1.2f); p.decay.store (0.9f); p.width.store (0.8f); p.level.store (0.75f); }),
+        macroPreset ("Swarm", [&] (MacroParams& p) { knobs (p, MacroCore::swarm, 0.3f, 0.35f, 0.3f); p.attack.store (0.05f); p.release.store (0.6f); p.decay.store (0.8f); p.width.store (0.6f); p.level.store (1.4f); }),
+        macroPreset ("DX FM bank 1", [&] (MacroParams& p) { knobs (p, MacroCore::dxFm, 0.0f, 0.5f, 0.5f); p.release.store (0.4f); p.level.store (3.0f); }),
+        macroPreset ("Chiptune", [&] (MacroParams& p) { knobs (p, MacroCore::chiptune, 0.0f, 0.5f, 0.5f); p.decay.store (0.6f); p.colour.store (0.2f); }),
+        macroPreset ("Plucked string", [&] (MacroParams& p) { knobs (p, MacroCore::plucked, 0.3f, 0.5f, 0.5f); p.release.store (0.5f); p.level.store (2.5f); }),
+        macroPreset ("Modal bell", [&] (MacroParams& p) { knobs (p, MacroCore::modal, 0.6f, 0.6f, 0.7f); p.release.store (1.0f); p.width.store (0.5f); }),
+        macroPreset ("Particles", [&] (MacroParams& p) { knobs (p, MacroCore::particles, 0.5f, 0.4f, 0.7f); p.attack.store (0.05f); p.release.store (1.0f); p.decay.store (0.8f); p.width.store (0.8f); p.level.store (1.6f); })
+    };
+
     switch (clampType (type))
     {
         case Track::external: return externals;
+        case Track::macro:   return macros;
         case Track::noise:   return noises;
         case Track::granular: return granulars;
         case Track::voice:   return voices;
@@ -868,6 +898,8 @@ juce::var soundVarOfImpl (const Track& tr)
         return soundOf (type, "vocoder", vocoderParamsToVar (tr.vocoderParams));
     if (type == Track::granular)
         return soundOf (type, "granular", granularParamsToVar (tr.granularParams));
+    if (type == Track::macro)
+        return soundOf (type, "macro", macroParamsToVar (tr.macroParams));
     return soundOf (type, "synth", synthToVar (tr.synthParams));
 }
 
@@ -938,6 +970,10 @@ void applySoundOfImpl (Track& tr, const juce::var& v)
     else if (type == Track::granular)
     {
         applyGranularParams (tr.granularParams, v["granular"]);
+    }
+    else if (type == Track::macro)
+    {
+        applyMacroParams (tr.macroParams, v["macro"]);
     }
     else if (type == Track::external)
     {

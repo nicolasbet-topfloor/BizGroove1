@@ -102,6 +102,7 @@ juce::var Project::toVar (AudioEngine& e)
         o->setProperty ("voice", voiceParamsToVar (tr.voiceParams));
         o->setProperty ("vocoder", vocoderParamsToVar (tr.vocoderParams));
         o->setProperty ("granular", granularParamsToVar (tr.granularParams));
+        o->setProperty ("macro", macroParamsToVar (tr.macroParams));
         o->setProperty ("external", externalParamsToVar (tr.ext, tr.externalDeviceName));
         o->setProperty ("inserts", insertsToVar (tr.inserts));
         o->setProperty ("lfos", lfosToVar (tr.lfos));
@@ -326,6 +327,7 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
             applyVoiceParams (tr.voiceParams, o["voice"]);
             applyVocoderParams (tr.vocoderParams, o["vocoder"]);
             applyGranularParams (tr.granularParams, o["granular"]);
+            applyMacroParams (tr.macroParams, o["macro"]);
             applyExternalParams (tr.ext, tr.externalDeviceName, o["external"]);
             tr.externalDeviceId = {};   // found again by name on this computer
             applyInserts (tr.inserts, o["inserts"]);
