@@ -36,6 +36,14 @@ ControlTargets::ControlTargets (AudioEngine& e) : engine (&e)
          [&e] (float) { e.transport.playing.store (true); });
     add ("transport.stop", "Stop", "Transport", TargetKind::trigger,
          [&e] (float) { e.transport.playing.store (false); });
+    add ("transport.swing", "Swing (whole song)", "Transport", TargetKind::continuous,
+         [&e] (float v) { e.song.globalSwing.store (juce::jlimit (0.0f, 1.0f, v)); },
+         [&e] { return e.song.globalSwing.load(); },
+         [] (float v) { return v < 0.01f ? juce::String ("Straight") : percent (v); });
+    add ("transport.swinggrid", "Swing on 1/16 or 1/8", "Transport", TargetKind::continuous,
+         [&e] (float v) { e.song.swingGrid.store (v < 0.5f ? Song::swing16 : Song::swing8); },
+         [&e] { return e.song.swingGrid.load() == Song::swing8 ? 0.75f : 0.25f; },
+         [] (float v) { return v < 0.5f ? juce::String ("1/16") : juce::String ("1/8"); });
     add ("transport.tempo", "Tempo (60-180 BPM)", "Transport", TargetKind::continuous,
          [&e] (float v) { e.transport.bpm.store (std::round (linMap (v, 60.0f, 180.0f) * 10.0f) / 10.0f); },
          [&e] { return linInv ((float) e.transport.bpm.load(), 60.0f, 180.0f); },
