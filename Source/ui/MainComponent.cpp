@@ -113,6 +113,28 @@ MainComponent::MainComponent()
     addAndMakeVisible (masterVolume);
     showMasterVolume();
 
+    // Swing for the whole song: every track's steps, and what it moves (1/16 or 1/8).
+    swingLabel.setText ("Swing", juce::dontSendNotification);
+    swingLabel.setColour (juce::Label::textColourId, Colours::textDim);
+    swingLabel.setJustificationType (juce::Justification::centredRight);
+    addAndMakeVisible (swingLabel);
+    swingKnob.setWantsKeyboardFocus (false);
+    swingKnob.setRange (0.0, 1.0, 0.0);
+    swingKnob.setValue (engine.song.globalSwing.load(), juce::dontSendNotification);
+    swingKnob.setDoubleClickReturnValue (true, 0.0);
+    swingKnob.onValueChange = [this] {
+        engine.song.globalSwing.store ((float) swingKnob.getValue());
+        showSwing();
+    };
+    addAndMakeVisible (swingKnob);
+    swingGridButton.setWantsKeyboardFocus (false);
+    swingGridButton.onClick = [this] {
+        engine.song.swingGrid.store (engine.song.swingGrid.load() == Song::swing8 ? Song::swing16 : Song::swing8);
+        showSwing();
+    };
+    addAndMakeVisible (swingGridButton);
+    showSwing();
+
     fileButton.setTooltip ("New, open, save and export");
     fileButton.onClick = [this] { showFileMenu(); };
     addAndMakeVisible (fileButton);
@@ -1111,6 +1133,12 @@ void MainComponent::timerCallback()
         masterVolume.setValue (engine.masterGain.load(), juce::dontSendNotification);
         showMasterVolume();
     }
+    if ((! swingKnob.isMouseButtonDown() && std::abs (swingKnob.getValue() - (double) engine.song.globalSwing.load()) > 0.001)
+        || swingGridButton.getButtonText() != (engine.song.swingGrid.load() == Song::swing8 ? "1/8" : "1/16"))
+    {
+        swingKnob.setValue (engine.song.globalSwing.load(), juce::dontSendNotification);
+        showSwing();
+    }
 
     if (++timerTicks % 60 == 0)
     {
@@ -1170,6 +1198,16 @@ void MainComponent::paint (juce::Graphics& g)
     }
 }
 
+void MainComponent::showSwing()
+{
+    const int percent = juce::roundToInt (swingKnob.getValue() * 100.0);
+    const bool eighths = engine.song.swingGrid.load() == Song::swing8;
+    swingGridButton.setButtonText (eighths ? "1/8" : "1/16");
+    swingKnob.setTooltip ("Swing for the whole song: " + (percent == 0 ? juce::String ("straight") : juce::String (percent) + "%")
+                          + ". It plays every second " + (eighths ? "1/8" : "1/16") + " later, for a shuffle. Drag up or down; double-click for straight.");
+    swingGridButton.setTooltip ("What swing moves: 1/16 (every second step) or 1/8 (the off-beat eighth notes). Click to switch.");
+}
+
 void MainComponent::showMasterVolume()
 {
     masterVolume.setTooltip ("Master volume: " + juce::String (juce::roundToInt (masterVolume.getValue() * 100.0)) + "%. Drag up or down; double-click for 80%.");
@@ -1189,10 +1227,12 @@ void MainComponent::resized()
 
     // Everything must fit from the narrowest window up: the name and the track label
     // make way when there is no room for them.
-    constexpr int fixedWidth = 58 + 10 + 104 + 6 + 104 + 12 + 66 + 8 + 116 + 6 + 32 + 36 + 6 + 62     // left
+    // (The Vol and Swing labels hide when narrow: roomy adds their 32 and 44.)
+    constexpr int fixedWidth = 58 + 10 + 104 + 6 + 104 + 12 + 66 + 8 + 116 + 6 + 36 + 6 + 36 + 40 + 6 + 62     // left
                              + 14 + 10 + 74 + 12 + 62 + 4 + 60 + 4 + 56 + 4 + 70 + 4 + 106;           // right
-    const bool showLabel = top.getWidth() >= fixedWidth + 62;
-    const bool showTitle = top.getWidth() >= fixedWidth + 62 + 96;
+    const bool roomy = top.getWidth() >= fixedWidth + 76;
+    const bool showLabel = top.getWidth() >= fixedWidth + 76 + 62;
+    const bool showTitle = top.getWidth() >= fixedWidth + 76 + 62 + 96;
 
     fileButton.setBounds (top.removeFromLeft (58).reduced (0, 4));
     top.removeFromLeft (10);
@@ -1209,8 +1249,14 @@ void MainComponent::resized()
     tempoLabel.setBounds ({});   // room for the Sounds button; the slider shows BPM
     tempoSlider.setBounds (top.removeFromLeft (116));
     top.removeFromLeft (6);
-    volumeLabel.setBounds (top.removeFromLeft (32));
+    volumeLabel.setVisible (roomy);
+    volumeLabel.setBounds (roomy ? top.removeFromLeft (32) : juce::Rectangle<int>());
     masterVolume.setBounds (top.removeFromLeft (36));
+    top.removeFromLeft (6);
+    swingLabel.setVisible (roomy);
+    swingLabel.setBounds (roomy ? top.removeFromLeft (44) : juce::Rectangle<int>());
+    swingKnob.setBounds (top.removeFromLeft (36));
+    swingGridButton.setBounds (top.removeFromLeft (40).reduced (0, 4));
     top.removeFromLeft (6);
     metronomeButton.setBounds (top.removeFromLeft (62).reduced (0, 4));
 
