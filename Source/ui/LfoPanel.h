@@ -187,7 +187,7 @@ public:
         static const juce::StringArray everyTrack { "Tracks", "Effects", "Oscillators", "Vocoder" };
         if (everyTrack.contains (group))
             return true;
-        static const juce::StringArray instruments { "Synth", "Test synth", "Drums", "Sampler", "Poly", "Wavetable", "FM", "External MIDI", "Noise", "Voice", "Granular" };
+        static const juce::StringArray instruments { "Synth", "Test synth", "Drums", "Sampler", "Poly", "Wavetable", "FM", "External MIDI", "Noise", "Voice", "Granular", "Macro Synth" };
         if (! instruments.contains (group))
             return true;
         return group == instrument || (instrument == "Test synth" && group == "Synth");
