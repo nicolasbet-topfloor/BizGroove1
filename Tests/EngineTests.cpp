@@ -208,6 +208,75 @@ static void testDrums()
            "drums: swing pushes the off-beats later");
 }
 
+// The song's swing: on every track (synths too), on 1/16 or 1/8, added to a kit's own swing,
+// and kept in projects. Steps are 6000 samples apart at 120 BPM and 48 kHz.
+static void testSwing()
+{
+    std::cout << "Swing\n";
+    constexpr double sr = 48000.0;
+    auto noteOnTimes = [] (Song& song, int track, bool drums, juce::int64 length) {
+        song.prepare (sr);
+        std::array<juce::MidiBuffer, Song::numTracks> out;
+        std::array<bool, Song::numTracks> drumsFlags {};
+        drumsFlags[(size_t) track] = drums;
+        std::vector<juce::int64> on;
+        for (juce::int64 pos = 0; pos < length; pos += 480)
+        {
+            for (auto& m : out) m.clear();
+            song.process (out, 480, 120.0, true, drumsFlags);
+            for (const auto meta : out[(size_t) track])
+                if (meta.getMessage().isNoteOn())
+                    on.push_back (pos + meta.samplePosition);
+        }
+        return on;
+    };
+
+    // A synth track, a note on every step: the song's swing at 50% on 1/16.
+    Song song;
+    song.clearScene (0);
+    for (int st = 0; st < Song::numSteps; ++st)
+    {
+        song.scene (0).tracks[0].steps[(size_t) st].on.store (true);
+        song.scene (0).tracks[0].steps[(size_t) st].note.store (60);
+    }
+    song.globalSwing.store (0.5f);
+    auto on = noteOnTimes (song, 0, false, 30000);
+    check (on.size() >= 5 && on[0] == 0 && on[1] == 7500 && on[2] == 12000 && on[3] == 19500 && on[4] == 24000,
+           "swing: the song's swing pushes a synth track's every second 1/16");
+
+    // On 1/8 at full swing: the off-beat eighth a whole step later, the 1/16s beside it half a step; none lost.
+    song.globalSwing.store (1.0f);
+    song.swingGrid.store (Song::swing8);
+    on = noteOnTimes (song, 0, false, 48000);
+    check (on.size() == 8 && on[0] == 0 && on[1] == 9000 && on[2] == 18000 && on[3] == 21000 && on[4] == 24000 && on[5] == 33000,
+           "swing: on 1/8 it moves the off-beat eighths, keeping every note in order");
+
+    // A kit's own swing adds to the song's, up to full.
+    Song kit;
+    kit.clearScene (0);
+    kit.scene (0).tracks[1].drumLanes[6].store (0xffff);
+    kit.globalSwing.store (0.25f);
+    kit.swing[1].store (0.25f);
+    on = noteOnTimes (kit, 1, true, 13000);
+    check (on.size() >= 2 && on[1] == 7500, "swing: a kit's swing adds to the song's");
+
+    // Projects keep it.
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    AudioEngine a;
+    a.song.globalSwing.store (0.4f);
+    a.song.swingGrid.store (Song::swing8);
+    juce::String err;
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("bizgroove-swing.bizgroove");
+    const bool saved = Project::save (a, file, err);
+    AudioEngine b;
+    b.prepareToPlay (256, sr);
+    const bool opened = Project::open (b, file, formats, err);
+    file.deleteFile();
+    check (saved && opened && std::abs (b.song.globalSwing.load() - 0.4f) < 1.0e-6f && b.song.swingGrid.load() == Song::swing8,
+           "swing: a project keeps the song's swing and its 1/16 or 1/8");
+}
+
 // Tracks: live notes go to the selected track; mute silences a track.
 static void testTracks()
 {
@@ -3674,6 +3743,7 @@ int main (int argc, char* argv[])
 
     testScenesAndSong();
     testDrums();
+    testSwing();
     testTracks();
     testSamplerAndMixer();
     testTimelineProjectExport();
