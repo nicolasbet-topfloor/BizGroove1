@@ -506,7 +506,7 @@ void LaunchkeyPanel::showTrack()
         // A Granular track loads a recording to take its grains from.
         const bool sampler = type == Track::sampler, kit = type == Track::drums, ext = type == Track::external, gran = type == Track::granular;
         loadSampleButton.setVisible (sampler || kit || ext || gran);
-        oscButton.setVisible (! (sampler || kit || ext || gran));
+        oscButton.setVisible (! (sampler || kit || ext || gran || type == Track::macro));   // the Macro Synth has no Oscillators section
         voiceTextButton.setVisible (type == Track::voice);
         editSampleButton.setVisible (sampler || kit || ext || gran);
         recSourceButton.setVisible (sampler || kit || ext);
