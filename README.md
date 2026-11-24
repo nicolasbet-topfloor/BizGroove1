@@ -262,11 +262,23 @@ Source/engine/   real-time audio and MIDI: sequencer, synth, stem deck,
                  control targets, controller profiles, MIDI router (no GUI code)
 Source/ui/       window, step grid, knobs, stem panel, Controllers window
 Tests/           headless engine tests
+ThirdParty/eurorack/  the Macro Synth's sound engines (MIT licence, see below)
 ```
 
 Design rule: nothing on the audio thread may allocate, wait on a lock or touch
 the GUI. The UI and controllers talk to the engine through atomics; the stem
 deck only ever *tries* a lock and skips a block rather than wait.
+
+## Credits
+
+The Macro Synth (instrument 12) plays sound engines written by Emilie Gillet
+and published under the MIT License, from her repositories
+[pichenettes/eurorack](https://github.com/pichenettes/eurorack) and
+[pichenettes/stmlib](https://github.com/pichenettes/stmlib). Their code, with
+its copyright notices and licence, is in `ThirdParty/eurorack`. BizGroove is
+not affiliated with or endorsed by their author.
+
+BizGroove is made with [JUCE](https://juce.com).
 
 ## Next
 
