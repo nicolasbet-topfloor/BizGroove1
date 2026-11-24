@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <memory>
@@ -335,8 +336,27 @@ public:
     std::atomic<int> queuedScene { -1 };
     void queueScene (int index, bool playing);
 
-    // Per-track swing (0 = straight .. 1 = heavy shuffle), set by the tracks.
+    // Per-track swing (0 = straight .. 1 = heavy shuffle), set by the Drums tracks; it adds to the song's.
     std::array<std::atomic<float>, numTracks> swing {};
+
+    // The song's swing, on every track (0 = straight .. 1 = heavy shuffle), and the notes it moves.
+    enum SwingGrid { swing16 = 0, swing8 = 1 };
+    std::atomic<float> globalSwing { 0.0f };
+    std::atomic<int> swingGrid { swing16 };
+
+    /** How much later, in steps, swing plays step `pos` of track `track`'s pattern.
+        On 1/16: every second 1/16, by up to half a step. On 1/8: the off-beat 1/8 by up
+        to a whole step, and the 1/16s either side of it by half that, so they keep their order. */
+    double swingPush (int track, int pos) const
+    {
+        const double s = std::clamp ((double) globalSwing.load() + (double) swing[(size_t) juce::jlimit (0, numTracks - 1, track)].load(), 0.0, 1.0);
+        if (swingGrid.load() == swing8)
+        {
+            const int q = pos % 4;
+            return q == 2 ? s : (q == 1 || q == 3 ? 0.5 * s : 0.0);
+        }
+        return (pos % 2 == 1) ? 0.5 * s : 0.0;
+    }
 
     // ---------------------------------------------------------- read-outs for the UI
     std::atomic<int> playheadStep { -1 };                     // the step of the bar (0 .. 15)
@@ -397,9 +417,10 @@ private:
     bool wasPlaying = false;
     float gate = 0.5f;
 
-    // Swung off-beats: per track, a step delayed into the second half of its slot.
+    // Swung steps: per track, steps delayed past their slot's start (up to a whole step on 1/8, so two may wait at once).
     struct Delayed { bool active = false; int stepIndex = 0; int sceneIndex = 0; double remaining = 0.0; };
-    std::array<Delayed, numTracks> delayed;
+    static constexpr int maxDelayed = 3;
+    std::array<std::array<Delayed, maxDelayed>, numTracks> delayed;
 
     // Steps just recorded ahead of the playhead: skipped once, so the live note isn't heard twice.
     std::array<std::array<std::uint16_t, numSteps>, numTracks> skipOnce {};
