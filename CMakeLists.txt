@@ -23,6 +23,20 @@ FetchContent_Declare(JUCE
     GIT_SHALLOW ON)
 FetchContent_MakeAvailable(JUCE)
 
+# ---------------------------------------------------------------- Macro Synth engines
+# Sound engines by Emilie Gillet (MIT licence, ThirdParty/eurorack), built on their
+# own with TEST defined, as for the authors' computer test program. Only
+# Source/engine/MacroCore.cpp sees their code.
+file(GLOB_RECURSE EURORACK_SOURCES CONFIGURE_DEPENDS ThirdParty/eurorack/*.cc)
+add_library(bizmacro STATIC ${EURORACK_SOURCES} Source/engine/MacroCore.cpp)
+target_include_directories(bizmacro PRIVATE ThirdParty/eurorack)
+target_compile_definitions(bizmacro PRIVATE TEST)
+if(MSVC)
+    target_compile_options(bizmacro PRIVATE /W0)
+else()
+    target_compile_options(bizmacro PRIVATE -w)
+endif()
+
 # ---------------------------------------------------------------- engine
 # The audio engine has no GUI dependency, so the app and the tests compile
 # the same sources. (JUCE modules must be compiled once per target.)
@@ -74,6 +88,7 @@ target_link_libraries(BizGroove
         juce::juce_audio_utils
         juce::juce_audio_devices
         juce::juce_dsp
+        bizmacro
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
@@ -107,6 +122,7 @@ function(add_lite_app target style bundle)
             juce::juce_audio_utils
             juce::juce_audio_devices
             juce::juce_dsp
+            bizmacro
         PUBLIC
             juce::juce_recommended_config_flags
             juce::juce_recommended_lto_flags
@@ -131,6 +147,7 @@ target_link_libraries(BizGrooveTests
         juce::juce_audio_devices
         juce::juce_audio_formats
         juce::juce_dsp
+        bizmacro
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
