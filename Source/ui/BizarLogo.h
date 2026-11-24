@@ -140,7 +140,7 @@ M15254 1557 c-3 -8 -4 -41 -2 -73 l3 -59 30 -3 30 -3 -2 -187 c-1 -103 1 -199
 class AboutComponent final : public juce::Component
 {
 public:
-    AboutComponent() { setSize (560, 330); }
+    AboutComponent() { setSize (560, 352); }
 
     void paint (juce::Graphics& g) override
     {
@@ -162,6 +162,7 @@ public:
         g.setColour (Colours::textDim);
         g.drawText ("bizarinternational.com", r.removeFromTop (22), juce::Justification::centredLeft);
         g.drawText ("Open-source software under the GNU General Public License v3. Made with JUCE.", r.removeFromTop (22), juce::Justification::centredLeft);
+        g.drawText ("The Macro Synth's sound engines are by Emilie Gillet, under the MIT licence.", r.removeFromTop (22), juce::Justification::centredLeft);
     }
 };
 
