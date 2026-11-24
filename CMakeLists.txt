@@ -33,6 +33,7 @@ target_include_directories(bizmacro PRIVATE ThirdParty/eurorack)
 target_compile_definitions(bizmacro PRIVATE TEST)
 if(MSVC)
     target_compile_options(bizmacro PRIVATE /W0)
+    target_compile_definitions(bizmacro PRIVATE _USE_MATH_DEFINES)   # M_PI, as on Mac and Linux
 else()
     target_compile_options(bizmacro PRIVATE -w)
 endif()
