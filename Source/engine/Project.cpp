@@ -218,6 +218,8 @@ juce::var Project::toVar (AudioEngine& e)
     auto* song = new Obj();
     song->setProperty ("songMode", e.song.songMode.load());
     song->setProperty ("loop", e.song.loopSong.load());
+    song->setProperty ("swing", e.song.globalSwing.load());
+    song->setProperty ("swingGrid", e.song.swingGrid.load());
     song->setProperty ("useTimeline", e.song.useTimeline.load());
     juce::Array<juce::var> chain;
     for (int i = 0; i < juce::jlimit (1, Song::maxChain, e.song.chainLength.load()); ++i)
@@ -427,6 +429,8 @@ void Project::applyVar (AudioEngine& e, const juce::var& v)
     const auto song = v["song"];
     e.song.songMode.store (getB (song, "songMode", false));
     e.song.loopSong.store (getB (song, "loop", true));
+    e.song.globalSwing.store (juce::jlimit (0.0f, 1.0f, getF (song, "swing", 0.0f)));
+    e.song.swingGrid.store (juce::jlimit (0, 1, getI (song, "swingGrid", 0)));
     e.song.useTimeline.store (getB (song, "useTimeline", false));
     if (const auto* chain = song["chain"].getArray())
     {
@@ -754,7 +758,6 @@ bool Exporter::writeMidi (AudioEngine& e, bool playSong, int bars, const juce::F
     {
         const bool isDrum = e.track (t).playsDrums();
         const int channel = isDrum ? 10 : 1;
-        const double swing = e.song.swing[(size_t) t].load();
         juce::MidiMessageSequence seq;
         seq.addEvent (juce::MidiMessage::textMetaEvent (3, "Track " + juce::String (t + 1)), 0);
 
@@ -770,7 +773,7 @@ bool Exporter::writeMidi (AudioEngine& e, bool playSong, int bars, const juce::F
             {
                 pos = (pos + 1) % p.getLength();
                 const int st = pos;
-                const double push = (st % 2 == 1) ? swing * 0.5 * ticksPerStep : 0.0;
+                const double push = e.song.swingPush (t, st) * ticksPerStep;
                 const double tick = (bar * Song::stepsPerBar + barStep) * ticksPerStep + push;
                 if (isDrum)
                 {
