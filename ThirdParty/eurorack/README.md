@@ -12,6 +12,8 @@ BizGroove's changes:
 - `plaits/user_data.h` is replaced: a computer has no module memory, so there
   is no user data.
 - `stmlib/stmlib.h`: `__attribute__` does nothing on Microsoft's compiler.
+- `plaits/resources.cc`: the empty (and unused) `lookup_table_i32_table`
+  holds one null pointer, as Microsoft's compiler refuses empty arrays.
 - Everything is compiled with `TEST` defined, as for the authors' own
   computer test program, so the module's processor instructions are not used.
 
