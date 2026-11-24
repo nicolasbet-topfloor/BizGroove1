@@ -2548,6 +2548,127 @@ static void testNoise()
     check (Presets::factorySounds (Track::noise).size() >= 10, "noise: has factory sounds");
 }
 
+// The Macro Synth: thirteen models, each making sound at any sound card rate, notes that end
+// once released, the right pitch, and settings kept by sounds.
+static void testMacroSynth()
+{
+    std::cout << "Macro Synth\n";
+    check (synthLibrary().size() == (size_t) Track::numTypes && synthLibrary()[(size_t) Track::macro].id == "macro",
+           "macro: listed as instrument 12");
+    for (double rate : { 48000.0, 44100.0 })
+    {
+        AudioEngine e;
+        constexpr int block = 512;
+        e.prepareToPlay (block, rate);
+        e.selectedTrack.store (0);
+        e.track (0).type.store (Track::macro);
+        auto& mp = e.track (0).macroParams;
+        juce::AudioBuffer<float> buf (2, block);
+        auto run = [&] (int blocks, std::vector<float>* keep = nullptr) {
+            double sum = 0.0;
+            bool finite = true;
+            for (int b = 0; b < blocks; ++b)
+            {
+                buf.clear();
+                e.getNextAudioBlock (juce::AudioSourceChannelInfo (&buf, 0, block));
+                for (int i = 0; i < block; ++i)
+                {
+                    const float x = buf.getSample (0, i);
+                    finite = finite && std::isfinite (x);
+                    sum += (double) x * x;
+                    if (keep != nullptr) keep->push_back (x);
+                }
+            }
+            return std::make_pair (std::sqrt (sum / (double) (blocks * block)), finite);
+        };
+        auto activeVoices = [&] {
+            int n = 0;
+            for (int v = 0; v < e.track (0).macroSynth.getNumVoices(); ++v)
+                n += e.track (0).macroSynth.getVoice (v)->isVoiceActive() ? 1 : 0;
+            return n;
+        };
+
+        bool allSound = true, allFinite = true, allEnd = true;
+        juce::String levels;
+        for (int m = 0; m < MacroCore::numModels; ++m)
+        {
+            mp.model.store (m);
+            mp.release.store (0.2f);
+            e.keyboardState.noteOn (1, 57, 0.8f);
+            const auto [level, finite] = run (20);
+            e.keyboardState.noteOff (1, 57, 0.0f);
+            run ((int) (rate * 3.0 / block));   // three seconds to die away
+            levels << MacroCore::modelName (m) << " " << juce::String (juce::Decibels::gainToDecibels ((float) level), 1) << " dB, ";
+            allSound = allSound && level > 1.0e-3;
+            allFinite = allFinite && finite;
+            if (activeVoices() != 0)
+            {
+                allEnd = false;
+                std::cout << "  info  " << MacroCore::modelName (m) << " still sounding after release\n";
+            }
+        }
+        if (rate == 48000.0) std::cout << "  info  levels " << levels << "\n";
+        check (allSound, "macro: every model makes sound at " + juce::String ((int) rate) + " Hz");
+        check (allFinite, "macro: with no NaN at " + juce::String ((int) rate) + " Hz");
+        check (allEnd, "macro: every model's notes end after release at " + juce::String ((int) rate) + " Hz");
+
+        // In tune: the waveshaper's A3 repeats every 1/220 s.
+        mp.model.store (MacroCore::waveshaper);
+        mp.harmonics.store (0.5f); mp.timbre.store (0.3f); mp.morph.store (0.3f);
+        std::vector<float> tail;
+        e.keyboardState.noteOn (1, 57, 0.8f);
+        run (10);
+        run (20, &tail);
+        e.keyboardState.noteOff (1, 57, 0.0f);
+        run ((int) (rate / block));
+        auto correlation = [&tail] (int lag) {
+            double ab = 0.0, aa = 0.0, bb = 0.0;
+            for (size_t i = (size_t) lag; i < tail.size(); ++i)
+            {
+                ab += (double) tail[i] * tail[i - (size_t) lag];
+                aa += (double) tail[i] * tail[i];
+                bb += (double) tail[i - (size_t) lag] * tail[i - (size_t) lag];
+            }
+            return ab / juce::jmax (1.0e-12, std::sqrt (aa * bb));
+        };
+        const double period = rate / 220.0;
+        double best = 0.0;
+        for (int lag = (int) period - 1; lag <= (int) period + 2; ++lag)
+            best = juce::jmax (best, correlation (lag));
+        check (best > 0.9, "macro: plays in tune at " + juce::String ((int) rate) + " Hz");
+
+        // Six voices of the DX FM, the heaviest model: how long a second of sound takes.
+        if (rate == 48000.0)
+        {
+            mp.model.store (MacroCore::dxFm);
+            for (int n : { 48, 52, 55, 59, 62, 66 })
+                e.keyboardState.noteOn (1, n, 0.8f);
+            const auto t0 = juce::Time::getMillisecondCounterHiRes();
+            run ((int) (rate / block));
+            const auto ms = juce::Time::getMillisecondCounterHiRes() - t0;
+            std::cout << "  info  one second of six DX FM voices took " << ms << " ms\n";
+            for (int n : { 48, 52, 55, 59, 62, 66 })
+                e.keyboardState.noteOff (1, n, 0.0f);
+            run ((int) (rate * 2.0 / block));
+            check (ms < 500.0, "macro: six voices play comfortably in real time");
+        }
+
+        // Sounds keep the settings; there is a factory sound for each model.
+        if (rate == 48000.0)
+        {
+            mp.model.store (MacroCore::modal);
+            mp.timbre.store (0.71f);
+            mp.dxBank.store (2);
+            const auto v = Presets::soundToVar (e.track (0));
+            Presets::applySoundVar (e.track (3), v);
+            check (e.track (3).type.load() == Track::macro && e.track (3).macroParams.model.load() == MacroCore::modal
+                       && std::abs (e.track (3).macroParams.timbre.load() - 0.71f) < 1.0e-6f && e.track (3).macroParams.dxBank.load() == 2,
+                   "macro: a sound keeps its settings");
+            check (Presets::factorySounds (Track::macro).size() >= (size_t) MacroCore::numModels, "macro: has factory sounds");
+        }
+    }
+}
+
 // Glide: an even slide in pitch, taking the glide time (or the time per octave, by distance).
 static void testGlide()
 {
@@ -3573,6 +3694,7 @@ int main (int argc, char* argv[])
     testCopyDrum();
     testPatternEditing();
     testNoise();
+    testMacroSynth();
     testHold();
     testGlide();
     testArpeggiator();
