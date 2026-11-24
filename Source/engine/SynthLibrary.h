@@ -59,7 +59,7 @@ inline const std::vector<SynthDefinition>& synthLibrary()
             "Sixteen synthesised drums in General MIDI order, from the kick on the lowest C. Play a key to choose the drum that the knobs and pads edit.",
             { {
                 { "Pitch",  "drum.pitch",  "Tunes the selected drum higher or lower, up to 12 semitones either way." },
-                { "Swing",  "drum.swing",  "Shuffles the groove of the whole kit, from straight to swung." },
+                { "Swing",  "drum.swing",  "Extra swing for this kit, on top of the song's Swing (beside the tempo)." },
                 { "Decay",  "drum.length", "How long the selected drum rings: a short tick or a long boom." },
                 { "Tone",   "drum.tone",   "How bright or dull the selected drum is." },
                 { "Snap",   "drum.snap",   "How sharp the click at the start of each hit is." },
