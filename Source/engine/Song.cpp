@@ -147,7 +147,8 @@ void Song::reset()
     for (auto& ev : stepEvents) ev = {};
     for (auto& row : pending)
         for (auto& p : row) p.active = false;
-    for (auto& d : delayed) d.active = false;
+    for (auto& row : delayed)
+        for (auto& d : row) d.active = false;
     for (auto& row : skipOnce) row.fill (0);
     for (auto& row : held)
         for (auto& h : row) h.active = false;
@@ -321,9 +322,10 @@ bool Song::process (std::array<juce::MidiBuffer, numTracks>& out, int numSamples
             else p.remaining -= numSamples;
         }
 
-        auto& d = delayed[(size_t) t];
-        if (d.active && playing)
+        for (auto& d : delayed[(size_t) t])
         {
+            if (! (d.active && playing))
+                continue;
             if (d.remaining < numSamples)
             {
                 d.active = false;
@@ -375,13 +377,18 @@ bool Song::process (std::array<juce::MidiBuffer, numTracks>& out, int numSamples
             restart[(size_t) t] = false;
             trackStep[(size_t) t].store (pos);
 
-            // Swing pushes every second 1/16 later, by up to half a step.
-            const double push = (pos % 2 == 1) ? swing[(size_t) t].load() * 0.5 * samplesPerStep : 0.0;
+            // Swing plays some steps later (see swingPush).
+            const double push = swingPush (t, pos) * samplesPerStep;
             const double at = position + push;
             if (at < numSamples)
                 emit (out, t, sc, pos, (int) at, numSamples, samplesPerStep, isDrumTrack[(size_t) t]);
             else
-                delayed[(size_t) t] = { true, pos, sc, at - numSamples };
+                for (auto& d : delayed[(size_t) t])
+                    if (! d.active)
+                    {
+                        d = { true, pos, sc, at - numSamples };
+                        break;
+                    }
         }
 
         samplesUntilNextStep += samplesPerStep;
