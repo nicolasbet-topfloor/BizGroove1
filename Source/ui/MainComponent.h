@@ -119,6 +119,10 @@ private:
     juce::Slider masterVolume { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Label volumeLabel;
     void showMasterVolume();
+    juce::Slider swingKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
+    juce::Label swingLabel;
+    juce::TextButton swingGridButton { "1/16" };
+    void showSwing();
     juce::TextButton fileButton { "File" };
     juce::TextButton panelViewButton { "Keys & pads" }, patternViewButton { "Pattern" }, songViewButton { "Song" },
                      mixerViewButton { "Mixer" }, stemViewButton { "Stems" };
